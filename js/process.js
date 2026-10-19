@@ -1,0 +1,679 @@
+// Process: renders the models through the tileset's projection into per-pixel surface data, then the maps the lighting engine
+// reads. A canvas pixel (x, y) shows the line (x, y + t, t); its surface is the highest point of any model on that line
+// (largest t = height). Because the projection is parallel, height and normals interpolate linearly across a triangle on screen.
+//
+// Outputs (all canvas-sized, transparent where the art is):
+//   <name>_height.png  R = height px / 255 (G, B = R, or the engine's packed highlights: G strength, B gloss, from roughness)
+//   <name>_normal.png  OpenGL sprite normal map: R = east, G = up (a top), B = toward the viewer (south, an upright front)
+//   <name>_pbr.png     R = roughness, G = metallic
+//   <name>_footprints.json  each model's floor footprint (convex hull), height range, and its collision (mode, and in
+//                           footprint mode the exact polygons the player collides with; see P.collision)
+"use strict";
+(function () {
+	const v3 = TS.v3, Mesh = TS.Mesh;
+	const P = (TS.Process = {});
+
+	// result: {w, h, height Float32 (NaN = nothing), normal Float32 x3, rough, metal, obj Int32, art alpha, holes, stats,
+	//          floor: {top, bottom, rows} heightfield on the floor plan}
+	P.run = (objects, art, settings) => {
+		const W = art.w, H = art.h, N = W * H;
+		const height = new Float32Array(N).fill(NaN);
+		const normal = new Float32Array(N * 3);
+		const rough = new Float32Array(N), metal = new Float32Array(N);
+		const owner = new Int32Array(N).fill(-1);
+		const clipped = new Uint8Array(N);
+		for (let oi = 0; oi < objects.length; oi++) {
+			const obj = objects[oi];
+			const corners = Mesh.shadingNormals(obj);
+			obj.faces.forEach((f, fi) => {
+				const mat = Mesh.faceMat(obj, f);
+				for (let i = 1; i + 1 < f.v.length; i++) {
+					const ids = [0, i, i + 1];
+					const p = ids.map((k) => obj.verts[f.v[k]]), n = ids.map((k) => corners[fi][k]);
+					rasterTri(p, n, (idx, z, nx, ny, nz) => {
+						if (!(z > height[idx]) && !isNaN(height[idx])) return;
+						height[idx] = z;
+						normal[idx * 3] = nx; normal[idx * 3 + 1] = ny; normal[idx * 3 + 2] = nz;
+						rough[idx] = mat.roughness; metal[idx] = mat.metallic;
+						owner[idx] = oi;
+					}, W, H);
+				}
+			});
+		}
+		// Art coverage: holes (art no model covers), fills, clamping.
+		const alpha = art.alpha;
+		let holes = 0, filled = 0, unused = 0, over = 0, covered = 0;
+		const hole = new Uint8Array(N);
+		for (let i = 0; i < N; i++) {
+			const has = alpha[i] > settings.alphaCut;
+			if (has && isNaN(height[i])) { hole[i] = 1; holes++; }
+			else if (has) covered++;
+			else if (!isNaN(height[i])) unused++;
+		}
+		// Fill holes from the nearest covered pixel (a face pixel one higher per px up), else leave them on the floor.
+		if (settings.fill > 0 && holes) {
+			const src = height.slice();
+			for (let i = 0; i < N; i++) {
+				if (!hole[i]) continue;
+				const x = i % W, y = (i / W) | 0;
+				let best = -1, bd = Infinity, bdy = 0;
+				for (let r = 1; r <= settings.fill && best < 0; r++)
+					for (let dy = -r; dy <= r; dy++)
+						for (let dx = -r; dx <= r; dx++) {
+							if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+							const qx = x + dx, qy = y + dy;
+							if (qx < 0 || qy < 0 || qx >= W || qy >= H) continue;
+							const q = qy * W + qx;
+							if (isNaN(src[q]) || hole[q]) continue;
+							const d = dx * dx + dy * dy;
+							if (d < bd) { bd = d; best = q; bdy = dy; }
+						}
+				if (best < 0) continue;
+				const face = Math.abs(normal[best * 3 + 2]) < 0.7;
+				height[i] = Math.max(0, src[best] + (face ? bdy : 0));
+				normal.copyWithin(i * 3, best * 3, best * 3 + 3);
+				rough[i] = rough[best]; metal[i] = metal[best]; owner[i] = owner[best];
+				hole[i] = 2;
+				filled++;
+			}
+		}
+		for (let i = 0; i < N; i++) if (height[i] > 255) { clipped[i] = 1; over++; }
+		const floor = P.floorField(objects, W, H, P.bodyRule(settings));
+		const collision = P.collision(objects, floor, settings);
+		return { w: W, h: H, height, normal, rough, metal, owner, alpha, hole, clipped, floor, collision, art,
+			stats: { covered, holes, filled, unfilled: holes - filled, unused, over } };
+	};
+
+	// Scanline-free triangle raster over the canvas: calls put(index, z, nx, ny, nz) per covered pixel centre.
+	// Screen point of a world point: (X, Y - Z). Back faces (seen from behind) are skipped: on a closed model the surface seen
+	// along a line is always a front face.
+	function rasterTri(p, n, put, W, H) {
+		const s = p.map((q) => [q[0], q[1] - q[2]]);
+		const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[1][1] - s[0][1]) * (s[2][0] - s[0][0]);
+		if (Math.abs(area) < 1e-9) return;
+		// Faces facing the viewer (0, 1, 1) come out with a positive signed area here (screen y down); skip the rest.
+		if (area < 0) return;
+		const x0 = Math.max(0, Math.floor(Math.min(s[0][0], s[1][0], s[2][0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(s[0][0], s[1][0], s[2][0])));
+		const y0 = Math.max(0, Math.floor(Math.min(s[0][1], s[1][1], s[2][1]))), y1 = Math.min(H - 1, Math.ceil(Math.max(s[0][1], s[1][1], s[2][1])));
+		const inv = 1 / area, eps = 1e-6;
+		for (let y = y0; y <= y1; y++)
+			for (let x = x0; x <= x1; x++) {
+				const px = x + 0.5, py = y + 0.5;
+				const w0 = ((s[1][0] - px) * (s[2][1] - py) - (s[1][1] - py) * (s[2][0] - px)) * inv;
+				const w1 = ((s[2][0] - px) * (s[0][1] - py) - (s[2][1] - py) * (s[0][0] - px)) * inv;
+				const w2 = 1 - w0 - w1;
+				if (w0 < -eps || w1 < -eps || w2 < -eps) continue;
+				const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
+				const nn = v3.norm([w0 * n[0][0] + w1 * n[1][0] + w2 * n[2][0], w0 * n[0][1] + w1 * n[1][1] + w2 * n[2][1], w0 * n[0][2] + w1 * n[1][2] + w2 * n[2][2]]);
+				put(y * W + x, z, nn[0], nn[1], nn[2]);
+			}
+	}
+
+	// Floor-plan heightfield: per floor point, the highest (top) and lowest (bottom) model height above it, and the solid spans
+	// in between: each model's surfaces crossing that point pair up into the heights it fills (entering, leaving), so a gap
+	// between two stacked parts (a cart's shelves, a top over a lower part) stays open to light. A floor point can be south of
+	// the canvas (things drawn near the bottom stand further south), so it has H + 256 rows.
+	// rule {step, body}: blocks[model index] lists the floor points where that model's own spans reach into [step, body] (the
+	// player's body), the floor it blocks in footprint collision mode.
+	P.floorField = (objects, W, H, rule = P.bodyRule()) => {
+		const rows = H + 256, top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
+		const spans = new Array(W * rows), blocks = [], owner = new Int32Array(W * rows).fill(-1);
+		let used = H;
+		for (let oi = 0; oi < objects.length; oi++) {
+			const obj = objects[oi];
+			const blocking = [];
+			blocks.push(blocking);
+			const hits = new Map();
+			for (const t of Mesh.triangles(obj)) {
+				const p = [obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]];
+				const area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
+				if (Math.abs(area) < 1e-9) continue;
+				const x0 = Math.max(0, Math.floor(Math.min(p[0][0], p[1][0], p[2][0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(p[0][0], p[1][0], p[2][0])));
+				const y0 = Math.max(0, Math.floor(Math.min(p[0][1], p[1][1], p[2][1]))), y1 = Math.min(rows - 1, Math.ceil(Math.max(p[0][1], p[1][1], p[2][1])));
+				const inv = 1 / area;
+				for (let y = y0; y <= y1; y++)
+					for (let x = x0; x <= x1; x++) {
+						const px = x + 0.5, py = y + 0.5;
+						const w0 = ((p[1][0] - px) * (p[2][1] - py) - (p[1][1] - py) * (p[2][0] - px)) * inv;
+						const w1 = ((p[2][0] - px) * (p[0][1] - py) - (p[2][1] - py) * (p[0][0] - px)) * inv;
+						const w2 = 1 - w0 - w1;
+						if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+						const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2], i = y * W + x;
+						if (z > top[i]) top[i] = z;
+						if (z < bottom[i]) bottom[i] = z;
+						if (y >= used) used = y + 1;
+						if (!hits.has(i)) hits.set(i, []);
+						hits.get(i).push(z);
+					}
+			}
+			// Pair the crossings into filled spans. Two triangles sharing an edge both report a point on it: drop near-duplicates.
+			for (const [i, zs] of hits) {
+				zs.sort((a, b) => a - b);
+				const clean = [];
+				for (const z of zs) if (!clean.length || z - clean[clean.length - 1] > 0.05) clean.push(z);
+				const list = spans[i] || (spans[i] = []);
+				let hit = false;
+				for (let k = 0; k < clean.length; k += 2) {
+					const a = clean[k], b = k + 1 < clean.length ? clean[k + 1] : clean[k] + 0.5;
+					list.push(a, b);
+					if (a < rule.body && b > rule.step) hit = true;
+				}
+				if (hit) blocking.push(i);
+			}
+		}
+		// Different models' spans that touch or overlap (a pillow on a mattress) are one solid; only real gaps stay open.
+		spans.forEach((list, i) => {
+			if (list.length <= 2) return;
+			const pairs = [];
+			for (let k = 0; k < list.length; k += 2) pairs.push([list[k], list[k + 1]]);
+			pairs.sort((a, b) => a[0] - b[0]);
+			const merged = [pairs[0]];
+			for (const p of pairs.slice(1)) {
+				const last = merged[merged.length - 1];
+				if (p[0] <= last[1] + 0.5) last[1] = Math.max(last[1], p[1]);
+				else merged.push(p);
+			}
+			spans[i] = merged.flat();
+		});
+		return { top, bottom, spans, blocks, owner, rows, shown: Math.min(rows, used + 8) };
+	};
+
+	// --- collision ---
+	// Per model, collision mode (o.collision; solid: false = "none"):
+	//   strip      today's rule, built by Godot (addons/studio_import/footprints.gd foot_strips): a 4 px strip along the south edge of the convex
+	//              footprint, for solid models whose bottom is below SOLID_BELOW. You walk into the drawn top.
+	//   footprint  walk-behind: the floor the model really blocks stops the player, so they walk round it and can stand behind it.
+	//              A floor point blocks where one of the model's solid spans reaches into the body, [step, body] px (a shelf hung
+	//              above the head and a rug under the step don't). That mask is pulled in for the player's box (24x12 above the
+	//              feet) the way footprints.gd does strips: sides COLLIDE_SIDE in, south edges COLLIDE_SOUTH north (the feet stop
+	//              4 px in front of the base and can stand right at its back edge), at least COLLIDE_MIN deep (see bodyMask),
+	//              then traced.
+	//   none       never blocks.
+	// Mirrors addons/studio_import/footprints.gd's constants; keep them in sync.
+	const COLLIDE_SOUTH = 8, COLLIDE_SIDE = 3, COLLIDE_MIN = 4, SOLID_BELOW = 30, FEET = { w: 24, h: 12 };
+	P.FEET = FEET;
+	P.bodyRule = (settings = {}) => ({ step: settings.step ?? 4, body: settings.body ?? 40 });
+	P.collisionMode = (o) => (!o.solid ? "none" : o.collision === "footprint" ? "footprint" : "strip");
+
+	// {models: [{mode, polygons (footprint mode, floor px), blocked (floor px count)}] by object index,
+	//  mask Uint8 over the floor plan (1 = floor a footprint model blocks, 2 = its collision, 4 = a strip model's strip, as Godot
+	//  will build it), owner Int32 (model index of the collision there), w, rows}
+	P.collision = (objects, floor, settings) => {
+		const W = floor.top.length / floor.rows, rows = floor.rows, N = W * rows;
+		const mask = new Uint8Array(N), owner = new Int32Array(N).fill(-1);
+		const stripFeet = new Uint8Array(N);
+		let anyStrip = false;
+		const models = objects.map((o, oi) => {
+			const mode = P.collisionMode(o);
+			if (!o.faces.length || mode === "none") return { mode, polygons: [], blocked: 0 };
+			if (mode === "strip") {
+				const b = Mesh.bounds(o, Mesh.faceVerts(o));
+				if (b.min[2] < SOLID_BELOW) {
+					fillConvex(stripFeet, W, rows, hull(Mesh.faceVerts(o).map((i) => [o.verts[i][0], o.verts[i][1]])));
+					anyStrip = true;
+				}
+				return { mode, polygons: [], blocked: 0 };
+			}
+			const idx = floor.blocks[oi] || [];
+			if (!idx.length) return { mode, polygons: [], blocked: 0 };
+			// Local mask over the blocked floor, with room south for the minimum depth.
+			let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+			for (const i of idx) { const x = i % W, y = (i / W) | 0; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+			const ox = x0, oy = y0, w = x1 - x0 + 1, h = y1 - oy + 1 + COLLIDE_MIN;
+			const m = new Uint8Array(w * h);
+			for (const i of idx) { const x = i % W, y = (i / W) | 0; m[(y - oy) * w + (x - ox)] = 1; mask[i] |= 1; }
+			const c = bodyMask(m, w, h);
+			for (let y = 0; y < h; y++)
+				for (let x = 0; x < w; x++) {
+					if (!c[y * w + x]) continue;
+					const gx = x + ox, gy = y + oy;
+					if (gy < 0 || gy >= rows) continue;
+					mask[gy * W + gx] |= 2; owner[gy * W + gx] = oi;
+				}
+			return { mode, polygons: P.trace(c, w, h).map((poly) => poly.map(([x, y]) => [x + ox, y + oy])), blocked: idx.length };
+		});
+		if (anyStrip) {
+			const s = stripMask(stripFeet, W, rows);
+			for (let i = 0; i < N; i++) if (s[i]) mask[i] |= 4;
+		}
+		return { models, mask, owner, w: W, rows };
+	};
+
+	// The body pull-in on a 0/1 mask (w x h): each row's runs lose COLLIDE_SIDE px each end (less on thin runs, never below 2 px),
+	// then each column's runs [a, b) become [a, max(b - SOUTH, a + MIN)): the feet stop 4 px in front of b and can stand at a.
+	// A run thinner than SOUTH + MIN keeps MIN px from its back edge (never reaching north of it, so you can still stand behind
+	// a bed leg; the feet stop a little further out in front instead).
+	function bodyMask(m, w, h) {
+		const s = new Uint8Array(w * h), out = new Uint8Array(w * h);
+		for (let y = 0; y < h; y++)
+			for (let x = 0; x < w;) {
+				if (!m[y * w + x]) { x++; continue; }
+				let e = x;
+				while (e < w && m[y * w + e]) e++;
+				const k = Math.min(COLLIDE_SIDE, Math.max(0, (e - x - 2) >> 1));
+				for (let q = x + k; q < e - k; q++) s[y * w + q] = 1;
+				x = e;
+			}
+		for (let x = 0; x < w; x++)
+			for (let y = 0; y < h;) {
+				if (!s[y * w + x]) { y++; continue; }
+				let e = y;
+				while (e < h && s[e * w + x]) e++;
+				for (let q = y; q < Math.max(e - COLLIDE_SOUTH, y + COLLIDE_MIN); q++) if (q < h) out[q * w + x] = 1;
+				y = e;
+			}
+		return out;
+	}
+
+	// What foot_strips makes of the strip models' merged footprints: per column, the south COLLIDE_MIN px of each run (sides in),
+	// moved COLLIDE_SOUTH north. For the Collision view only (Godot builds the real one from the exported hulls).
+	function stripMask(feet, W, rows) {
+		const s = new Uint8Array(W * rows), out = new Uint8Array(W * rows);
+		for (let y = 0; y < rows; y++)
+			for (let x = 0; x < W;) {
+				if (!feet[y * W + x]) { x++; continue; }
+				let e = x;
+				while (e < W && feet[y * W + e]) e++;
+				const k = e - x > 2 * COLLIDE_SIDE ? COLLIDE_SIDE : e - x > 2 ? 1 : 0;
+				for (let q = x + k; q < e - k; q++) s[y * W + q] = 1;
+				x = e;
+			}
+		for (let x = 0; x < W; x++)
+			for (let y = 0; y < rows;) {
+				if (!s[y * W + x]) { y++; continue; }
+				let e = y;
+				while (e < rows && s[e * W + x]) e++;
+				for (let q = Math.max(0, e - COLLIDE_SOUTH - COLLIDE_MIN); q < e - COLLIDE_SOUTH; q++) out[q * W + x] = 1;
+				y = e;
+			}
+		return out;
+	}
+
+	function fillConvex(mask, W, rows, poly) {
+		if (poly.length < 3) return;
+		const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]);
+		const x0 = Math.max(0, Math.floor(Math.min(...xs))), x1 = Math.min(W - 1, Math.ceil(Math.max(...xs)));
+		const y0 = Math.max(0, Math.floor(Math.min(...ys))), y1 = Math.min(rows - 1, Math.ceil(Math.max(...ys)));
+		for (let y = y0; y <= y1; y++)
+			for (let x = x0; x <= x1; x++) {
+				const px = x + 0.5, py = y + 0.5;
+				let inside = true;
+				for (let i = 0; i < poly.length && inside; i++) {
+					const a = poly[i], b = poly[(i + 1) % poly.length];
+					if ((b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0]) < -1e-9) inside = false;
+				}
+				if (inside) mask[y * W + x] = 1;
+			}
+	}
+
+	// Outlines of a 0/1 pixel mask (w x h) as polygons along the pixel edges (marching squares on the pixel corners), each
+	// clockwise on screen, collinear corners dropped and pixel staircases straightened (Douglas-Peucker, SIMPLIFY px). No convex
+	// hull: an L stays an L. Godot's tile polygons can't have holes, so a part with a hole (a ring) is cut in two through it first.
+	const SIMPLIFY = 1;
+	P.trace = (mask, w, h) => {
+		const loops = traceLoops(mask, w, h);
+		const hole = loops.find((l) => area(l) < 0);
+		if (hole) {
+			const cut = Math.min(...hole.map((p) => p[0]));
+			const left = new Uint8Array(w * h), right = new Uint8Array(w * h);
+			for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (mask[y * w + x]) (x < cut ? left : right)[y * w + x] = 1;
+			return P.trace(left, w, h).concat(P.trace(right, w, h));
+		}
+		return loops.map(simplify).filter((l) => l.length >= 3);
+	};
+
+	// Directed boundary edges with the filled pixel on the right (screen y down), linked into loops; at a corner two diagonal
+	// pixels share, turn right first so they stay separate loops.
+	function traceLoops(mask, w, h) {
+		const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x];
+		const out = new Map(), key = (x, y) => y * (w + 1) + x;
+		const add = (ax, ay, bx, by) => { const k = key(ax, ay); if (!out.has(k)) out.set(k, []); out.get(k).push([ax, ay, bx, by]); };
+		for (let y = 0; y < h; y++)
+			for (let x = 0; x < w; x++) {
+				if (!mask[y * w + x]) continue;
+				if (!at(x, y - 1)) add(x, y, x + 1, y);
+				if (!at(x + 1, y)) add(x + 1, y, x + 1, y + 1);
+				if (!at(x, y + 1)) add(x + 1, y + 1, x, y + 1);
+				if (!at(x - 1, y)) add(x, y + 1, x, y);
+			}
+		const loops = [];
+		for (const list of out.values())
+			while (list.length) {
+				let e = list.pop();
+				const loop = [[e[0], e[1]]], sx = e[0], sy = e[1];
+				for (let guard = 0; guard < 4 * (w + 1) * (h + 1); guard++) {
+					if (e[2] === sx && e[3] === sy) break;
+					loop.push([e[2], e[3]]);
+					const next = out.get(key(e[2], e[3]));
+					const dx = e[2] - e[0], dy = e[3] - e[1];
+					// Right turn of (dx, dy) on screen is (-dy, dx).
+					let pick = next.findIndex((n) => n[2] - n[0] === -dy && n[3] - n[1] === dx);
+					if (pick < 0) pick = next.findIndex((n) => n[2] - n[0] === dx && n[3] - n[1] === dy);
+					if (pick < 0) pick = 0;
+					e = next.splice(pick, 1)[0];
+				}
+				loops.push(loop);
+			}
+		return loops;
+	}
+
+	const area = (l) => { let a = 0; for (let i = 0; i < l.length; i++) { const p = l[i], q = l[(i + 1) % l.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+
+	function simplify(loop) {
+		// Drop collinear corners.
+		let pts = loop.filter((p, i) => {
+			const a = loop[(i + loop.length - 1) % loop.length], b = loop[(i + 1) % loop.length];
+			return (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]) !== 0;
+		});
+		if (pts.length <= 4) return pts;
+		// Douglas-Peucker on the closed loop, split at the corner farthest from the first.
+		let far = 0, fd = -1;
+		pts.forEach((p, i) => { const d = Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]); if (d > fd) { fd = d; far = i; } });
+		const dp = (seq) => {
+			if (seq.length <= 2) return seq;
+			const a = seq[0], b = seq[seq.length - 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+			let worst = 0, wi = 0;
+			for (let i = 1; i < seq.length - 1; i++) {
+				const d = Math.abs((b[0] - a[0]) * (a[1] - seq[i][1]) - (a[0] - seq[i][0]) * (b[1] - a[1])) / len;
+				if (d > worst) { worst = d; wi = i; }
+			}
+			if (worst <= SIMPLIFY) return [a, b];
+			return dp(seq.slice(0, wi + 1)).slice(0, -1).concat(dp(seq.slice(wi)));
+		};
+		const one = dp(pts.slice(0, far + 1)), two = dp(pts.slice(far).concat([pts[0]]));
+		pts = one.slice(0, -1).concat(two.slice(0, -1));
+		return pts;
+	}
+
+	// --- maps ---
+
+	P.mapNormal = (r, i, settings) => {
+		let n = [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]];
+		if (settings.relief > 0) n = relief(r, i, n, settings.relief);
+		// world (east, south, up) -> map (east, up, toward the viewer = south)
+		return [n[0], n[2], n[1]];
+	};
+
+	// The art's shading as a little bump, within one surface (same model, similar normal), clamped.
+	function relief(r, i, n, strength) {
+		const W = r.w, x = i % W, y = (i / W) | 0, d = r.art.data;
+		const lum = (q) => (d[q * 4] * 0.3 + d[q * 4 + 1] * 0.59 + d[q * 4 + 2] * 0.11) / 255;
+		const same = (q) => q >= 0 && q < W * r.h && !isNaN(r.height[q]) && r.owner[q] === r.owner[i] &&
+			r.normal[q * 3] * n[0] + r.normal[q * 3 + 1] * n[1] + r.normal[q * 3 + 2] * n[2] > 0.7 && r.alpha[q] > 0;
+		const l = lum(i);
+		const at = (dx, dy) => { const qx = x + dx, qy = y + dy; if (qx < 0 || qy < 0 || qx >= W || qy >= r.h) return l; const q = qy * W + qx; return same(q) ? lum(q) : l; };
+		const gx = TS.clamp((at(1, 0) - at(-1, 0)) * 0.5 * strength, -0.2, 0.2), gy = TS.clamp((at(0, 1) - at(0, -1)) * 0.5 * strength, -0.2, 0.2);
+		const top = Math.abs(n[2]) >= 0.7;
+		// Along the surface: u to the right, v up the screen.
+		const u = top ? [1, 0, 0] : v3.norm([-n[1], n[0], 0]);
+		const v = top ? [0, -1, 0] : [0, 0, 1];
+		return v3.norm(v3.add(v3.sub(n, v3.scale(u, gx)), v3.scale(v, gy)));
+	}
+
+	// ImageData for each map.
+	P.images = (r, settings) => {
+		const W = r.w, H = r.h, mk = () => new ImageData(W, H);
+		const hgt = mk(), nrm = mk(), pbr = mk();
+		for (let i = 0; i < W * H; i++) {
+			if (r.alpha[i] <= settings.alphaCut) continue;
+			const has = !isNaN(r.height[i]);
+			const h = has ? TS.clamp(Math.round(r.height[i]), 0, 255) : 0;
+			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0;
+			let g = h, b = h;
+			if (settings.packHighlights && has) {
+				g = Math.round(TS.clamp((0.15 + 0.85 * (1 - rough)) * (1 + 0.3 * metal), 0, 1) * 255);
+				b = Math.round((1 - rough) * 255);
+			}
+			hgt.data.set([h, g, b, 255], i * 4);
+			const n = has ? P.mapNormal(r, i, settings) : [0, 1, 0];
+			nrm.data.set([Math.round((n[0] * 0.5 + 0.5) * 255), Math.round((n[1] * 0.5 + 0.5) * 255), Math.round((n[2] * 0.5 + 0.5) * 255), 255], i * 4);
+			pbr.data.set([Math.round(rough * 255), Math.round(metal * 255), 0, 255], i * 4);
+		}
+		return { height: hgt, normal: nrm, pbr };
+	};
+
+	// Everything the engine reads per pixel and per floor point, as ONE RGBA8 image of W x (H + rows), exact bytes (it travels as raw
+	// base64 in the bundle, never through a canvas, which would premultiply alpha and corrupt the channels):
+	//   rows 0..H-1  (art space)   R height px (0-255), G normal x, B normal y (map normal * 0.5 + 0.5; z = sqrt(1 - x^2 - y^2)),
+	//                              A material + 1 (0 = no art); materials = [[roughness, metallic], ...] indexed by A - 1.
+	//   rows H..H+rows-1 (floor)   per floor point: R top + 1 (0 = nothing stands there), G underside, B gap bottom + 1 (0 = no gap),
+	//                              A gap top. A gap is the tallest hole (>= MIN_GAP px) between the solid spans there (a cart's shelves).
+	// The engine builds its heightfield from the floor part exactly instead of guessing it from the art.
+	const MIN_GAP = 3;
+	P.maps = (r, settings) => {
+		const W = r.w, H = r.h, floor = r.floor, rows = floor.shown;
+		const data = new Uint8Array(W * (H + rows) * 4);
+		const materials = [], index = new Map();
+		const material = (rough, metal) => {
+			const key = Math.round(rough * 255) * 256 + Math.round(metal * 255);
+			if (!index.has(key)) {
+				if (materials.length >= 255) return nearest(rough, metal);
+				index.set(key, materials.length);
+				materials.push([Math.round(rough * 255) / 255, Math.round(metal * 255) / 255]);
+			}
+			return index.get(key);
+		};
+		const nearest = (rough, metal) => {
+			let best = 0, bd = Infinity;
+			materials.forEach((m, k) => { const d = (m[0] - rough) ** 2 + (m[1] - metal) ** 2; if (d < bd) { bd = d; best = k; } });
+			return best;
+		};
+		for (let i = 0; i < W * H; i++) {
+			if (r.alpha[i] <= settings.alphaCut) continue;
+			const has = !isNaN(r.height[i]), o = i * 4;
+			const n = has ? P.mapNormal(r, i, settings) : [0, 1, 0];
+			data[o] = has ? TS.clamp(Math.round(r.height[i]), 0, 255) : 0;
+			data[o + 1] = Math.round(TS.clamp(n[0] * 0.5 + 0.5, 0, 1) * 255);
+			data[o + 2] = Math.round(TS.clamp(n[1] * 0.5 + 0.5, 0, 1) * 255);
+			data[o + 3] = material(has ? r.rough[i] : 1, has ? r.metal[i] : 0) + 1;
+		}
+		const byte = (v) => TS.clamp(Math.round(v), 0, 255);
+		let gaps = 0;
+		for (let k = 0; k < W * rows; k++) {
+			if (floor.top[k] < 0) continue;
+			const sp = floor.spans[k], o = (W * H + k) * 4;
+			let under = floor.bottom[k], top = floor.top[k], lo = -1, hi = 0, best = MIN_GAP;
+			if (sp && sp.length >= 2) {
+				under = sp[0]; top = sp[sp.length - 1];
+				for (let j = 1; j + 1 < sp.length; j += 2) {
+					const gap = sp[j + 1] - sp[j];
+					if (gap >= best) { best = gap; lo = sp[j]; hi = sp[j + 1]; }
+				}
+			}
+			data[o] = byte(top) + 1 > 255 ? 255 : byte(top) + 1;
+			data[o + 1] = byte(under);
+			if (lo >= 0) { data[o + 2] = Math.min(255, byte(lo) + 1); data[o + 3] = byte(hi); gaps++; }
+		}
+		return { w: W, h: H, rows, materials, highlights: !!settings.packHighlights, data, gaps };
+	};
+
+	// Version 2 adds each model's `collision` ({mode, polygons}) and the rule it was made with; the version 1 fields stay, so an
+	// older importer still reads it (as strips). Pass the processed result to reuse its collision (else it is computed here).
+	P.footprints = (objects, art, result, settings) => {
+		const rule = P.bodyRule(settings);
+		const col = (result && result.collision && result.collision.models.length === objects.length) ? result.collision :
+			P.collision(objects, P.floorField(objects, art.w, art.h, rule), settings);
+		return {
+			version: 2,
+			canvas: [art.w, art.h],
+			tile: 32,
+			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas (X, Y - Z). footprint = convex hull on the floor plan. " +
+				"collision.mode: strip = the importer's 4 px strip along the footprint's south edge; footprint = collision.polygons (floor px) " +
+				"is what the player's 24x12 feet box collides with: the floor where the model's solid spans reach into [step, body] px, sides " +
+				`pulled in ${COLLIDE_SIDE} px and south edges ${COLLIDE_SOUTH} px north (feet stop 4 px in front, can stand at its back edge); none = never blocks.`,
+			collision: { step: rule.step, body: rule.body, feet: [FEET.w, FEET.h], south: COLLIDE_SOUTH, side: COLLIDE_SIDE, min: COLLIDE_MIN },
+			// Only surfaces count: loose lines and points (drawing aids) are left out, and models made of nothing else.
+			objects: objects.map((o, oi) => [o, col.models[oi]]).filter(([o]) => o.faces.length).map(([o, c]) => {
+				const vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
+				return {
+					name: o.name, solid: o.solid, z: [round2(b.min[2]), round2(b.max[2])],
+					footprint: hull(vi.map((i) => [round2(o.verts[i][0]), round2(o.verts[i][1])])),
+					roughness: o.mat.roughness, metallic: o.mat.metallic,
+					collision: c.mode === "footprint" ? { mode: c.mode, polygons: c.polygons } : { mode: c.mode },
+				};
+			}),
+		};
+	};
+
+	const round2 = (v) => Math.round(v * 100) / 100;
+
+	// The importer's (tools/import_studio.gd) clash check, done here so artists see it before exporting. Models whose footprints
+	// come within 2 px are one piece; each piece anchors every tile column it covers on the row of its lowest bottom there, and
+	// reaches up to the top of its drawn art. Two pieces anchored on different rows of one column, whose spans come within a row
+	// of each other, clash: one layer measures them as one piece there. Returns [{a: names, b: names, col}].
+	P.clashes = (objects) => {
+		const T = 32, JOIN = 2;
+		const items = objects.filter((o) => o.faces.length).map((o) => {
+			const vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
+			return { o, hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])), z0: b.min[2], z1: b.max[2] };
+		});
+		// Pieces: union-find over hulls within JOIN px.
+		const root = items.map((_, i) => i), find = (k) => { while (root[k] !== k) k = root[k]; return k; };
+		for (let a = 0; a < items.length; a++)
+			for (let b = a + 1; b < items.length; b++) if (polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
+		const groups = new Map();
+		items.forEach((it, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(it); });
+		// Per piece and column: [top row, anchor row].
+		const pieces = [...groups.values()].map((its) => {
+			const cols = new Map(), names = [...new Set(its.map((it) => it.o.name))];
+			let top = Infinity;
+			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
+			for (const it of its) {
+				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
+				for (let cx = Math.floor(x0 / T); cx * T < x1; cx++) {
+					const y = maxYIn(it.hull, Math.max(x0, cx * T), Math.min(x1, cx * T + T)) - it.z0;
+					if (!isFinite(y)) continue;
+					const row = Math.floor((y - 0.01) / T);
+					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, row));
+				}
+			}
+			return { names, top: Math.floor(top / T), cols };
+		});
+		const out = [];
+		for (let a = 0; a < pieces.length; a++)
+			for (let b = a + 1; b < pieces.length; b++)
+				for (const [cx, ra] of pieces[a].cols) {
+					if (!pieces[b].cols.has(cx)) continue;
+					const rb = pieces[b].cols.get(cx), ta = Math.min(pieces[a].top, ra), tb = Math.min(pieces[b].top, rb);
+					if (ra !== rb && ta <= rb + 1 && tb <= ra + 1) { out.push({ a: pieces[a].names, b: pieces[b].names, col: cx }); break; }
+				}
+		return out;
+	};
+
+	// How the engine will read the atlas, per 32 px tile cell (the Pieces view). The importer groups models whose footprints come within
+	// 2 px into one piece, puts each piece's light outline and collision on ONE cell per tile column (the cell holding its lowest
+	// bottom row there: its "anchor"), and the lighting then measures every painted cell as part of the first anchored cell at or
+	// below it in its column. So a cell is read correctly only when every piece with art or floor in it is the piece that owns
+	// that anchor. Returns {pieces: [{names, objs, cols: Map column -> anchor row}], pieceOf (per object index, -1 = no surfaces),
+	// artPiece (per art pixel), floorPiece (per floor point), gw, gh, cells: [{cx, cy, content, engine, status, msg}], conflicts,
+	// floating}; status 0 fine, 1 floating (art with no anchored cell below it: flat art to the engine), 2 conflict (a piece's art or
+	// floor sits in a cell the engine reads as another piece's).
+	P.pieces = (objects, r, settings) => {
+		const T = 32, JOIN = 2, W = r.w, H = r.h, rows = r.floor.shown, cut = settings.alphaCut;
+		const items = [];
+		objects.forEach((o, oi) => {
+			if (!o.faces.length) return;
+			const vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
+			items.push({ oi, o, hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])), z0: b.min[2], z1: b.max[2] });
+		});
+		const root = items.map((_, i) => i), find = (k) => { while (root[k] !== k) k = root[k]; return k; };
+		for (let a = 0; a < items.length; a++)
+			for (let b = a + 1; b < items.length; b++) if (polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
+		const groups = new Map();
+		items.forEach((it, i) => { const k = find(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); });
+		const pieceOf = new Int32Array(objects.length).fill(-1);
+		const pieces = [...groups.values()].map((its, id) => {
+			const cols = new Map(), names = [...new Set(its.map((it) => it.o.name))];
+			for (const it of its) {
+				pieceOf[it.oi] = id;
+				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
+				for (let cx = Math.floor(x0 / T); cx * T < x1; cx++) {
+					const y = maxYIn(it.hull, Math.max(x0, cx * T), Math.min(x1, cx * T + T)) - it.z0;
+					if (!isFinite(y)) continue;
+					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, Math.floor((y - 0.01) / T)));
+				}
+			}
+			return { id, names, objs: its.map((it) => it.oi), cols };
+		});
+		const artPiece = new Int16Array(W * H).fill(-1), floorPiece = new Int16Array(W * rows).fill(-1);
+		for (let i = 0; i < W * H; i++) if (r.alpha[i] > cut && r.owner[i] >= 0) artPiece[i] = pieceOf[r.owner[i]];
+		for (let k = 0; k < W * rows; k++) if (r.floor.top[k] >= 0 && r.floor.owner[k] >= 0) floorPiece[k] = pieceOf[r.floor.owner[k]];
+		const gw = Math.ceil(W / T), gh = Math.ceil(rows / T), grid = new Array(gw * gh);
+		const put = (x, y, p) => { const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(p); };
+		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (artPiece[y * W + x] >= 0) put(x, y, artPiece[y * W + x]);
+		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) if (floorPiece[y * W + x] >= 0) put(x, y, floorPiece[y * W + x]);
+		// Per column: the anchors, sorted by row.
+		const anchors = [];
+		for (let cx = 0; cx < gw; cx++) {
+			const list = [];
+			for (const p of pieces) if (p.cols.has(cx)) list.push([p.cols.get(cx), p.id]);
+			anchors.push(list.sort((a, b) => a[0] - b[0]));
+		}
+		const cells = [];
+		let conflicts = 0, floating = 0;
+		for (let cy = 0; cy < gh; cy++)
+			for (let cx = 0; cx < gw; cx++) {
+				const content = [...(grid[cy * gw + cx] || [])];
+				// The engine's reading: the pieces anchored in this cell, else those anchored on the nearest row below.
+				const list = anchors[cx], own = list.filter((a) => a[0] === cy);
+				const below = own.length ? own : (() => { const next = list.find((a) => a[0] > cy); return next ? list.filter((a) => a[0] === next[0]) : []; })();
+				const engine = [...new Set(below.map((a) => a[1]))];
+				if (!content.length && !own.length) continue;
+				let status = 0, msg = "";
+				const stray = content.filter((p) => !engine.includes(p));
+				if (content.length && !engine.length) { status = 1; floating++; msg = `${content.map((p) => pieces[p].names[0]).join(", ")}: art with no anchored cell below it in this column, so the engine treats it as flat art (no height, no shadow)`; }
+				else if (stray.length) {
+					status = 2; conflicts++;
+					msg = `${stray.map((p) => pieces[p].names[0]).join(", ")} sits in a cell the engine reads as ${engine.map((p) => pieces[p].names[0]).join(", ")}`;
+				}
+				cells.push({ cx, cy, content, engine, anchored: own.map((a) => a[1]), status, msg });
+			}
+		return { pieces, pieceOf, artPiece, floorPiece, gw, gh, T, cells, conflicts, floating };
+	};
+
+	// Largest y of a convex polygon over x in [x0, x1] (vertices inside, plus edge crossings of the bounds).
+	function maxYIn(poly, x0, x1) {
+		let best = -Infinity;
+		for (let i = 0; i < poly.length; i++) {
+			const p = poly[i], q = poly[(i + 1) % poly.length];
+			if (p[0] >= x0 && p[0] <= x1) best = Math.max(best, p[1]);
+			for (const x of [x0, x1])
+				if ((p[0] - x) * (q[0] - x) < 0) best = Math.max(best, p[1] + ((x - p[0]) / (q[0] - p[0])) * (q[1] - p[1]));
+		}
+		return best;
+	}
+
+	// Distance between two convex polygons (0 if they overlap).
+	function polyDist(a, b) {
+		const inside = (p, poly) => {
+			if (poly.length < 3) return false;
+			let sign = 0;
+			for (let i = 0; i < poly.length; i++) {
+				const o = poly[i], n = poly[(i + 1) % poly.length], c = (n[0] - o[0]) * (p[1] - o[1]) - (n[1] - o[1]) * (p[0] - o[0]);
+				if (Math.abs(c) < 1e-9) continue;
+				if (sign && Math.sign(c) !== sign) return false;
+				sign = Math.sign(c);
+			}
+			return true;
+		};
+		if (a.some((p) => inside(p, b)) || b.some((p) => inside(p, a))) return 0;
+		const seg = (p, s, t) => {
+			const dx = t[0] - s[0], dy = t[1] - s[1], l = dx * dx + dy * dy;
+			const u = l ? Math.max(0, Math.min(1, ((p[0] - s[0]) * dx + (p[1] - s[1]) * dy) / l)) : 0;
+			return Math.hypot(p[0] - s[0] - u * dx, p[1] - s[1] - u * dy);
+		};
+		let d = Infinity;
+		for (const [P, Q] of [[a, b], [b, a]]) for (const p of P) for (let i = 0; i < Q.length; i++) d = Math.min(d, seg(p, Q[i], Q[(i + 1) % Q.length]));
+		return d;
+	}
+
+	function hull(points) {
+		const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+		if (pts.length < 3) return pts;
+		const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+		const lower = [], upper = [];
+		for (const p of pts) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop(); lower.push(p); }
+		for (const p of pts.reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop(); upper.push(p); }
+		return lower.slice(0, -1).concat(upper.slice(0, -1));
+	}
+})();

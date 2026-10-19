@@ -1,0 +1,275 @@
+// Output viewport: the processed result, to check before exporting.
+//   lit         the art lit by a point light you drag round (height = light height), shaded with the normals, roughness and
+//               metallic, shadows marched through the floor heightfield (like the engine's)
+//   height      black 0 -> white 128, red above 255 (clipped)
+//   normals     the normal map as exported
+//   roughness / metallic
+//   holes       art no model covers: magenta = left on the floor, orange = filled from a neighbour
+//   heightfield the floor plan seen from above: colour = top height, dark stripes = open underneath (a top on legs, an overhang),
+//               light stripes = a gap between stacked parts (shelves), which light passes through
+//   collision   the floor plan: what blocks the player (see _collision); the 24x12 feet box follows the pointer
+// Zoom (wheel, buttons) and pan (middle/right drag) only redraw the cached image; render() recomputes it.
+"use strict";
+(function () {
+	const v3 = TS.v3;
+	const VIEWER = v3.norm([0, 1, 1]);
+	const ZOOMS = [0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+
+	class Output {
+		constructor(canvas) {
+			this.canvas = canvas;
+			this.ctx = canvas.getContext("2d");
+			this.mode = "lit";
+			this.light = { x: 0, y: 0, z: 36, radius: 220, on: false };
+			this.shadows = true;
+			this.ambient = 0.18;
+			this.result = null;
+			this.settings = null;
+			this.image = null;
+			this.view = { s: 0, cx: 0, cy: 0 };
+			this.onzoom = null;
+		}
+
+		set(result, settings) {
+			this.result = result;
+			this.settings = settings;
+			if (result && !this.light.on) { this.light.x = result.w * 0.25; this.light.y = result.h * 0.9; this.light.on = true; }
+			this.render();
+		}
+
+		floorPlan() { return this.mode === "heightfield" || this.mode === "collision"; }
+		rows() { return this.floorPlan() ? this.result.floor.shown : this.result.h; }
+
+		// The collision under the player's feet box at this.feet (floor px; the box is FEET wide, FEET.h tall above the feet):
+		// {mask, owner} of the first colliding pixel, or null when the feet can stand there.
+		feetHit() {
+			const r = this.result, f = this.feet;
+			if (!r || !f) return null;
+			const c = r.collision, W = c.w, fw = TS.Process.FEET.w, fh = TS.Process.FEET.h;
+			const fx = Math.round(f[0]), fy = Math.round(f[1]);
+			for (let y = fy - fh; y < fy; y++)
+				for (let x = fx - fw / 2; x < fx + fw / 2; x++) {
+					if (x < 0 || y < 0 || x >= W || y >= c.rows) continue;
+					const m = c.mask[y * W + x];
+					if (m & 6) return { mask: m, owner: c.owner[y * W + x] };
+				}
+			return null;
+		}
+
+		// Whole-pixel scale that fits the image in the box.
+		fitScale() {
+			const r = this.result, box = this.canvas.parentElement.getBoundingClientRect();
+			return Math.max(1, Math.floor(Math.min((box.width - 8) / r.w, (box.height - 8) / this.rows())));
+		}
+
+		// view.s = 0: fit and centre; else that scale with art point (cx, cy) at the canvas centre.
+		scale() { return this.view.s || this.fitScale(); }
+
+		// Zoom one step of ZOOMS (dir +1 / -1) keeping the art point under canvas px (px, py) in place.
+		zoomAt(px, py, dir) {
+			if (!this.result) return;
+			const s = this.scale(), a = this.toArt(px, py);
+			const next = dir > 0 ? ZOOMS.find((z) => z > s + 1e-6) : [...ZOOMS].reverse().find((z) => z < s - 1e-6);
+			if (!next) return;
+			const w = this.canvas.width, h = this.canvas.height;
+			this.view = { s: next, cx: a[0] - (px - w / 2) / next, cy: a[1] - (py - h / 2) / next };
+			this.draw();
+		}
+
+		// Pan by a drag of (dx, dy) canvas px.
+		pan(dx, dy) {
+			if (!this.result) return;
+			const s = this.scale();
+			if (!this.view.s) this.view = { s, cx: (this.canvas.width / 2 - this.ox) / s, cy: (this.canvas.height / 2 - this.oy) / s };
+			this.view.cx -= dx / s; this.view.cy -= dy / s;
+			this.draw();
+		}
+
+		fit() { this.view = { s: 0, cx: 0, cy: 0 }; this.draw(); }
+
+		// Screen px (in the canvas) -> canvas art px.
+		toArt(px, py) {
+			const s = this.scale();
+			return [(px - this.ox) / s, (py - this.oy) / s];
+		}
+
+		// Recompute the image for the current mode, then draw it.
+		render() {
+			const r = this.result;
+			this.off = null;
+			if (r) {
+				const rows = this.rows(), img = new ImageData(r.w, rows);
+				if (this.mode === "heightfield") this._heightfield(img);
+				else if (this.mode === "collision") this._collision(img);
+				else this._pixels(img);
+				this.off = document.createElement("canvas");
+				this.off.width = r.w; this.off.height = rows;
+				this.off.getContext("2d").putImageData(img, 0, 0);
+			}
+			this.draw();
+		}
+
+		// Draw the last computed image at the current zoom and pan (cheap: zooming and panning only call this).
+		draw() {
+			const r = this.result, ctx = this.ctx;
+			const box = this.canvas.parentElement.getBoundingClientRect();
+			this.canvas.width = Math.max(1, box.width);
+			this.canvas.height = Math.max(1, box.height);
+			ctx.fillStyle = "#16161b";
+			ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+			if (this.onzoom) this.onzoom(r ? this.scale() : 0);
+			if (!r || !this.off) return;
+			const rows = this.off.height, s = this.scale();
+			if (this.view.s) {
+				this.ox = Math.round(this.canvas.width / 2 - this.view.cx * s);
+				this.oy = Math.round(this.canvas.height / 2 - this.view.cy * s);
+			} else {
+				this.ox = Math.floor((this.canvas.width - r.w * s) / 2);
+				this.oy = Math.floor((this.canvas.height - rows * s) / 2);
+			}
+			ctx.imageSmoothingEnabled = false;
+			ctx.drawImage(this.off, this.ox, this.oy, r.w * s, rows * s);
+			if (this.mode === "lit") {
+				// The light: its floor point and where it hangs.
+				const fx = this.ox + this.light.x * s, fy = this.oy + this.light.y * s, hy = fy - this.light.z * s;
+				ctx.strokeStyle = "rgba(255,220,120,0.8)";
+				ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, hy); ctx.stroke();
+				ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.stroke();
+				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(fx, hy, 5, 0, Math.PI * 2); ctx.fill();
+			}
+			if (this.mode === "collision") {
+				// The exported polygons, then the feet box under the pointer (green: the feet can stand here, red: blocked).
+				ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 1;
+				for (const m of r.collision.models)
+					for (const poly of m.polygons) {
+						ctx.beginPath();
+						poly.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](this.ox + p[0] * s + 0.5, this.oy + p[1] * s + 0.5));
+						ctx.closePath(); ctx.stroke();
+					}
+				if (this.feet) {
+					const F = TS.Process.FEET, fx = Math.round(this.feet[0]), fy = Math.round(this.feet[1]), hit = this.feetHit();
+					ctx.strokeStyle = hit ? "#ff4d4d" : "#5dff8a"; ctx.lineWidth = 2;
+					ctx.strokeRect(this.ox + (fx - F.w / 2) * s, this.oy + (fy - F.h) * s, F.w * s, F.h * s);
+					ctx.fillStyle = ctx.strokeStyle;
+					ctx.beginPath(); ctx.arc(this.ox + fx * s, this.oy + fy * s, 3, 0, Math.PI * 2); ctx.fill();
+					ctx.lineWidth = 1;
+				}
+			}
+		}
+
+		// Collision: the floor plan, dim by top height; red = floor a footprint-mode model blocks (its spans reach into the body),
+		// bright red = its collision (that floor pulled in for the feet box), orange = a strip model's strip; yellow outlines = the
+		// exported polygons (drawn in draw()).
+		_collision(img) {
+			const r = this.result, f = r.floor, c = r.collision, d = img.data;
+			for (let y = 0; y < f.shown; y++)
+				for (let x = 0; x < r.w; x++) {
+					const k = y * r.w + x, o = k * 4, m = c.mask[k];
+					let g = f.top[k] < 0 ? (y < r.h ? 26 : 16) : 50 + TS.clamp(f.top[k] / 96, 0, 1) * 60;
+					let col = [g, g, g + 4];
+					if (m & 2) col = [230, 60, 60];
+					else if (m & 4) col = [240, 150, 40];
+					else if (m & 1) col = [120, 40, 44];
+					d.set([col[0], col[1], col[2], 255], o);
+				}
+		}
+
+		_pixels(img) {
+			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut;
+			for (let y = 0; y < r.h; y++)
+				for (let x = 0; x < r.w; x++) {
+					const i = y * r.w + x, o = i * 4;
+					if (r.alpha[i] <= cut) {
+						if (this.mode === "lit") { const f = this._floor(x + 0.5, y + 0.5, 0); d.set([f * 34, f * 34, f * 40, 255], o); }
+						else d.set([22, 22, 27, 255], o);
+						continue;
+					}
+					const has = !isNaN(r.height[i]);
+					const a = [art[o], art[o + 1], art[o + 2]];
+					switch (this.mode) {
+						case "lit": d.set(this._lit(r, i, x, y, a), o); d[o + 3] = 255; break;
+						case "height": {
+							if (!has) { d.set([255, 0, 255, 255], o); break; }
+							const v = TS.clamp(r.height[i] / 128, 0, 1) * 255;
+							d.set(r.clipped[i] ? [255, 40, 40, 255] : [v, v, v, 255], o);
+							break;
+						}
+						case "normals": {
+							const n = has ? TS.Process.mapNormal(r, i, this.settings) : [0, 1, 0];
+							d.set([(n[0] * 0.5 + 0.5) * 255, (n[1] * 0.5 + 0.5) * 255, (n[2] * 0.5 + 0.5) * 255, 255], o);
+							break;
+						}
+						case "roughness": { const v = (has ? r.rough[i] : 1) * 255; d.set([v, v, v, 255], o); break; }
+						case "metallic": { const v = (has ? r.metal[i] : 0) * 255; d.set([v, v * 0.85, v * 0.5, 255], o); break; }
+						case "holes": {
+							const g = (a[0] * 0.3 + a[1] * 0.59 + a[2] * 0.11) * 0.35;
+							d.set(r.hole[i] === 1 ? [255, 0, 255, 255] : r.hole[i] === 2 ? [255, 150, 0, 255] : r.clipped[i] ? [255, 40, 40, 255] : [g, g, g, 255], o);
+							break;
+						}
+					}
+				}
+		}
+
+		// Floor-light term for empty canvas, so the light's reach shows.
+		_floor(x, y, h) {
+			const l = this.light, dx = l.x - x, dy = l.y - (y + h), dz = l.z - h, dist = Math.hypot(dx, dy, dz);
+			const att = Math.max(0, 1 - dist / l.radius);
+			return 0.4 + 2 * att * att * (dz / dist);
+		}
+
+		_lit(r, i, x, y, albedo) {
+			const has = !isNaN(r.height[i]);
+			const h = has ? r.height[i] : 0;
+			const n = has ? [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]] : [0, 0, 1];
+			const p = [x + 0.5, y + 0.5 + h, h];
+			const toL = v3.sub([this.light.x, this.light.y, this.light.z], p), dist = v3.len(toL), l = v3.scale(toL, 1 / dist);
+			const att = Math.max(0, 1 - dist / this.light.radius) ** 2;
+			const ndl = Math.max(0, v3.dot(n, l));
+			let shade = ndl * att;
+			if (shade > 0 && this.shadows && this._shadowed(r, p, toL)) shade = 0;
+			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0;
+			const a = albedo.map((c) => c / 255);
+			const half = v3.norm(v3.add(l, VIEWER));
+			const shin = Math.max(2, 2 / Math.max(0.02, rough ** 4) - 2);
+			const spec = Math.pow(Math.max(0, v3.dot(n, half)), shin) * ((shin + 8) / (8 * Math.PI)) * 0.25;
+			const out = [0, 1, 2].map((k) => {
+				const f0 = 0.04 + (a[k] - 0.04) * metal;
+				const diffuse = a[k] * (1 - metal) * (this.ambient + 2.2 * shade);
+				const amb = a[k] * metal * this.ambient * 0.6;
+				return TS.clamp((diffuse + amb + f0 * spec * 2.2 * shade) * 255, 0, 255);
+			});
+			return out;
+		}
+
+		// March from the surface point toward the light over the floor heightfield: blocked where a model spans that height.
+		_shadowed(r, p, toL) {
+			const f = r.floor, W = r.w, steps = Math.ceil(Math.hypot(toL[0], toL[1]));
+			if (steps < 1) return false;
+			for (let s = 2; s <= steps; s++) {
+				const t = s / steps, x = Math.floor(p[0] + toL[0] * t), y = Math.floor(p[1] + toL[1] * t), z = p[2] + toL[2] * t;
+				if (x < 0 || y < 0 || x >= W || y >= f.rows) continue;
+				const k = y * W + x;
+				const sp = f.spans[k];
+				if (!sp) continue;
+				for (let j = 0; j < sp.length; j += 2) if (sp[j] < z - 0.25 && sp[j + 1] > z + 0.75) return true;
+			}
+			return false;
+		}
+
+		_heightfield(img) {
+			const r = this.result, f = r.floor, d = img.data;
+			for (let y = 0; y < f.shown; y++)
+				for (let x = 0; x < r.w; x++) {
+					const k = y * r.w + x, o = k * 4;
+					if (f.top[k] < 0) { const g = y < r.h ? 26 : 16; d.set([g, g, g + 4, 255], o); continue; }
+					const t = TS.clamp(f.top[k] / 96, 0, 1);
+					let c = [40 + 60 * t, 90 + 150 * t, 200 - 120 * t];
+					if (f.bottom[k] > 0.75 && (x + y) % 6 < 3) c = c.map((v) => v * 0.35);
+					else if (f.spans[k] && f.spans[k].length > 2 && (x - y) % 6 < 2) c = c.map((v) => v * 0.55 + 90);
+					d.set([c[0], c[1], c[2], 255], o);
+				}
+		}
+	}
+
+	TS.Output = Output;
+})();
