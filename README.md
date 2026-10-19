@@ -5,14 +5,6 @@ over the drawing, in the tileset's own projection, and the studio renders height
 
 **Upload tileset → model over the art → Process → check → Export.**
 
-No install, no build, no internet: open `index.html` in a desktop browser (Chrome/Edge/Firefox with WebGL2), or serve the
-project with `serve.ps1` (`http://127.0.0.1:8765/tools/tileset_studio/`), which also lets you open files by URL:
-`?tileset=/art/x.png` or `?project=/tools/tileset_studio/samples/ward_bedroom2.studio.json`. The whole tool is this folder;
-copy it anywhere to hand it out.
-
-Try the sample: open `samples/ward_bedroom2.studio.json` (Open project), a 128x128 crop of the Ward's Bedroom 2 with the bed,
-wheelchair, bucket and cart modelled.
-
 ## The view
 
 The model view shows the tileset exactly as drawn, with the tile grid (32 px). The three axes have names and colours
