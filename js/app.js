@@ -8,7 +8,7 @@
 		name: "tileset", art: null, artURL: null,
 		objects: [], active: null, selected: new Set(),
 		edit: false, elemMode: "face", elemSel: new Set(),
-		cursor: [0, 0, 0], snap: 32, shade: "art", opacity: 0.55, xray: false, grid: true,
+		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, grid: true,
 		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4 },
 		autoProcess: true, result: null,
 	});
