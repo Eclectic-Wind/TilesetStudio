@@ -214,9 +214,9 @@
 	L.push({
 		title: "The big idea", dur: 14,
 		caps: [
-			{ t: 0, say: "Your art is a flat picture.", sub: "Pretty, but the game can't tell how tall anything is." },
-			{ t: 3.4, say: "The Studio puts simple boxes under it.", sub: "Same picture, same place. The boxes just add depth." },
-			{ t: 6.2, say: "Turn it around: now it has height and depth.", sub: "That's what lets the game light it, shadow it and block the player." },
+			{ t: 0, say: "Your art is a flat picture.", sub: "Pretty, but the game can't tell how high (Z) or how deep (Y) anything is." },
+			{ t: 3.4, say: "The Studio puts simple boxes under it.", sub: "Same picture, same place. The boxes add the missing X, Y and Z." },
+			{ t: 6.2, say: "Turn it around: now it has depth (Y) and height (Z).", sub: "That's what lets the game light it, shadow it and block the player." },
 			{ t: 10.4, say: "Your job: make the boxes match the art.", sub: "Not pretty. Just the right size, in the right spot." },
 		],
 		show: [["lit", "Lit view"], ["kind", "Kind view"]],
@@ -238,7 +238,7 @@
 				if (aa > 0.01) {
 					const o = project([64, 129, 0], cam), px = project([64 + 38, 129, 0], cam), py = project([64, 129 + 34, 0], cam), pz = project([64, 129, 52], cam);
 					arrow(g, o, px, C.x, aa); arrow(g, o, py, C.y, aa); arrow(g, o, pz, C.z, aa);
-					pill(g, px[0] + 22, px[1] + 2, "wide", C.x, aa, 13); pill(g, py[0] + 12, py[1] + 14, "deep", C.y, aa, 13); pill(g, pz[0], pz[1] - 16, "tall", C.z, aa, 13);
+					pill(g, px[0] + 22, px[1] + 2, "X across", C.x, aa, 13); pill(g, py[0] + 12, py[1] + 14, "Y depth", C.y, aa, 13); pill(g, pz[0], pz[1] - 16, "Z height", C.z, aa, 13);
 				}
 				pill(g, 112, 28, t < 3.4 ? "① the art" : "② the art + boxes", C.amber, 1, 14);
 			};
@@ -297,7 +297,7 @@
 		caps: [
 			{ t: 0, say: "A lamp lights your scene.", sub: "It lights the boxes you made, using the art's colours." },
 			{ t: 3.6, say: "And the boxes throw shadows.", sub: "Taller box, longer shadow. That's why heights matter." },
-			{ t: 8.6, say: "Lower the lamp and shadows stretch out.", sub: "A high lamp makes short shadows." },
+			{ t: 8.6, say: "Lower the lamp and shadows stretch out.", sub: "A lamp high up (big Z) makes short shadows." },
 			{ t: 12.6, say: "A wrong box height gives a wrong shadow.", sub: "Not the picture: the box." },
 		],
 		show: [["lit", "Lit view (drag the light)"]],
@@ -336,10 +336,10 @@
 	L.push({
 		title: "Walk over it, or blocked?", dur: 16,
 		caps: [
-			{ t: 0, say: "Our character wants to walk east.", sub: "The stone floor is only 2 px thick." },
-			{ t: 3, say: "Low things are walked over.", sub: "Under about 2 px tall the game calls it floor: no collision." },
-			{ t: 7.4, say: "Now north, toward the wall.", sub: "The wall is 96 px tall." },
-			{ t: 10, say: "Tall things block you.", sub: "A thin collision strip along the wall's front stops the player." },
+			{ t: 0, say: "Our character wants to walk east.", sub: "The stone floor is only 2 px of height (Z)." },
+			{ t: 3, say: "Low things are walked over.", sub: "Under about 2 px of height (Z) the game calls it floor: no collision." },
+			{ t: 7.4, say: "Now north, toward the wall.", sub: "The wall is 96 px of height (Z)." },
+			{ t: 10, say: "Things with real height (Z) block you.", sub: "A thin collision strip along the wall's front stops the player." },
 			{ t: 13.4, say: "You rarely set this by hand.", sub: "The Studio works it out from the heights. You can override it per model." },
 		],
 		show: [["kind", "Kind view"], ["collision", "Collision view"]],
@@ -362,7 +362,7 @@
 				const c = project([22 + ex * (1 - back), 187 + dy, 70], cam);
 				if (east > 0.45 && t < 7.4) pill(g, project([112, 165, 0], cam)[0], project([112, 165, 0], cam)[1] + 4, "floor: walk over it ✓", C.ok, seg(t, 4.2, 5), 14);
 				if (blocked) { pill(g, c[0] + 56, c[1] - 6, "✋ blocked", C.bad, 1, 15); }
-				if (seg(t, 7.4, 8.4) > 0 && t < 13.4) pill(g, project([112, 118, 98], cam)[0], project([112, 118, 98], cam)[1] - 18, "wall: 96 px tall", C.wall, seg(t, 7.4, 8.4), 13);
+				if (seg(t, 7.4, 8.4) > 0 && t < 13.4) pill(g, project([112, 118, 98], cam)[0], project([112, 118, 98], cam)[1] - 18, "wall: Z 96 px", C.wall, seg(t, 7.4, 8.4), 13);
 			};
 		},
 	});
@@ -372,7 +372,7 @@
 		{ k: "floor", say: "Floor: you walk on it.", sub: "Rugs, paths, the stone floor here.", key: "floor" },
 		{ k: "deco", say: "Deco: it only looks nice.", sub: "Posters, grass tufts. No collision, no shadow.", key: "poster" },
 		{ k: "solid", say: "Solid: it blocks you.", sub: "Tables, crates, beds.", key: "crate" },
-		{ k: "wall", say: "Wall: the tall wall at the back.", sub: "The torch's light lands on it.", key: "wall" },
+		{ k: "wall", say: "Wall: the big wall at the back.", sub: "The torch's light lands on it.", key: "wall" },
 		{ k: "side", say: "Side: a wall on the left or right.", sub: "It blocks light going east and west.", key: "side" },
 	];
 	L.push({
