@@ -8,10 +8,22 @@
 		name: "tileset", art: null, artURL: null,
 		objects: [], active: null, selected: new Set(),
 		edit: false, elemMode: "face", elemSel: new Set(),
-		cursor: [0, 0, 0], snap: 32, shade: "art", opacity: 0.55, xray: false, grid: true,
-		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4 },
+		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, grid: true,
+		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 },
 		autoProcess: true, result: null,
+		bundleId: newUUID(),
+		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
+	// The Studio had no version number yet: this is the one written to bundles (bump it by hand per release).
+	const STUDIO_VERSION = "1.0.0";
+	// Generated once per project, saved in the project file; lets the importer tell a moved / renamed export from a new one.
+	function newUUID() {
+		if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+		const b = crypto.getRandomValues(new Uint8Array(16));
+		b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+		const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+		return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+	}
 	const undoStack = [], redoStack = [];
 	let renderer, output, modal = null, loopHover = null, mouse = [0, 0], spaceDown = false, dirty = true;
 	let pencil = null, exchange = null;
@@ -53,7 +65,7 @@
 		if (modal) return;
 		if (S.tool === "pencil") return pencilHint();
 		if (S.tool === "stamp" && exchange) return exchange.hint();
-		const base = "Shift+A add · G move (or drag a selected piece) · S scale · R turn · Tab edit · right-click/C: 3D cursor (stacks on tops) · F frame · wheel/+/-: zoom · Space-drag: pan · Alt/middle-drag: look round · 5: stay in 3D · snap " + S.snap + " px";
+		const base = "Shift+A add · G move (or drag a selected piece) · S scale · R turn · Tab edit · right-click/C: 3D cursor (stacks on tops) · F frame · wheel/+/-: zoom · Space-drag: pan · Alt/middle-drag: look round · 5: stay in 3D · snap " + snapText();
 		const edit = "1/2/3 vertex/edge/face · white = what a click picks; click again: the one behind · Alt+Z X-ray: pick through faces · E extrude (Alt+E manifold) · F fill · Ctrl+E bridge · Ctrl+right-click: new point · K knife · I inset · Ctrl+B bevel · Ctrl+R loop cut · A all · G/S/R, then X/Y/Z (twice: local) · Shift fine";
 		const in3d = "3D view (5 goes back): drag orbits · Shift-drag pans · Ctrl-drag box-selects · drag a selected piece to move it · wheel zooms · F frames · all tools and keys work · ";
 		status((S.stay3d ? in3d : "") + (S.edit ? "EDIT " + S.elemMode + " — " + edit : S.stay3d ? "Tab edit · Shift+A add · G/S/R" : base));
@@ -99,24 +111,123 @@
 		await setTileset(dataURL, url.split("/").pop());
 	}
 
+	// --- references ---
+	// A reference is another tileset (a .studio.json project, or a Godot .export.json bundle) shown as a translucent ghost to trace
+	// over or compare with: its art as a faint picture, its models as faint outlines. It only moves across the floor (X, Y): its
+	// height is locked, so the heights it was built with stay true. Saved in the project. A bundle has no meshes, only each model's
+	// footprint and height range, so its models show as prisms (open the .studio.json for the exact shapes).
+
+	const newRefId = () => "r" + Math.random().toString(36).slice(2, 9);
+	const refById = (id) => S.refs.find((r) => r.id === id) || null;
+	const activeRef = () => refById(S.refActive);
+
+	// A model's footprint hull extruded between its lowest and highest point.
+	function prism(name, hull, z0, z1) {
+		const n = hull.length;
+		if (n < 2) return null;
+		if (!(z1 > z0)) z1 = z0 + 0.5;
+		const verts = hull.map((p) => [p[0], p[1], z0]).concat(hull.map((p) => [p[0], p[1], z1])), faces = [];
+		for (let i = 0; i < (n === 2 ? 1 : n); i++) faces.push({ v: [i, (i + 1) % n, n + ((i + 1) % n), n + i] });
+		if (n >= 3) { faces.push({ v: [...Array(n).keys()].map((i) => n + i) }); faces.push({ v: [...Array(n).keys()] }); }
+		return { name, verts, faces };
+	}
+
+	async function parseReference(text) {
+		const p = JSON.parse(text);
+		let atlas, meshes, approx = false;
+		if (p.format === "tileset-studio") {
+			atlas = p.tileset;
+			meshes = (p.objects || []).filter((o) => o.faces && o.faces.length).map((o) => ({ name: o.name, verts: o.verts, faces: o.faces.map((f) => ({ v: f.v })) }));
+		} else if (p.format === "tileset-studio-export") {
+			atlas = p.images && p.images.atlas;
+			meshes = ((p.footprints && p.footprints.objects) || []).map((o) => prism(o.name, o.footprint || [], o.z ? o.z[0] : 0, o.z ? o.z[1] : 0)).filter(Boolean);
+			approx = true;
+		} else throw new Error("That file is not a Tileset Studio project (.studio.json) or Godot bundle (.export.json).");
+		if (!atlas) throw new Error("That file has no tileset image to show.");
+		const img = await loadImage(atlas);
+		return { id: newRefId(), name: p.name || "reference", w: img.width, h: img.height, atlas, meshes, approx, dx: 0, dy: 0, opacity: 0.5, showArt: true, showModels: true, visible: true };
+	}
+
+	async function loadRefArt(ref) { renderer.setRefArt(ref.id, await loadImage(ref.atlas)); dirty = true; }
+
+	async function addReference(text) {
+		const ref = await parseReference(text);
+		S.refs.push(ref); S.refActive = ref.id;
+		await loadRefArt(ref);
+		refPanel(); markUnsaved(); dirty = true;
+		status(`Added reference "${ref.name}"${ref.approx ? " (from a bundle: models show as outlines)" : ""}. Press ✥ Move under References and drag in the view: it slides across the floor, its height stays locked.`);
+		return ref;
+	}
+
+	function removeReference(id) {
+		renderer.dropRefArt(id);
+		S.refs = S.refs.filter((r) => r.id !== id);
+		if (S.refActive === id) S.refActive = S.refs.length ? S.refs[S.refs.length - 1].id : null;
+		if (S.tool === "ref" && !S.refs.length) setTool("select");
+		refPanel(); markUnsaved(); dirty = true;
+	}
+
+	// Keeps the X / Y fields in step while it is dragged.
+	function refSyncXY(r) {
+		const row = document.querySelector(`#refs .ref[data-id="${r.id}"]`);
+		if (!row) return;
+		row.querySelector('[data-a="x"]').value = r.dx; row.querySelector('[data-a="y"]').value = r.dy;
+	}
+
+	function refPanel() {
+		const el = $("refs");
+		if (!el) return;
+		const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+		if (!S.refs.length) { el.innerHTML = `<p class="dim">Add another tileset (.studio.json, or a Godot .export.json) as a faint ghost to trace over or compare with. It only slides across the floor; its height stays locked.</p>`; return; }
+		el.innerHTML = S.refs.map((r) => `<div class="ref${r.id === S.refActive ? " active" : ""}" data-id="${r.id}">
+			<div class="rh"><button class="eye" data-a="vis" title="Show / hide">${r.visible ? "●" : "◌"}</button><span class="rn" title="${esc(r.name)}">${esc(r.name)}${r.approx ? " <i title='From a bundle: models show as footprint outlines'>(outlines)</i>" : ""}</span>
+				<button data-a="move" title="Move it: drag in the view. It slides across the floor (X, Y); its height is locked.">✥ Move</button><button data-a="del" title="Remove this reference">✕</button></div>
+			<label class="lr2">Opacity <input type="range" data-a="op" min="0" max="1" step="0.05" value="${r.opacity}"></label>
+			<div class="rc"><label><input type="checkbox" data-a="art" ${r.showArt ? "checked" : ""}> Picture</label><label><input type="checkbox" data-a="mod" ${r.showModels ? "checked" : ""}> Models</label></div>
+			<div class="xy"><label class="ax-x">X <input type="number" data-a="x" value="${r.dx}"></label><label class="ax-y">Y <input type="number" data-a="y" value="${r.dy}"></label><span class="lock" title="Height (Z) can't be changed: it stays where it was built">🔒 Z fixed</span></div>
+		</div>`).join("");
+		for (const row of el.querySelectorAll(".ref")) {
+			const r = refById(row.dataset.id), q = (a) => row.querySelector(`[data-a="${a}"]`);
+			const pick = () => { S.refActive = r.id; el.querySelectorAll(".ref").forEach((x) => x.classList.toggle("active", x === row)); };
+			row.onclick = () => { if (S.refActive !== r.id) pick(); };
+			q("vis").onclick = () => { r.visible = !r.visible; refPanel(); markUnsaved(); dirty = true; };
+			q("del").onclick = (e) => { e.stopPropagation(); removeReference(r.id); };
+			q("move").onclick = (e) => { e.stopPropagation(); pick(); setTool("ref"); status("Drag in the view to move the reference across the floor. Its height is locked. Q goes back to select."); };
+			q("op").oninput = () => { r.opacity = parseFloat(q("op").value); dirty = true; };
+			q("op").onchange = () => markUnsaved();
+			q("art").onchange = () => { r.showArt = q("art").checked; markUnsaved(); dirty = true; };
+			q("mod").onchange = () => { r.showModels = q("mod").checked; markUnsaved(); dirty = true; };
+			q("x").onchange = () => { const v = parseFloat(q("x").value); if (!isNaN(v)) { r.dx = v; markUnsaved(); dirty = true; } else q("x").value = r.dx; };
+			q("y").onchange = () => { const v = parseFloat(q("y").value); if (!isNaN(v)) { r.dy = v; markUnsaved(); dirty = true; } else q("y").value = r.dy; };
+		}
+	}
+
 	function projectJSON() {
-		return JSON.stringify({ format: "tileset-studio", version: 1, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
-			settings: S.settings, objects: S.objects }, null, 1);
+		return JSON.stringify({ format: "tileset-studio", version: 1, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
+			settings: S.settings, objects: S.objects, references: S.refs }, null, 1);
 	}
 
 	async function openProject(text) {
 		const p = JSON.parse(text);
+		// A Godot bundle is not a project to edit: it is added as a reference ghost (drop one in, or Add reference).
+		if (p.format === "tileset-studio-export") { addReference(text).catch((err) => alert(err.message)); return; }
 		if (p.format !== "tileset-studio") { alert("Not a Tileset Studio project."); return; }
 		if (pencil || S.tool === "stamp") setTool("select");
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.objects = p.objects || [];
 		Mesh.bumpIds(S.objects);
-		S.cursor = p.cursor || S.cursor; S.snap = p.snap || 32;
+		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
-		Object.assign(S.settings, { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4 }, p.settings || {});
+		Object.assign(S.settings, { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 }, p.settings || {});
+		S.bundleId = typeof p.bundleId === "string" && p.bundleId ? p.bundleId : newUUID();
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
+		for (const r of S.refs) renderer.dropRefArt(r.id);
+		S.refs = Array.isArray(p.references) ? p.references : []; S.refActive = S.refs.length ? S.refs[S.refs.length - 1].id : null;
+		S.refs.forEach((r) => loadRefArt(r).catch(() => {}));
+		refPanel();
 		undoStack.length = 0; redoStack.length = 0;
-		unsaved = false;
+		unsaved = !p.bundleId; // an older project gets its id now: autosave keeps it until the project is saved
+		if (unsaved) markUnsaved();
 		$("snap").value = S.snap;
 		settingsToControls();
 		changed();
@@ -124,7 +235,7 @@
 	}
 
 	// The Processing panel shows the open project's settings.
-	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat]];
+	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16]];
 	function settingsToControls() {
 		for (const [id, key] of SETTING_IDS) if ($(id)) $(id).value = S.settings[key];
 		if ($("s_pack")) $("s_pack").checked = !!S.settings.packHighlights;
@@ -181,7 +292,7 @@
 	// View preferences remembered per browser (snap, display, output view and light).
 	const PREF_IDS = ["snap", "shade", "opacity", "xray", "grid", "auto", "lightz", "lightr", "shadows"];
 	function savePrefs() {
-		const p = { outMode: output ? output.mode : "lit" };
+		const p = { outMode: output ? output.mode : "lit", snapV: 2 };
 		for (const id of PREF_IDS) { const el = $(id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
 		try { localStorage.setItem("ts.prefs", JSON.stringify(p)); } catch (err) { /* storage blocked: not remembered */ }
 	}
@@ -189,6 +300,7 @@
 		let p = null;
 		try { p = JSON.parse(localStorage.getItem("ts.prefs") || "null"); } catch (err) { /* storage blocked or bad data */ }
 		if (!p) return;
+		if (p.snapV !== 2) delete p.snap; // the default snap is now 1 px: an old remembered choice (often 32) doesn't override it once
 		for (const id of PREF_IDS) {
 			if (!(id in p)) continue;
 			const el = $(id);
@@ -229,8 +341,10 @@
 		// Raw bytes as base64 (chunked: String.fromCharCode can't take megabytes at once).
 		let bin = "";
 		for (let i = 0; i < maps.data.length; i += 0x8000) bin += String.fromCharCode.apply(null, maps.data.subarray(i, i + 0x8000));
+		const now = new Date().toISOString();
 		return JSON.stringify({
-			format: "tileset-studio-export", version: 2, name, tile: 32, canvas: [S.art.w, S.art.h], exported: new Date().toISOString(),
+			format: "tileset-studio-export", version: 3, name, tile: 32, canvas: [S.art.w, S.art.h], exported: now,
+			bundleId: S.bundleId, exportedAt: now, studioVersion: STUDIO_VERSION, walkOverHeight: TS.Process.walkOver(S.settings),
 			images: { atlas: artDataURL() },
 			maps: { w: maps.w, h: maps.h, rows: maps.rows, materials: maps.materials, highlights: maps.highlights, data: btoa(bin) },
 			footprints: TS.Process.footprints(S.objects, S.art, S.result, S.settings),
@@ -261,8 +375,13 @@
 	function processNow() {
 		if (!S.art) return;
 		const t0 = performance.now();
+		const roleSig = (r) => (r && r.roles ? r.roles.map((x) => `${x.kind}/${x.mode}/${x.heightMin}/${x.heightMax}`).join() : "");
+		const before = roleSig(S.result);
 		S.result = TS.Process.run(S.objects, S.art, S.settings);
+		if (roleSig(S.result) !== before) panels(); // the properties / outliner show resolved kind, collision and heights
+		S.result.pieceMap = TS.Process.pieces(S.objects, S.result, S.settings);
 		output.set(S.result, S.settings);
+		pieceInfo();
 		const st = S.result.stats, clashes = TS.Process.clashes(S.objects);
 		holeCells = null;
 		const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -272,6 +391,59 @@
 			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms` +
 			(clashes.length ? `<span class="clash" title="${esc(clashText.join("\n"))}&#10;Pieces standing on different rows of one tile column: in one tile layer the upper one is measured as part of the lower one there (the importer prints the same). Move one of them to its own columns, or onto the same row.">⚠ ${clashes.length} column clash${clashes.length > 1 ? "es" : ""}: ${esc(clashText[0])}${clashes.length > 1 ? " …" : ""}</span>` : "");
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
+		// Atlas cells shared by two models (the bundle's `clashes`): a warning here, never silent.
+		const own = TS.Process.cellOwnership(S.objects, S.result, S.settings), real = own.clashes.filter((c) => !c.samePiece);
+		if (own.clashes.length) {
+			const line = (c) => `${S.objects[c.models[0]].name} / ${S.objects[c.models[1]].name} (cell ${c.cell[0]}, ${c.cell[1]}${c.samePiece ? ", same piece" : ""})`;
+			const el = document.createElement("span");
+			el.className = "clash";
+			el.title = own.clashes.map(line).join("\n") + "\nTwo models paint or stand in one 32 px atlas cell. Same piece (footprints within 2 px) is usually fine; otherwise the importer cannot tell whose cell it is: move one, or give them their own cells.";
+			el.textContent = `⚠ ${own.clashes.length} shared cell${own.clashes.length > 1 ? "s" : ""}${real.length ? ` (${real.length} between separate pieces)` : " (same piece only)"}: ${line(real[0] || own.clashes[0])}${own.clashes.length > 1 ? " …" : ""}`;
+			$("stats").appendChild(el);
+		}
+	}
+
+	// The output tabs are grouped (Maps, Plan): the group's tab shows the active member and opens a small list.
+	function syncModeTabs() {
+		for (const g of document.querySelectorAll("#outmodes .grp")) {
+			const on = g.querySelector(".sub button.on"), head = g.querySelector(".grphead");
+			head.textContent = (on ? on.textContent : head.dataset.label) + " ▾";
+			head.classList.toggle("on", !!on);
+			g.classList.remove("open");
+		}
+	}
+	function initModeTabs() {
+		for (const head of document.querySelectorAll("#outmodes .grphead"))
+			head.onclick = (e) => { e.stopPropagation(); const g = head.parentElement, was = g.classList.contains("open"); document.querySelectorAll("#outmodes .grp").forEach((x) => x.classList.remove("open")); g.classList.toggle("open", !was); };
+		document.addEventListener("click", () => document.querySelectorAll("#outmodes .grp").forEach((x) => x.classList.remove("open")));
+		syncModeTabs();
+	}
+	// Pieces view legend: each piece's colour and name, and the conflict / floating counts.
+	function pieceInfo() {
+		const el = $("pieceinfo"), r = S.result;
+		el.classList.toggle("on", !!r && (output.mode === "pieces" || output.mode === "kind" || output.mode === "collision"));
+		if (!r || !r.pieceMap) return;
+		const pm = r.pieceMap, esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+		if (output.mode === "kind" || output.mode === "collision") {
+			const rows = [], rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`, roles = r.roles || [];
+			if (output.mode === "kind") {
+				for (const k of TS.Process.KINDS) {
+					const names = S.objects.filter((o, i) => roles[i] && o.faces.length && roles[i].kind === k).map((o, i) => o.name);
+					rows.push(`<span class="sw" style="background:${rgb(TS.Output.KIND_COLOURS[k])}"></span>${k} (${names.length})${names.length && names.length <= 4 ? ": " + esc(names.join(", ")) : ""}`);
+				}
+			} else {
+				const C = TS.Output.MODE_COLOURS;
+				rows.push(`outlines: <span class="sw" style="background:${C.none}"></span>none (walkable, dashed) <span class="sw" style="background:${C.strip}"></span>strip <span class="sw" style="background:${C.footprint}"></span>footprint`);
+				const autos = S.objects.map((o, i) => (roles[i] && o.faces.length && roles[i].requested === "auto" ? `${esc(o.name)} auto→${roles[i].mode}` : null)).filter(Boolean);
+				if (autos.length) rows.push(`<br>${autos.join(" · ")}`);
+			}
+			el.innerHTML = rows.join(" ");
+			return;
+		}
+		const col = (id) => { const c = TS.Output.pieceColour(id); return `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`; };
+		el.innerHTML = (pm.conflicts ? `<b class="bad">${pm.conflicts} conflict cell${pm.conflicts > 1 ? "s" : ""}</b>` : `<b>No conflicts</b>`) +
+			(pm.floating ? ` · <b class="warn">${pm.floating} floating</b>` : "") + ` · ${pm.pieces.length} piece${pm.pieces.length === 1 ? "" : "s"}` +
+			pm.pieces.map((p) => `<span class="sw" style="background:${col(p.id)}"></span>${esc(p.names.join(" + "))}`).join("");
 	}
 
 	// "next hole": cycle through clusters (8 px cells) of uncovered art, centring both views on each.
@@ -630,11 +802,12 @@
 	}
 
 	// [ / ]: snap step down / up.
-	const SNAPS = [1, 2, 4, 8, 16, 32];
+	const SNAPS = [0, 1, 2, 4, 8, 16, 32]; // 0 = off (free)
+	const snapText = () => (S.snap > 0 ? S.snap + " px" : "off (free)");
 	function snapStep(dir) {
 		const i = TS.clamp(SNAPS.indexOf(S.snap) + dir, 0, SNAPS.length - 1);
 		S.snap = SNAPS[i]; $("snap").value = S.snap; savePrefs();
-		status(`Snapping to ${S.snap} px`);
+		status(`Snapping: ${snapText()}`);
 	}
 
 	// --- picking ---
@@ -858,7 +1031,7 @@
 
 	function stepFor(ev) {
 		const fine = (ev && ev.shiftKey) || S.fine;
-		return fine ? Math.max(1, S.snap / 2) : S.snap;
+		return S.snap > 0 ? (fine ? Math.max(1, S.snap / 2) : S.snap) : 0; // 0: off, nothing snaps
 	}
 
 	// World move from where the tool started to the pointer, in either view: over the level plane through the pivot, or along the
@@ -968,7 +1141,7 @@
 			const p = renderer.toScreen(m.data.pivot) || modal.start;
 			let a = Math.atan2(mouse[1] - p[1], mouse[0] - p[0]) - Math.atan2(m.start[1] - p[1], m.start[0] - p[0]);
 			let deg = num !== null ? num : (a * 180) / Math.PI;
-			if (num === null) deg = TS.snap(deg, (ev && ev.shiftKey) || S.fine ? 5 : 15);
+			if (num === null && S.snap > 0) deg = TS.snap(deg, (ev && ev.shiftKey) || S.fine ? 5 : 15);
 			const rad = (deg * Math.PI) / 180;
 			for (const [o, base] of m.base) {
 				const u = m.axis ? axisVec(m, base) : [0, 0, 1];
@@ -1174,8 +1347,22 @@
 				vtx(overlay, v3.sub(p, v3.scale(d, 2000)), [0, 0, 1], c); vtx(overlay, v3.add(p, v3.scale(d, 2000)), [0, 0, 1], c);
 			}
 		}
+		// Reference models: faint neutral wires, plus faces that carry the reference's art in 3D; offset across the floor only (Z unchanged).
+		const ghostLines = [], ghosts = [];
+		for (const r of S.refs) {
+			if (!r.visible || !r.showModels || r.opacity <= 0) continue;
+			const at = (p) => [p[0] + r.dx, p[1] + r.dy, p[2]], gt = [];
+			ghosts.push({ id: r.id, w: r.w, h: r.h, dx: r.dx, dy: r.dy, opacity: r.opacity, art: r.showArt, tris: gt });
+			for (const m of r.meshes) {
+				for (const f of m.faces) {
+					const n = Mesh.faceNormal(m, f);
+					for (let i = 1; i + 1 < f.v.length; i++) for (const k of [0, i, i + 1]) vtx(gt, at(m.verts[f.v[k]]), n, [0, 0, 0, 0]);
+					for (let i = 0; i < f.v.length; i++) { const a = m.verts[f.v[i]], b = m.verts[f.v[(i + 1) % f.v.length]]; vtx(ghostLines, at(a), [0, 0, 1], [0.92, 0.92, 0.95, 0.8 * r.opacity]); vtx(ghostLines, at(b), [0, 0, 1], [0.92, 0.92, 0.95, 0.8 * r.opacity]); }
+				}
+			}
+		}
 		return { tris: new Float32Array(tris), lines: new Float32Array(lines), points: new Float32Array(points), dots: new Float32Array(dots), grid: new Float32Array(grid),
-			overlay: new Float32Array(overlay), hover: { lines: new Float32Array(hov.lines), points: new Float32Array(hov.points) } };
+			ghosts: ghosts.map((g) => Object.assign(g, { tris: new Float32Array(g.tris) })), ghostLines: new Float32Array(ghostLines), overlay: new Float32Array(overlay), hover: { lines: new Float32Array(hov.lines), points: new Float32Array(hov.points) } };
 	}
 
 	// --- free view: look round while the button is held, then ease back to the tileset view ---
@@ -1384,7 +1571,7 @@
 		if (exchange) { if (tool === "stamp") exchange.begin(); else exchange.end(); }
 		dirty = true;
 		document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === tool));
-		$("view").style.cursor = tool === "pan" ? "grab" : tool === "zoom" ? "ns-resize" : tool === "look" ? "move" : "crosshair";
+		$("view").style.cursor = tool === "pan" ? "grab" : tool === "box" ? "crosshair" : tool === "ref" ? "move" : tool === "zoom" ? "ns-resize" : tool === "look" ? "move" : "crosshair";
 		if (!modal) hint();
 	}
 
@@ -1463,7 +1650,10 @@
 			status(`Box: ${S.elemSel.size - before} selected${skipped ? `, ${skipped} hidden behind faces left out (X-ray, Alt+Z, takes them too)` : ""}`);
 		} else {
 			if (!add) S.selected.clear();
-			for (const o of visibleObjs()) if (inside(Mesh.centre(o))) { S.selected.add(o.id); S.active = o.id; }
+			// Every model the box touches: its centre or any vertex inside (not just the centre, so big models and walls count).
+			const hits = visibleObjs().filter((o) => inside(Mesh.centre(o)) || o.verts.some(inside));
+			for (const o of hits) { S.selected.add(o.id); S.active = o.id; }
+			status(`Box: ${hits.length} model${hits.length === 1 ? "" : "s"} selected${S.selected.size > 1 ? " · the properties panel edits all of them (collision, kind, tags, material)" : ""}`);
 		}
 		changed(true); panels();
 	}
@@ -1507,6 +1697,13 @@
 			if (knife) { if (button === 0) knifeClick(mouse[0], mouse[1], e); else if (button === 2) knifeApply(); return; }
 			if (S.loopCut) { if (button === 0) { loopCutHover(mouse[0], mouse[1]); loopCutApply(e.pointerType !== "mouse"); } else { S.loopCut = false; loopHover = null; hint(); dirty = true; } return; }
 			if ((button === 1 && e.shiftKey) || (button === 0 && spaceDown) || (button === 0 && S.tool === "pan")) { press = { kind: "pan", last: mouse.slice() }; return; }
+			// Move-reference tool: a drag slides the active reference across the floor (X, Y); its height is never touched.
+			if (S.tool === "ref" && button === 0 && !spaceDown) {
+				const r = activeRef();
+				if (!r) { status("Add a reference first (References, in the left panel)."); setTool("select"); return; }
+				press = { kind: "ref", id: r.id, start: mouse.slice(), dx0: r.dx, dy0: r.dy, floor: renderer.free.blend > 0 ? renderer.floorPoint(mouse[0], mouse[1], 0) : null };
+				return;
+			}
 			if (S.tool === "stamp" && exchange.draft) {
 				if (button === 0) { exchange.draft.pointer = e.pointerId; exchange.move(renderer.canvasPoint(...mouse), true); }
 				else if (button === 2) setTool("select");
@@ -1522,8 +1719,8 @@
 			// Held 3D view: a click selects (Shift-click adds); a drag on the selection moves it, Ctrl-drag box-selects, Shift-drag
 			// pans, any other drag orbits.
 			if (S.stay3d && button === 0 && S.tool !== "zoom" && S.tool !== "cursor") {
-				press = { kind: "select", start: mouse.slice(), add: e.shiftKey, orbit: e.ctrlKey || e.metaKey ? "box" : e.shiftKey ? "pan" : "look",
-					onSel: !e.shiftKey && !e.ctrlKey && !e.metaKey && overSelection(mouse[0], mouse[1]) };
+				press = { kind: "select", start: mouse.slice(), add: e.shiftKey, orbit: e.ctrlKey || e.metaKey ? "box" : S.tool === "box" ? (e.altKey ? "look" : "box") : e.shiftKey ? "pan" : "look",
+					onSel: !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && overSelection(mouse[0], mouse[1]) };
 				return;
 			}
 			if (button === 0 && S.tool === "zoom") { press = { kind: "zoom", start: mouse.slice(), zoom: renderer.cam.zoom }; return; }
@@ -1554,6 +1751,12 @@
 				if (renderer.free.blend > 0) panFree(mouse[0] - press.last[0], mouse[1] - press.last[1]);
 				else { renderer.cam.x -= (mouse[0] - press.last[0]) / renderer.cam.zoom; renderer.cam.y -= (mouse[1] - press.last[1]) / renderer.cam.zoom; }
 				press.last = mouse.slice(); dirty = true;
+			} else if (press && press.kind === "ref") {
+				const r = refById(press.id);
+				let ddx = NaN, ddy = NaN;
+				if (renderer.free.blend > 0) { const a = renderer.floorPoint(mouse[0], mouse[1], 0); if (a && press.floor) { ddx = a[0] - press.floor[0]; ddy = a[1] - press.floor[1]; } }
+				else { ddx = (mouse[0] - press.start[0]) / renderer.cam.zoom; ddy = (mouse[1] - press.start[1]) / renderer.cam.zoom; }
+				if (r && !isNaN(ddx)) { const sn = S.snap; r.dx = sn > 0 ? Math.round((press.dx0 + ddx) / sn) * sn : Math.round((press.dx0 + ddx) * 100) / 100; r.dy = sn > 0 ? Math.round((press.dy0 + ddy) / sn) * sn : Math.round((press.dy0 + ddy) * 100) / 100; refSyncXY(r); dirty = true; }
 			} else if (press && press.kind === "zoom") {
 				zoomAt(press.start[0], press.start[1], press.zoom * Math.pow(1.01, press.start[1] - mouse[1]));
 			} else if (press && press.kind === "select") {
@@ -1599,6 +1802,7 @@
 			if (modal && modal.dragRelease) { confirmModal(); return; }
 			if (!press) return;
 			if (press.kind === "look") endLook();
+			else if (press.kind === "ref") markUnsaved();
 			else if (press.kind === "select") clickSelect(press.start[0], press.start[1], press.add);
 			else if (press.kind === "box") { boxSelect(press.start, mouse, press.add); marquee(null); }
 			press = null;
@@ -1775,6 +1979,7 @@
 			case "arrowdown": renderer.cam.y += 32; dirty = true; e.preventDefault(); break;
 			case "5": toggleStay3d(); break;
 			case "q": setTool("select"); break;
+			case "b": setTool(S.tool === "box" ? "select" : "box"); break;
 			case "p": setTool("pencil"); break;
 			case "c": setTool("cursor"); break;
 			case "f1": case "?": toggleHelp(); e.preventDefault(); break;
@@ -1785,6 +1990,7 @@
 
 	function panels() {
 		document.body.classList.toggle("editing", S.edit);
+		document.body.classList.toggle("noart", !S.art);
 		document.querySelectorAll(".editonly [data-act]").forEach((b) => b.classList.toggle("on", b.dataset.act === S.elemMode));
 		// Outliner: click selects (Shift/Ctrl+click toggles), double-click renames, the eye hides / shows; the filter box narrows it.
 		const list = $("outliner"), filter = $("outfilter").value.trim().toLowerCase(), keepScroll = list.scrollTop;
@@ -1792,6 +1998,7 @@
 		let activeLi = null;
 		const nHidden = S.objects.filter((o) => o.hidden).length;
 		$("models_h").textContent = `Models (${S.objects.length}${S.selected.size ? `, ${S.selected.size} selected` : ""}${nHidden ? `, ${nHidden} hidden` : ""})`;
+		const roles = S.result && S.result.roles && S.result.roles.length === S.objects.length ? S.result.roles : null;
 		for (const o of S.objects) {
 			if (filter && !o.name.toLowerCase().includes(filter)) continue;
 			const li = document.createElement("li");
@@ -1800,12 +2007,20 @@
 			eye.className = "eye"; eye.textContent = o.hidden ? "◌" : "●"; eye.title = o.hidden ? "Hidden (still exported): show" : "Hide (H); it still exports";
 			eye.onclick = (e) => { e.stopPropagation(); toggleHidden(o); };
 			const name = document.createElement("span");
-			name.textContent = o.name + ({ none: "  (no collision)", footprint: "  (walk-behind)" }[TS.Process.collisionMode(o)] || "");
-			li.title = "Click: select · Shift/Ctrl+click: add/remove · double-click: rename";
+			const role = roles ? roles[S.objects.indexOf(o)] : null;
+			name.textContent = o.name + ({ none: "  (no collision)", footprint: "  (walk-behind)" }[TS.Process.collisionMode(o, role)] || "");
+			if (TS.Process.KINDS.includes(o.kind)) { const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = o.kind; badge.title = "Kind set by you (inferred: " + (role ? role.kindInferred : "?") + ")"; name.append(badge); }
+			li.title = "Click: select · Shift+click: range · Ctrl+click: add/remove · double-click: rename";
 			li.append(eye, name);
 			li.onclick = (e) => {
 				if (S.edit) return;
-				if (e.shiftKey || e.ctrlKey || e.metaKey) { if (S.selected.has(o.id)) S.selected.delete(o.id); else { S.selected.add(o.id); S.active = o.id; } }
+				if (e.shiftKey && S.active !== null && S.active !== o.id) {
+						// Shift-click: everything between the active model and this one (as listed, so a filter narrows the range).
+						const ids = S.objects.filter((x) => !filter || x.name.toLowerCase().includes(filter)).map((x) => x.id);
+						const p = ids.indexOf(S.active), q = ids.indexOf(o.id);
+						if (p >= 0 && q >= 0) for (const id of ids.slice(Math.min(p, q), Math.max(p, q) + 1)) S.selected.add(id);
+						S.active = o.id;
+					} else if (e.shiftKey || e.ctrlKey || e.metaKey) { if (S.selected.has(o.id)) S.selected.delete(o.id); else { S.selected.add(o.id); S.active = o.id; } }
 				else { S.selected = new Set([o.id]); S.active = o.id; }
 				changed(true); panels();
 			};
@@ -1826,23 +2041,35 @@
 		if (activeLi && (activeLi.offsetTop < list.scrollTop || activeLi.offsetTop + activeLi.offsetHeight > list.scrollTop + list.clientHeight))
 			list.scrollTop = activeLi.offsetTop - list.clientHeight / 2;
 		const props = $("props"), o = activeObj();
-		if (!o) { props.innerHTML = `<p class="dim">Nothing selected. Shift+A adds a primitive at the red 3D cursor; right-click places the cursor (on a top to stack).</p>`; return; }
+		if (!o) { props.innerHTML = `<p class="empty-note">Select a model to edit it here.<br><span class="dim">Add one with <b>Add ▾</b> or Shift+A; it lands at the red 3D cursor (right-click moves the cursor, on a top to stack).</span></p>`; return; }
 		const b = Mesh.bounds(o);
+		// More than one model selected (object mode): collision, kind, tags, smoothing and material edit all of them; name and
+		// placement belong to one model, so they are left out. A field whose models differ shows "mixed".
+		const multi = !S.edit && S.selected.size > 1 ? selectedObjs() : null, targets = multi || [o];
+		const common = (get) => (targets.every((t) => get(t) === get(targets[0])) ? get(targets[0]) : undefined);
+		const mixedOpt = `<option value="__mixed" selected disabled>— mixed —</option>`;
+		const reqValue = common(TS.Process.collisionRequested), kindValue = common((t) => (TS.Process.KINDS.includes(t.kind) ? t.kind : ""));
+		const role = roles ? roles[S.objects.indexOf(o)] : null, esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 		const faceSel = S.edit && S.elemMode === "face" && S.elemSel.size;
 		const fm = faceSel ? Mesh.faceMat(o, o.faces[[...S.elemSel][0]]) : null;
 		props.innerHTML = `
-			<label>Name <input id="p_name" value="${o.name.replace(/"/g, "&quot;")}"></label>
+			${multi ? `<p class="multi"><b>${multi.length} models selected.</b> Changes here apply to all of them. Name and placement are single-model: select one, or use G / S / R to move the group.</p>` : `<label>Name <input id="p_name" value="${o.name.replace(/"/g, "&quot;")}"></label>`}
 			<label title="How it blocks the player in the game. Strip: only a 4 px strip along the south edge of its footprint, you walk into its drawn top. Footprint (walk-behind): the floor it really covers blocks wherever it reaches between the step and body heights (Processing), so you walk round it and can stand behind it. None: never blocks. The Collision view shows it.">Collision
-				<select id="p_collision">${[["strip", "strip (walk into the top)"], ["footprint", "footprint (walk behind)"], ["none", "none"]].map(([v, t]) =>
-					`<option value="${v}" ${TS.Process.collisionMode(o) === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-			<label>Smooth shading up to <input id="p_smooth" type="number" min="0" max="180" step="5" value="${o.smooth}">°</label>
-			<fieldset><legend>Placement (bottom centre / size, px)</legend>
+				<select id="p_collision">${reqValue === undefined ? mixedOpt : ""}${[["auto", `auto${role && !multi ? " (now: " + role.mode + ")" : ""}`], ["strip", "strip (walk into the top)"], ["footprint", "footprint (walk behind)"], ["none", "none"]].map(([v, t]) =>
+					`<option value="${v}" ${reqValue === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor, everything else solid. Floor: walked over. Deco: art only. Solid: blocks. Wall: a tall back wall the torch beam lands on. Side: a side wall that blocks light east / west. Wall and side are never inferred. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
+				<select id="p_kind">${kindValue === undefined ? mixedOpt : ""}<option value="" ${kindValue === "" ? "selected" : ""}>default: ${role && !multi ? role.kindInferred + " (inferred)" : "inferred per model"}</option>${TS.Process.KINDS.map((k) =>
+					`<option value="${k}" ${kindValue === k ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+			${role && !multi ? `<p class="dim">height ${role.heightMin}-${role.heightMax} px above the floor${role.flat ? " · flat (walkable)" : ""}</p>` : ""}
+			<label title="Free-form text for the importer (an escape hatch; nothing in the Studio reads it)">Tags <input id="p_tags" value="${esc(common((t) => t.tags || "") ?? "")}" ${common((t) => t.tags || "") === undefined ? 'placeholder="(mixed: typing replaces all)"' : ""}></label>
+			<label>Smooth shading up to <input id="p_smooth" type="number" min="0" max="180" step="5" value="${common((t) => t.smooth) ?? o.smooth}">°</label>
+			${multi ? "" : `<fieldset><legend>Placement (bottom centre / size, px)</legend>
 				<div class="xyz heads"><span class="ax-x" title="East-west">X across</span><span class="ax-y" title="North-south on the ground: bigger = further south, nearer you">Y depth</span><span class="ax-z" title="Up from the floor">Z height</span></div>
 				<div class="xyz"><input id="p_x" class="ax-x" type="text" inputmode="decimal" value="${round((b.min[0] + b.max[0]) / 2)}" title="Position: X across"><input id="p_y" class="ax-y" type="text" inputmode="decimal" value="${round((b.min[1] + b.max[1]) / 2)}" title="Position: Y depth (where its bottom stands on the ground)"><input id="p_z" class="ax-z" type="text" inputmode="decimal" value="${round(b.min[2])}" title="Position: Z height of its bottom"></div>
 				<div class="xyz"><input id="p_w" class="ax-x" type="text" inputmode="decimal" value="${round(b.max[0] - b.min[0])}" title="Size: width (X)"><input id="p_d" class="ax-y" type="text" inputmode="decimal" value="${round(b.max[1] - b.min[1])}" title="Size: depth (Y)"><input id="p_h" class="ax-z" type="text" inputmode="decimal" value="${round(b.max[2] - b.min[2])}" title="Size: height (Z)"></div>
-				<p class="dim">Row 1: where its bottom centre is. Row 2: width, depth, height. Depth (Y) runs into the picture on the ground; height (Z) goes up. In the drawing both run up and down the screen: something 10 px deeper and 10 px taller lands on the same spot.</p>
-			</fieldset>
-			<fieldset><legend>${faceSel ? `Material of ${S.elemSel.size} selected face(s)` : "Material"}</legend>
+				<p class="dim" title="Depth (Y) runs into the picture on the ground; height (Z) goes up. In the drawing both run up and down the screen: something 10 px deeper and 10 px taller lands on the same spot.">Top: bottom-centre position. Bottom: width, depth, height.</p>
+			</fieldset>`}
+			<fieldset><legend>${faceSel ? `Material of ${S.elemSel.size} selected face(s)` : multi ? `Material of all ${multi.length} (shows ${o.name})` : "Material"}</legend>
 				${slider("p_rough", "Roughness", faceSel ? fm.roughness : o.mat.roughness)}
 				${slider("p_metal", "Metallic", faceSel ? fm.metallic : o.mat.metallic)}
 				<label title="Turn the shading normals about the vertical (+ = from south toward east) when the art draws a surface facing another way than its fitted shape (a wheel drawn as an upright ellipse, a turned chair). Height, outline and collision stay.">Facing turn
@@ -1851,16 +2078,21 @@
 			</fieldset>
 			<p class="dim">${o.verts.length} vertices · ${o.faces.length} faces</p>`;
 		const num = (id) => evalNum($(id).value);
-		$("p_name").onchange = () => { pushUndo(); o.name = $("p_name").value; changed(); };
+		if ($("p_name")) $("p_name").onchange = () => { pushUndo(); o.name = $("p_name").value; changed(); };
 		$("p_collision").onchange = () => {
 			pushUndo();
 			const m = $("p_collision").value;
-			o.solid = m !== "none";
-			if (m === "footprint") o.collision = "footprint"; else delete o.collision;
+			if (m === "__mixed") return;
+			for (const t of targets) {
+				t.solid = m !== "none";
+				if (m === "footprint" || m === "strip") t.collision = m; else delete t.collision; // auto: no explicit mode
+			}
 			changed();
 		};
-		$("p_smooth").onchange = () => { pushUndo(); o.smooth = num("p_smooth"); changed(); };
-		for (const id of ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"])
+		$("p_kind").onchange = () => { const k = $("p_kind").value; if (k === "__mixed") return; pushUndo(); for (const t of targets) { if (k) t.kind = k; else delete t.kind; } changed(); };
+		$("p_tags").onchange = () => { pushUndo(); const v = $("p_tags").value.trim(); for (const t of targets) { if (v) t.tags = v; else delete t.tags; } changed(); };
+		$("p_smooth").onchange = () => { const v = num("p_smooth"); if (isNaN(v)) return panels(); pushUndo(); for (const t of targets) t.smooth = v; changed(); };
+		for (const id of multi ? [] : ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"])
 			$(id).onchange = () => {
 				const bad = ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"].find((f) => isNaN(num(f)));
 				if (bad) { status(`"${$(bad).value}" isn't a number (plain numbers or + − * / ( ) work).`); panels(); return; }
@@ -1876,7 +2108,7 @@
 		const setMat = (key, v) => {
 			pushUndo();
 			if (faceSel) for (const fi of S.elemSel) { const f = o.faces[fi]; f.mat = Object.assign({}, Mesh.faceMat(o, f), { [key]: v }); }
-			else o.mat[key] = v;
+			else for (const t of targets) t.mat[key] = v;
 			changed();
 		};
 		bindSlider("p_rough", (v) => setMat("roughness", v));
@@ -1915,6 +2147,7 @@
 		if (!s0) return;
 		const dirs = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((a) => { const s = renderer.toScreen(v3.add(p, v3.scale(a, 32))); return s ? [s[0] - s0[0], s[1] - s0[1]] : [0, 0]; });
 		const len = Math.max(1e-6, ...dirs.map((d) => Math.hypot(d[0], d[1]))), C = [75, 60], R = 32;
+		if (!isFinite(len) || dirs.some((d) => !isFinite(d[0] + d[1]))) return; // canvas has no size yet
 		const at = (d, k = 1) => [C[0] + (d[0] / len) * R * k, C[1] + (d[1] / len) * R * k];
 		const [x, y] = [at(dirs[0]), at(dirs[1])], xy = [x[0] + y[0] - C[0], x[1] + y[1] - C[1]];
 		let html = `<polygon points="${[C, x, xy, y].map((q) => q.join(",")).join(" ")}" class="ground"/>`;
@@ -1928,7 +2161,7 @@
 
 	function frame() {
 		if (anim) anim();
-		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
+		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
 		requestAnimationFrame(frame);
 	}
 
@@ -1995,12 +2228,21 @@
 		window.addEventListener("resize", () => { dirty = true; if (S.result) output.render(); });
 		$("f_tileset").onchange = (e) => e.target.files[0] && openTilesetFile(e.target.files[0]);
 		$("f_project").onchange = async (e) => e.target.files[0] && openProject(await readFile(e.target.files[0], true));
+		$("f_ref").onchange = async (e) => {
+			for (const f of e.target.files) { try { await addReference(await readFile(f, true)); } catch (err) { alert(err.message); } }
+			e.target.value = "";
+		};
+		$("b_addref").onclick = (e) => { e.stopPropagation(); $("refmenu").classList.toggle("open"); };
+		document.addEventListener("click", () => $("refmenu").classList.remove("open"));
+		$("ref_sample").onclick = () => addReference(JSON.stringify(TS.samples.basic)).catch((err) => alert(err.message));
+		$("ref_file").onclick = () => $("f_ref").click();
+		refPanel();
 		$("b_tileset").onclick = () => $("f_tileset").click();
 		$("b_project").onclick = () => $("f_project").click();
 		$("b_save").onclick = saveProject;
 		$("b_add").onclick = () => toggleAddMenu(!$("addmenu").classList.contains("open"));
 		for (const b of document.querySelectorAll("#addmenu button")) b.onclick = () => { toggleAddMenu(false); addPrimitive(b.dataset.kind); };
-		$("snap").onchange = () => { S.snap = parseFloat($("snap").value); status(`Snapping to ${S.snap} px ([ / ] step it)`); };
+		$("snap").onchange = () => { S.snap = parseFloat($("snap").value); status(`Snapping: ${snapText()} ([ / ] step it)`); };
 		$("shade").onchange = () => { S.shade = $("shade").value; dirty = true; };
 		$("opacity").oninput = () => { S.opacity = parseFloat($("opacity").value); dirty = true; };
 		$("xray").onchange = () => { S.xray = $("xray").checked; dirty = true; };
@@ -2019,13 +2261,19 @@
 		$("exportname").onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") { $("exportname").onchange(); exportMaps("bundle"); } else if (e.key === "Escape") $("exportname").blur(); };
 		$("b_help").onclick = toggleHelp;
 		$("help").onclick = toggleHelp;
-		for (const b of document.querySelectorAll("#outmodes button"))
-			b.onclick = () => { output.mode = b.dataset.mode; document.querySelectorAll("#outmodes button").forEach((x) => x.classList.toggle("on", x === b)); output.render(); };
-		$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
+		for (const b of document.querySelectorAll("#outmodes button[data-mode]"))
+			b.onclick = () => { output.mode = b.dataset.mode; document.querySelectorAll("#outmodes button[data-mode]").forEach((x) => x.classList.toggle("on", x === b)); pieceInfo(); syncModeTabs(); output.render(); };
+		initModeTabs();
+			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
 		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
 		$("shadows").onchange = () => { output.shadows = $("shadows").checked; output.render(); };
-		for (const [id, key, parse] of SETTING_IDS)
-			$(id).onchange = () => { const v = parse($(id).value); if (!isNaN(v)) S.settings[key] = v; else $(id).value = S.settings[key]; markUnsaved(); processNow(); };
+		for (const [id, key, parse, lo, hi] of SETTING_IDS)
+			$(id).onchange = () => {
+				let v = parse($(id).value);
+				if (!isNaN(v) && lo !== undefined) v = TS.clamp(v, lo, hi);
+				if (!isNaN(v)) S.settings[key] = v; $(id).value = S.settings[key];
+				markUnsaved(); processNow();
+			};
 		$("s_pack").onchange = () => { S.settings.packHighlights = $("s_pack").checked; processNow(); };
 		const out = $("out");
 		let lightDrag = false;
@@ -2055,6 +2303,19 @@
 				const hit = output.feetHit(), c = r.collision, m = c.mask[i];
 				const here = m & 2 ? `collision of ${S.objects[c.owner[i]].name}` : m & 4 ? "a strip model's strip (Godot builds it)" : m & 1 ? "blocked floor (the body pull-in leaves it open)" : r.floor.top[i] >= 0 ? "under / over the body: open" : "open floor";
 				$("probe").textContent = `feet ${x}, ${y} · ` + (hit ? `BLOCKED by ${hit.mask & 2 ? S.objects[hit.owner].name : "a strip"}` : "free") + ` · here: ${here}`;
+				return;
+			}
+			if (output.mode === "kind") {
+				const oi = y < r.h && r.alpha[i] > S.settings.alphaCut && r.owner[i] >= 0 ? r.owner[i] : r.floor.top[i] >= 0 ? r.floor.owner[i] : -1, role = oi >= 0 ? r.roles[oi] : null;
+				$("probe").textContent = `cell ${x >> 5}, ${y >> 5}` + (role ? ` · ${S.objects[oi].name}: ${role.kind}${role.kindOverridden ? " (set by you)" : " (inferred)"} · height ${role.heightMin}-${role.heightMax} px${role.flat ? " · flat" : ""} · collision ${role.requested === "auto" ? "auto → " : ""}${role.mode}` : " · empty");
+				return;
+			}
+			if (output.mode === "pieces" && r.pieceMap) {
+				const pm = r.pieceMap, cell = pm.cells.find((c) => c.cx === (x >> 5) && c.cy === (y >> 5)), nm = (ids) => ids.map((p) => pm.pieces[p].names.join(" + ")).join(", ");
+				const own = r.owner[i] >= 0 && y < r.h ? S.objects[r.owner[i]] : null;
+				$("probe").textContent = `cell ${x >> 5}, ${y >> 5}` + (own ? ` · pixel of ${own.name}` : "") + (!cell ? " · empty" :
+					` · painted by: ${nm(cell.content) || "nothing"} · engine reads: ${nm(cell.engine) || "flat art"}` +
+					(cell.anchored.length ? ` · anchor of ${nm(cell.anchored)}` : "") + (cell.status === 2 ? ` · CONFLICT: ${cell.msg}` : cell.status === 1 ? ` · FLOATING: ${cell.msg}` : " · ok"));
 				return;
 			}
 			if (output.mode === "heightfield") {
@@ -2106,12 +2367,12 @@
 			if (f.name.endsWith(".json")) openProject(await readFile(f, true)); else openTilesetFile(f);
 		});
 		for (const id of PREF_IDS) $(id).addEventListener("change", savePrefs);
-		for (const b of document.querySelectorAll("#outmodes button")) b.addEventListener("click", savePrefs);
+		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.addEventListener("click", savePrefs);
 		loadPrefs();
 		// The view settings follow their controls, whatever set them: our prefs, or the browser restoring a reloaded / back-
 		// navigated page's form (that fires no events, so X-ray could show ticked while it was off).
 		const syncControls = () => {
-			S.snap = parseFloat($("snap").value) || 32; S.shade = $("shade").value; S.opacity = parseFloat($("opacity").value);
+			{ const sv = parseFloat($("snap").value); S.snap = isNaN(sv) ? 1 : sv; } S.shade = $("shade").value; S.opacity = parseFloat($("opacity").value);
 			S.xray = $("xray").checked; S.grid = $("grid").checked; S.autoProcess = $("auto").checked;
 			output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z;
 			output.light.radius = parseFloat($("lightr").value); output.shadows = $("shadows").checked;
@@ -2144,12 +2405,12 @@
 	TS.api = {
 		state: S, get renderer() { return renderer; }, get output() { return output; },
 		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
-		addPrimitive, processNow, exportMaps, bundleJSON, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
+		addPrimitive, processNow, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
 		select: (id) => { S.selected = new Set([id]); S.active = id; changed(); },
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		// Draw now (a hidden tab gets no animation frames): for scripted captures.
-		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
+		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs,
 	};
 

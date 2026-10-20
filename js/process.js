@@ -52,9 +52,23 @@
 		// Fill holes from the nearest covered pixel (a face pixel one higher per px up), else leave them on the floor.
 		if (settings.fill > 0 && holes) {
 			const src = height.slice();
+			// Summed-area table of fillable pixels: a hole with none within reach skips the ring search (same result, far faster
+			// when most holes are far from any model).
+			const sw = W + 1, sat = new Int32Array(sw * (H + 1));
+			for (let y = 0; y < H; y++) {
+				let run = 0;
+				for (let x = 0; x < W; x++) {
+					const q = y * W + x;
+					if (!isNaN(src[q]) && !hole[q]) run++;
+					sat[(y + 1) * sw + x + 1] = sat[y * sw + x + 1] + run;
+				}
+			}
+			const reach = settings.fill;
 			for (let i = 0; i < N; i++) {
 				if (!hole[i]) continue;
 				const x = i % W, y = (i / W) | 0;
+				const ax = Math.max(0, x - reach), bx = Math.min(W, x + reach + 1), ay = Math.max(0, y - reach), by = Math.min(H, y + reach + 1);
+				if (sat[by * sw + bx] - sat[ay * sw + bx] - sat[by * sw + ax] + sat[ay * sw + ax] === 0) continue;
 				let best = -1, bd = Infinity, bdy = 0;
 				for (let r = 1; r <= settings.fill && best < 0; r++)
 					for (let dy = -r; dy <= r; dy++)
@@ -78,8 +92,9 @@
 		}
 		for (let i = 0; i < N; i++) if (height[i] > 255) { clipped[i] = 1; over++; }
 		const floor = P.floorField(objects, W, H, P.bodyRule(settings));
-		const collision = P.collision(objects, floor, settings);
-		return { w: W, h: H, height, normal, rough, metal, owner, alpha, hole, clipped, floor, collision, art,
+		const roles = P.roles(objects, floor, settings);
+		const collision = P.collision(objects, floor, settings, roles);
+		return { w: W, h: H, height, normal, rough, metal, owner, alpha, hole, clipped, floor, roles, collision, art,
 			stats: { covered, holes, filled, unfilled: holes - filled, unused, over } };
 	};
 
@@ -117,12 +132,15 @@
 	P.floorField = (objects, W, H, rule = P.bodyRule()) => {
 		const rows = H + 256, top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
 		const spans = new Array(W * rows), blocks = [], owner = new Int32Array(W * rows).fill(-1);
+		// heights[model index] = {min, max}: lowest underside and highest top of the model's own solid spans (null: none on the plan).
+		const heights = [];
 		let used = H;
 		for (let oi = 0; oi < objects.length; oi++) {
 			const obj = objects[oi];
 			const blocking = [];
 			blocks.push(blocking);
 			const hits = new Map();
+			let hMin = Infinity, hMax = -Infinity;
 			for (const t of Mesh.triangles(obj)) {
 				const p = [obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]];
 				const area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
@@ -138,7 +156,7 @@
 						const w2 = 1 - w0 - w1;
 						if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
 						const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2], i = y * W + x;
-						if (z > top[i]) top[i] = z;
+						if (z > top[i]) { top[i] = z; owner[i] = oi; }
 						if (z < bottom[i]) bottom[i] = z;
 						if (y >= used) used = y + 1;
 						if (!hits.has(i)) hits.set(i, []);
@@ -151,6 +169,10 @@
 				const clean = [];
 				for (const z of zs) if (!clean.length || z - clean[clean.length - 1] > 0.05) clean.push(z);
 				const list = spans[i] || (spans[i] = []);
+				// Height range from the real crossings, not the spans: a lone last crossing (touching parts of one model) gets an
+				// invented 0.5 px span below, which must not raise heightMax.
+				if (clean[0] < hMin) hMin = clean[0];
+				if (clean[clean.length - 1] > hMax) hMax = clean[clean.length - 1];
 				let hit = false;
 				for (let k = 0; k < clean.length; k += 2) {
 					const a = clean[k], b = k + 1 < clean.length ? clean[k + 1] : clean[k] + 0.5;
@@ -159,6 +181,7 @@
 				}
 				if (hit) blocking.push(i);
 			}
+			heights.push(hMin <= hMax ? { min: Math.max(0, hMin), max: hMax } : null);
 		}
 		// Different models' spans that touch or overlap (a pillow on a mattress) are one solid; only real gaps stay open.
 		spans.forEach((list, i) => {
@@ -174,11 +197,12 @@
 			}
 			spans[i] = merged.flat();
 		});
-		return { top, bottom, spans, blocks, owner, rows, shown: Math.min(rows, used + 8) };
+		return { top, bottom, spans, blocks, heights, owner, rows, shown: Math.min(rows, used + 8) };
 	};
 
 	// --- collision ---
-	// Per model, collision mode (o.collision; solid: false = "none"):
+	// Per model, collision mode (o.collision: strip | footprint | none; unset = "auto", resolved in P.roles; solid: false = "none"):
+	//   auto       (default) flat models (heightMax <= walk-over height) and models lower than the step get none, the rest strip.
 	//   strip      today's rule, built by Godot (addons/studio_import/footprints.gd foot_strips): a 4 px strip along the south edge of the convex
 	//              footprint, for solid models whose bottom is below SOLID_BELOW. You walk into the drawn top.
 	//   footprint  walk-behind: the floor the model really blocks stops the player, so they walk round it and can stand behind it.
@@ -192,18 +216,46 @@
 	const COLLIDE_SOUTH = 8, COLLIDE_SIDE = 3, COLLIDE_MIN = 4, SOLID_BELOW = 30, FEET = { w: 24, h: 12 };
 	P.FEET = FEET;
 	P.bodyRule = (settings = {}) => ({ step: settings.step ?? 4, body: settings.body ?? 40 });
-	P.collisionMode = (o) => (!o.solid ? "none" : o.collision === "footprint" ? "footprint" : "strip");
+	// What the artist chose: "auto" (default) | "strip" | "footprint" | "none". solid: false is the older spelling of "none".
+	P.collisionRequested = (o) => (!o.solid ? "none" : o.collision === "footprint" || o.collision === "strip" ? o.collision : "auto");
+	// The mode that applies: the role's resolved one when the model was processed, else the request ("auto" until resolved).
+	P.collisionMode = (o, role) => (role ? role.mode : P.collisionRequested(o));
+
+	// --- engine roles ---
+	// Kinds: floor (walk over it), deco (art only), solid (blocks), wall (tall back wall the torch beam lands on), side (side wall
+	// that blocks light east/west). Only floor / solid are inferred; deco, wall and side are the artist's call (o.kind).
+	P.KINDS = ["floor", "deco", "solid", "wall", "side"];
+	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
+
+	// Per model index: {heightMin, heightMax (floor-space px above the floor; 0/0 when it has no surface on the plan), flat,
+	// kindInferred, kind, kindOverridden, requested, mode (resolved collision), hull (floor plan convex hull)}.
+	// auto -> "none" for flat models and for any model lower than the step (heightMax < step: it can't block a player who
+	// steps over it), else "strip". An explicit strip / footprint is always honoured.
+	P.roles = (objects, floor, settings) => {
+		const walk = P.walkOver(settings), step = P.bodyRule(settings).step;
+		return objects.map((o, oi) => {
+			const h = floor.heights[oi], heightMin = h ? round2(h.min) : 0, heightMax = h ? round2(h.max) : 0;
+			const flat = !!h && heightMax <= walk;
+			const kindInferred = flat ? "floor" : "solid";
+			const kindOverridden = P.KINDS.includes(o.kind);
+			const requested = P.collisionRequested(o);
+			const mode = requested !== "auto" ? requested : flat || heightMax < step ? "none" : "strip";
+			const vi = o.faces.length ? Mesh.faceVerts(o) : [];
+			return { heightMin, heightMax, flat, kindInferred, kind: kindOverridden ? o.kind : kindInferred, kindOverridden, requested, mode,
+				hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])) };
+		});
+	};
 
 	// {models: [{mode, polygons (footprint mode, floor px), blocked (floor px count)}] by object index,
 	//  mask Uint8 over the floor plan (1 = floor a footprint model blocks, 2 = its collision, 4 = a strip model's strip, as Godot
 	//  will build it), owner Int32 (model index of the collision there), w, rows}
-	P.collision = (objects, floor, settings) => {
+	P.collision = (objects, floor, settings, roles = P.roles(objects, floor, settings)) => {
 		const W = floor.top.length / floor.rows, rows = floor.rows, N = W * rows;
 		const mask = new Uint8Array(N), owner = new Int32Array(N).fill(-1);
 		const stripFeet = new Uint8Array(N);
 		let anyStrip = false;
 		const models = objects.map((o, oi) => {
-			const mode = P.collisionMode(o);
+			const mode = roles[oi].mode;
 			if (!o.faces.length || mode === "none") return { mode, polygons: [], blocked: 0 };
 			if (mode === "strip") {
 				const b = Mesh.bounds(o, Mesh.faceVerts(o));
@@ -488,12 +540,22 @@
 
 	// Version 2 adds each model's `collision` ({mode, polygons}) and the rule it was made with; the version 1 fields stay, so an
 	// older importer still reads it (as strips). Pass the processed result to reuse its collision (else it is computed here).
+	//
+	// Bundle version 3 adds, per model (all additive): kind, kindInferred, heightMin, heightMax, flat, tags, cells, and
+	// collision.requested (collision.mode is now the RESOLVED mode); plus walkOverHeight, cellOwners and clashes at this level. The
+	// shape of version 2 (name, solid, z, footprint, roughness, metallic, collision.mode / polygons) is unchanged. The index of a
+	// model in `objects` below is what cells / cellOwners / clashes refer to.
 	P.footprints = (objects, art, result, settings) => {
 		const rule = P.bodyRule(settings);
-		const col = (result && result.collision && result.collision.models.length === objects.length) ? result.collision :
-			P.collision(objects, P.floorField(objects, art.w, art.h, rule), settings);
+		const r = result && result.roles && result.roles.length === objects.length ? result : P.run(objects, art, settings);
+		const col = r.collision, roles = r.roles;
+		// Export index of each model (loose lines / points are left out below, so indices shift).
+		const exported = objects.map((o, oi) => oi).filter((oi) => objects[oi].faces.length);
+		const idx = new Map(exported.map((oi, k) => [oi, k]));
+		const own = P.cellOwnership(objects, r, settings);
 		return {
 			version: 2,
+			walkOverHeight: P.walkOver(settings),
 			canvas: [art.w, art.h],
 			tile: 32,
 			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas (X, Y - Z). footprint = convex hull on the floor plan. " +
@@ -502,16 +564,52 @@
 				`pulled in ${COLLIDE_SIDE} px and south edges ${COLLIDE_SOUTH} px north (feet stop 4 px in front, can stand at its back edge); none = never blocks.`,
 			collision: { step: rule.step, body: rule.body, feet: [FEET.w, FEET.h], south: COLLIDE_SOUTH, side: COLLIDE_SIDE, min: COLLIDE_MIN },
 			// Only surfaces count: loose lines and points (drawing aids) are left out, and models made of nothing else.
-			objects: objects.map((o, oi) => [o, col.models[oi]]).filter(([o]) => o.faces.length).map(([o, c]) => {
-				const vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
+			objects: exported.map((oi) => {
+				const o = objects[oi], c = col.models[oi], role = roles[oi], vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
 				return {
 					name: o.name, solid: o.solid, z: [round2(b.min[2]), round2(b.max[2])],
 					footprint: hull(vi.map((i) => [round2(o.verts[i][0]), round2(o.verts[i][1])])),
 					roughness: o.mat.roughness, metallic: o.mat.metallic,
-					collision: c.mode === "footprint" ? { mode: c.mode, polygons: c.polygons } : { mode: c.mode },
+					collision: Object.assign({ mode: c.mode, requested: role.requested }, c.mode === "footprint" ? { polygons: c.polygons } : {}),
+					kind: role.kind, kindInferred: !role.kindOverridden,
+					heightMin: role.heightMin, heightMax: role.heightMax, flat: role.flat,
+					tags: typeof o.tags === "string" ? o.tags : "",
+					cells: own.cells[oi],
 				};
 			}),
+			// Every occupied atlas cell and the models in it, then the cells two or more models share (one entry per pair).
+			cellOwners: own.owners.map((e) => ({ cell: e.cell, models: e.models.map((oi) => idx.get(oi)) })),
+			clashes: own.clashes.map((e) => ({ cell: e.cell, models: e.models.map((oi) => idx.get(oi)), samePiece: e.samePiece })),
 		};
+	};
+
+	// Which atlas tile cells (32 px; [column, row]) each model occupies: the cells holding art it paints (its pixels on top at that
+	// spot) or floor points it tops. The same sampling P.pieces uses for a piece's content, per model instead of per piece. Floor
+	// points south of the canvas aren't atlas cells and are left out. Indices are into `objects`.
+	// -> {cells: [[x, y], ...] per object index, owners: [{cell, models}], clashes: [{cell, models: [i, j], samePiece}]}
+	// samePiece: the two models are one piece to the importer (footprints within 2 px), so it reads the cell consistently; false
+	// is the dangerous kind. P.clashes (pieces on different rows of one column) is separate and unchanged.
+	P.cellOwnership = (objects, r, settings) => {
+		const T = 32, W = r.w, H = r.h, gw = Math.ceil(W / T), gh = Math.ceil(H / T), cut = settings.alphaCut;
+		const grid = new Array(gw * gh), put = (x, y, oi) => { const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(oi); };
+		for (let y = 0; y < H; y++)
+			for (let x = 0; x < W; x++) {
+				const i = y * W + x;
+				if (r.alpha[i] > cut && r.owner[i] >= 0) put(x, y, r.owner[i]);
+				if (r.floor.top[i] >= 0 && r.floor.owner[i] >= 0) put(x, y, r.floor.owner[i]);
+			}
+		const pm = r.pieceMap || P.pieces(objects, r, settings);
+		const cells = objects.map(() => []), owners = [], clashes = [];
+		grid.forEach((set, c) => {
+			if (!set) return;
+			const cell = [c % gw, (c / gw) | 0], models = [...set].sort((a, b) => a - b);
+			owners.push({ cell, models });
+			for (const oi of models) cells[oi].push(cell);
+			for (let a = 0; a < models.length; a++)
+				for (let b = a + 1; b < models.length; b++)
+					clashes.push({ cell, models: [models[a], models[b]], samePiece: pm.pieceOf[models[a]] === pm.pieceOf[models[b]] });
+		});
+		return { cells, owners, clashes };
 	};
 
 	const round2 = (v) => Math.round(v * 100) / 100;

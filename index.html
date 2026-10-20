@@ -8,47 +8,50 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="splash" aria-hidden="true"><img src="assets/logo.png" alt="" width="480" height="192"></div>
 <header>
-	<strong class="brand">Tileset Studio</strong>
-	<button id="b_tileset" title="Open a tileset PNG (or drop it on the window)">Open tileset</button>
-	<button id="b_project" title="Open a .studio.json project">Open project</button>
-	<button id="b_save" title="Save the project (Ctrl+S)">Save project</button>
-	<button id="b_import3d" title="Add models from a Wavefront OBJ or a Studio project">Import 3D</button>
-	<button id="b_export3d" title="Export the scene or selected meshes as Wavefront OBJ">Export 3D</button>
-	<button data-tool="stamp" title="Reuse models over the artwork">Stamp</button>
-	<span class="sep"></span>
+	<a class="logo" href="./" title="Tileset Studio: MCS internal tooling"><img src="assets/logo.png" alt="Tileset Studio, MCS internal tooling" width="100" height="40"></a>
+	<div class="menuwrap" data-click>
+		<button class="ghost">File ▾</button>
+		<div class="menu">
+			<button id="b_tileset" title="Open a power-of-two tileset PNG (or drop it on the window)">Open tileset…</button>
+			<button id="b_project" title="Open a .studio.json project">Open project…</button>
+			<hr>
+			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
+			<hr>
+			<button id="b_import3d" title="Add models from a Wavefront OBJ or a Studio project">Import 3D…</button>
+			<button id="b_export3d" title="Export the scene or selected meshes as Wavefront OBJ">Export 3D (OBJ)…</button>
+		</div>
+	</div>
 	<div class="menuwrap">
-		<button id="b_add" title="Add a primitive at the 3D cursor (Shift+A)">Add ▾</button>
+		<button id="b_add" class="ghost" title="Add a primitive at the 3D cursor (Shift+A)">＋ Add ▾</button>
 		<div id="addmenu" class="menu">
 			<button data-kind="box">Box</button><button data-kind="cylinder">Cylinder</button><button data-kind="wedge">Wedge</button>
 			<button data-kind="plane">Plane</button><button data-kind="sphere">Sphere</button>
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
 		</div>
 	</div>
-	<label title="Grid step for moving, scaling, extruding and placing (always on); Shift or &quot;fine&quot; = half the step, a typed number is exact">Snap
-		<select id="snap"><option>32</option><option>16</option><option>8</option><option>4</option><option>2</option><option>1</option></select></label>
-	<button data-tool="pencil" title="Pencil (P): draw an outline to create a custom-shaped object">&#9998; Pencil</button>
-	<label>Show <select id="shade"><option value="art">art on models</option><option value="solid">solid</option></select></label>
-	<label title="Model opacity over the art">Opacity <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.55"></label>
-	<label title="Wires show through models (Alt+Z)"><input id="xray" type="checkbox"> X-ray</label>
-	<label title="Show the 32 px tile grid"><input id="grid" type="checkbox" checked> Grid</label>
-	<span class="sep"></span>
-	<button id="b_process" class="primary" title="Render the maps from the models">Process</button>
-	<label title="Process after every change"><input id="auto" type="checkbox" checked> auto</label>
-	<div class="menuwrap export">
-		<button>Export ▾</button>
-		<div class="menu">
-			<label class="exportname" title="What the exported files are called (saved with the project). Letters, digits, - and _; empty = the tileset's name. In Godot the bundle unpacks to name.png, name_height.png ... and name_tileset.tres.">Name <input id="exportname" spellcheck="false" autocomplete="off"></label>
-			<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★</button>
-			<hr>
-			<button data-export="all">Separate files (height, normal, pbr, footprints)</button>
-			<button data-export="height">Height map</button><button data-export="normal">Normal map</button>
-			<button data-export="pbr">Roughness / metallic</button><button data-export="footprints">Footprints (JSON)</button>
+	<button data-tool="stamp" class="ghost" title="Stamp: reuse models over the artwork">Stamp</button>
+	<span id="tileinfo" class="dim">no tileset</span>
+	<span class="grow"></span>
+	<div class="actions">
+		<button id="b_process" class="primary" title="Render the maps from the models">Process</button>
+		<label class="autoopt" title="Process after every change"><input id="auto" type="checkbox" checked> auto</label>
+		<div class="menuwrap export" data-click>
+			<button class="cta">Export ▾</button>
+			<div class="menu">
+				<label class="exportname" title="What the exported files are called (saved with the project). Letters, digits, - and _; empty = the tileset's name. In Godot the bundle unpacks to name.png, name_height.png ... and name_tileset.tres.">Name <input id="exportname" spellcheck="false" autocomplete="off"></label>
+				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★</button>
+				<hr>
+				<button data-export="all">Separate files (height, normal, pbr, footprints)</button>
+				<button data-export="height">Height map</button><button data-export="normal">Normal map</button>
+				<button data-export="pbr">Roughness / metallic</button><button data-export="footprints">Footprints (JSON)</button>
+			</div>
 		</div>
 	</div>
-	<span class="grow"></span>
-	<span id="tileinfo" class="dim">no tileset</span>
-	<button id="b_help" title="Shortcuts (F1)">?</button>
+	<span class="sep"></span>
+	<button id="b_learn" class="ghost" title="Visual lessons: Z placement, lighting, collision, kinds (L)">Learn</button>
+	<button id="b_help" class="ghost round" title="Shortcuts (F1)">?</button>
 </header>
 <main>
 	<aside class="left">
@@ -64,9 +67,11 @@
 			<p id="stamp_help" aria-live="polite"></p>
 			<div class="pencilactions"><button id="stamp_place" class="primary">Place stamp</button><button id="stamp_move">Move preview</button><button id="stamp_done">Done (Q)</button></div>
 		</div>
-		<h3 id="models_h">Models</h3>
-		<input id="outfilter" class="outfilter" type="search" placeholder="Filter models…" title="Show only models whose name contains this">
-		<ul id="outliner"></ul>
+			<details class="sec" open id="sec_models">
+				<summary id="models_h">Models</summary>
+				<input id="outfilter" class="outfilter" type="search" placeholder="Filter models…" title="Show only models whose name contains this">
+				<ul id="outliner" data-empty="No models yet. Pick Add ▾ (or press Shift+A) to place one."></ul>
+			</details>
 		<div id="pencilpanel" class="pencilpanel">
 			<h3>Pencil &middot; custom object</h3>
 			<label>Draw <select id="pencil_mode"><option value="freehand">Freehand</option><option value="corners">Click corners</option></select></label>
@@ -79,22 +84,54 @@
 			<p id="pencil_help" class="dim">Drag around an outline and release to create an object.</p>
 			<div class="pencilactions"><button id="pencil_finish" class="primary">Finish shape</button><button id="pencil_back" title="Remove the last corner (Backspace)">Undo point</button><button id="pencil_clear">Clear</button><button id="pencil_done">Done (Q)</button></div>
 		</div>
-		<h3>Properties</h3>
-		<div id="props"></div>
-		<h3>Processing</h3>
-		<div class="settings">
-			<label title="Art pixels no model covers copy the nearest covered one within this many px (0 = leave them on the floor)">Fill holes up to <input id="s_fill" type="number" min="0" max="16" value="2"> px</label>
-			<label title="How much the art's shading bumps the normal map (0 = none)">Art relief <input id="s_relief" type="number" min="0" max="2" step="0.1" value="0.5"></label>
-			<label title="Pixels at or below this alpha (0-255) aren't art">Alpha cut <input id="s_alpha" type="number" min="0" max="254" value="13"></label>
-			<label title="Footprint-mode collision: a floor point blocks where a model's solid part reaches between the step and this height (things hung above it, like a high shelf or a lamp shade, don't block)">Player body height <input id="s_body" type="number" min="1" max="255" value="40"> px</label>
-			<label title="Footprint-mode collision: parts entirely below this height (a rug, paper on the floor) don't block">Step height <input id="s_step" type="number" min="0" max="64" value="4"> px</label>
-			<label class="row" title="Also write roughness/metallic as the engine's current highlight channels (height map G = strength, B = gloss). Off: grayscale height map, engine defaults."><input id="s_pack" type="checkbox" checked> Pack highlights into the height map</label>
-		</div>
-	</aside>
+			<details class="sec" open id="sec_props">
+				<summary>Properties</summary>
+				<div id="props"></div>
+			</details>
+			<details class="sec" id="sec_refs">
+				<summary>References</summary>
+				<div id="refs"></div>
+				<button id="b_addref" title="Add another tileset (.studio.json) or a Godot bundle (.export.json) as a translucent ghost you can move across the floor">＋ Add reference ▾</button>
+				<div id="refmenu" class="refmenu"><button id="ref_sample" title="A stone floor, a back wall and a character: the scene the Learn lessons use">BasicSample (built-in example)</button><button id="ref_file" title="A .studio.json project or a Godot .export.json bundle">From a file…</button></div>
+			</details>
+			<details class="sec" id="sec_proc">
+				<summary>Processing settings</summary>
+				<div class="settings">
+					<label title="Art pixels no model covers copy the nearest covered one within this many px (0 = leave them on the floor)">Fill holes up to <span class="unit"><input id="s_fill" type="number" min="0" max="16" value="2"> px</span></label>
+					<label title="How much the art's shading bumps the normal map (0 = none)">Art relief <span class="unit"><input id="s_relief" type="number" min="0" max="2" step="0.1" value="0.5"></span></label>
+					<label title="Pixels at or below this alpha (0-255) aren't art">Alpha cut <span class="unit"><input id="s_alpha" type="number" min="0" max="254" value="13"></span></label>
+					<label title="Footprint-mode collision: a floor point blocks where a model's solid part reaches between the step and this height (things hung above it, like a high shelf or a lamp shade, don't block)">Player body height <span class="unit"><input id="s_body" type="number" min="1" max="255" value="40"> px</span></label>
+					<label title="Footprint-mode collision: parts entirely below this height (a rug, paper on the floor) don't block">Step height <span class="unit"><input id="s_step" type="number" min="0" max="64" value="4"> px</span></label>
+					<label title="Engine roles: a model whose highest point is at or below this height is flat: it infers kind floor and (collision auto) never blocks. 0-16 px">Walk-over height <span class="unit"><input id="s_walk" type="number" min="0" max="16" value="2"> px</span></label>
+					<label class="row" title="Also write roughness/metallic as the engine's current highlight channels (height map G = strength, B = gloss). Off: grayscale height map, engine defaults."><input id="s_pack" type="checkbox" checked> Pack highlights into the height map</label>
+				</div>
+			</details>
+		</aside>
 	<section class="view">
-		<canvas id="view" tabindex="0"></canvas>
-		<svg id="pencil_overlay" class="penciloverlay" aria-hidden="true"></svg>
-		<canvas id="stamp_overlay" class="penciloverlay" aria-hidden="true"></canvas>
+			<div class="viewbar" id="viewbar">
+				<label title="Grid step for moving, scaling, extruding and placing; Shift or &quot;fine&quot; = half the step, a typed number is exact. Default 1 px (one texel); off = no snapping">Snap
+					<select id="snap" title="Snapping for moving, scaling and placing. 1 = whole pixels (texels). Off = free, no snapping"><option>32</option><option>16</option><option>8</option><option>4</option><option>2</option><option selected>1</option><option value="0">off</option></select></label>
+				<label>Show <select id="shade"><option value="art">art on models</option><option value="solid">solid</option></select></label>
+				<label title="Model opacity over the art">Opacity <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.55"></label>
+				<label class="chk" title="Wires show through models (Alt+Z)"><input id="xray" type="checkbox"> X-ray</label>
+				<label class="chk" title="Show the 32 px tile grid"><input id="grid" type="checkbox" checked> Grid</label>
+			</div>
+			<div class="viewport">
+			<canvas id="view" tabindex="0"></canvas>
+			<svg id="pencil_overlay" class="penciloverlay" aria-hidden="true"></svg>
+			<canvas id="stamp_overlay" class="penciloverlay" aria-hidden="true"></canvas>
+			<div id="empty" class="empty">
+				<div class="ecard">
+					<h2>Start with your tileset art</h2>
+					<p>Drop a power-of-two PNG here, or open one.</p>
+					<div class="cta-row">
+						<button id="e_open" class="primary big">Open tileset PNG</button>
+						<button id="e_project" class="big">Open project</button>
+					</div>
+					<div class="cta-row"><button id="e_sample" class="link" title="Open the built-in BasicSample project">Try the sample</button><span class="dim">·</span><button id="e_learn" class="link" title="Short visual lessons (L)">Take the quick lesson</button></div>
+					<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Process</li><li><b>4</b>Export</li></ol>
+				</div>
+			</div>
 		<div id="coords" class="coords"></div>
 		<div id="marquee" class="marquee"></div>
 		<!-- Offered on start when an autosave of unsaved work is left over. -->
@@ -105,6 +142,8 @@
 		<div class="palette" id="palette">
 			<button class="fold" data-fold="palette" title="Hide / show the tools">«</button>
 			<button data-tool="select" class="on" title="Select (Q): tap to pick, drag a selected piece to move it, drag empty space to box-select">⬚</button>
+			<button data-tool="box" title="Box select (B): drag a rectangle to select every model it touches, in 3D too (Shift adds, Alt-drag or middle-drag still orbits)">▭</button>
+			<button data-tool="ref" title="Move reference: drag to slide the active reference across the floor (X, Y). Its height stays locked. Add one under References.">⤧</button>
 			<button data-tool="cursor" title="3D cursor (C): tap where the next piece goes (on a top to stack)">⊕</button>
 			<button data-act="add" title="Add a primitive at the cursor (Shift+A)">＋</button>
 			<button data-tool="pencil" title="Pencil (P): draw a custom-shaped object">&#9998;</button>
@@ -161,12 +200,14 @@
 			<button id="mb_ok" class="primary" title="Apply (Enter)">✓</button>
 			<button id="mb_cancel" title="Cancel (Esc)">✕</button>
 		</div>
+		</div>
 	</section>
 	<section class="output">
 		<div id="outmodes" class="tabs">
-			<button data-mode="lit" class="on">Lit</button><button data-mode="height">Height</button><button data-mode="normals">Normals</button>
-			<button data-mode="roughness">Rough</button><button data-mode="metallic">Metal</button><button data-mode="holes">Holes</button>
-			<button data-mode="heightfield" title="The floor plan seen from above: colour = top height, stripes = open underneath">Floor</button><button data-mode="collision" title="The floor plan: red = what blocks the player (bright = the exported collision, outlined), orange = strip models' strips; the 24x12 feet box follows the pointer">Collision</button>
+			<button data-mode="lit" class="on">Lit</button>
+			<span class="grp"><button class="grphead" data-label="Maps">Maps ▾</button><div class="sub"><button data-mode="height">Height</button><button data-mode="normals">Normals</button><button data-mode="roughness">Rough</button><button data-mode="metallic">Metal</button></div></span>
+			<button data-mode="holes">Holes</button>
+			<span class="grp"><button class="grphead" data-label="Plan">Plan ▾</button><div class="sub"><button data-mode="heightfield" title="The floor plan seen from above: colour = top height, stripes = open underneath">Floor</button><button data-mode="collision" title="The floor plan: red = what blocks the player (bright = the exported collision, outlined), orange = strip models' strips; the 24x12 feet box follows the pointer">Collision</button><button data-mode="kind" title="Models tinted by their resolved kind: green floor, blue deco, orange solid, magenta wall, cyan side. A small rug or a 2 px bump shows up as floor.">Kind</button><button data-mode="pieces" title="How the engine groups the art into pieces per 32 px tile cell: colour = piece, cell border = the piece the engine reads the cell as, red = conflict, yellow = floating">Pieces</button></div></span>
 			<span class="grow"></span>
 			<span class="outzoom"><button id="o_zoomout" title="Zoom out (wheel)">−</button><span id="o_zoom" class="zoomlabel"></span><button id="o_zoomin" title="Zoom in (wheel)">＋</button><button id="o_fit" title="Fit (middle/right-drag or Space-drag pans)">⛶</button></span>
 		</div>
@@ -177,12 +218,14 @@
 			<label>reach <input id="lightr" type="range" min="40" max="600" value="220"></label>
 			<label><input id="shadows" type="checkbox" checked> shadows</label>
 		</div>
-		<div id="stats" class="stats dim">Process to see the maps.</div>
+		<div id="pieceinfo" class="pieceinfo"></div>
+			<div id="stats" class="stats dim">Process to see the maps.</div>
 		<div id="probe" class="probe dim" title="What the processed maps hold under the pointer. Double-click the output to select that model.">Hover the output to read a pixel.</div>
 	</section>
 </main>
 <footer><span id="status"></span></footer>
 <input type="file" id="f_tileset" accept="image/png" hidden>
+<input type="file" id="f_ref" accept=".json,application/json" multiple hidden>
 <input type="file" id="f_project" accept=".json,application/json" hidden>
 <input type="file" id="f_source" accept=".obj,.json" hidden>
 <div id="source_dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="source_title">
@@ -233,6 +276,7 @@
 			<tr><td>X / Y / Z twice</td><td>local axis while moving, scaling or turning (the model's own axes, each about its own middle; in edit mode the selection's normal)</td><td>click again</td><td>picks the next thing under the pointer (white outline = what a click takes); X-ray picks through faces</td></tr>
 			<tr><td>type a number</td><td>exact value while a tool runs</td><td>Shift</td><td>half the snap step (snapping is always on)</td></tr>
 			<tr><td>Alt-drag, middle-drag</td><td>look round (eases back on release)</td><td>Space-drag, Shift+middle</td><td>pan</td></tr>
+			<tr><td>B</td><td>Box select tool: drag a rectangle (3D too) to select every model it touches; Shift adds, Alt-drag orbits. The properties panel then edits all selected models</td><td>L</td><td>Learn: visual lessons on Z placement, lighting, collision, kinds</td></tr>
 			<tr><td>wheel, + / −</td><td>zoom in whole-pixel steps</td><td>. (or F outside edit mode) / Home</td><td>frame selection / fit the tileset</td></tr><tr><td>arrows</td><td>pan a tile</td><td>Q</td><td>select tool (drag a selected piece to move it, drag empty space to box-select)</td></tr>
 			<tr><td>Ctrl+Z / Ctrl+Shift+Z</td><td>undo / redo</td><td>Ctrl+S</td><td>save project (unsaved work is autosaved and offered back on the next start)</td></tr>
 			<tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste models in place (also between projects)</td><td>Ctrl+I</td><td>invert selection</td></tr>
@@ -254,6 +298,9 @@
 <script src="js/output.js"></script>
 <script src="js/transfer.js"></script>
 <script src="js/transfer-ui.js"></script>
+<script src="js/sample_basic.js"></script>
+<script src="js/learn.js"></script>
 <script src="js/app.js"></script>
+<script src="js/ui.js"></script>
 </body>
 </html>
