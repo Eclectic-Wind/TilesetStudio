@@ -588,7 +588,7 @@
 	// points south of the canvas aren't atlas cells and are left out. Indices are into `objects`.
 	// -> {cells: [[x, y], ...] per object index, owners: [{cell, models}], clashes: [{cell, models: [i, j], samePiece}]}
 	// samePiece: the two models are one piece to the importer (footprints within 2 px), so it reads the cell consistently; false
-	// is the dangerous kind. P.clashes (pieces on different rows of one column) is separate and unchanged.
+	// is the dangerous kind. P.clashes (pieces on different rows of one column) is a separate check.
 	P.cellOwnership = (objects, r, settings) => {
 		const T = 32, W = r.w, H = r.h, gw = Math.ceil(W / T), gh = Math.ceil(H / T), cut = settings.alphaCut;
 		const grid = new Array(gw * gh), put = (x, y, oi) => { const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(oi); };
@@ -616,43 +616,17 @@
 
 	// The importer's (tools/import_studio.gd) clash check, done here so artists see it before exporting. Models whose footprints
 	// come within 2 px are one piece; each piece anchors every tile column it covers on the row of its lowest bottom there, and
-	// reaches up to the top of its drawn art. Two pieces anchored on different rows of one column, whose spans come within a row
-	// of each other, clash: one layer measures them as one piece there. Returns [{a: names, b: names, col}].
-	P.clashes = (objects) => {
-		const T = 32, JOIN = 2;
-		const items = objects.filter((o) => o.faces.length).map((o) => {
-			const vi = Mesh.faceVerts(o), b = Mesh.bounds(o, vi);
-			return { o, hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])), z0: b.min[2], z1: b.max[2] };
-		});
-		// Pieces: union-find over hulls within JOIN px.
-		const root = items.map((_, i) => i), find = (k) => { while (root[k] !== k) k = root[k]; return k; };
-		for (let a = 0; a < items.length; a++)
-			for (let b = a + 1; b < items.length; b++) if (polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
-		const groups = new Map();
-		items.forEach((it, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(it); });
-		// Per piece and column: [top row, anchor row].
-		const pieces = [...groups.values()].map((its) => {
-			const cols = new Map(), names = [...new Set(its.map((it) => it.o.name))];
-			let top = Infinity;
-			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
-			for (const it of its) {
-				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
-				for (let cx = Math.floor(x0 / T); cx * T < x1; cx++) {
-					const y = maxYIn(it.hull, Math.max(x0, cx * T), Math.min(x1, cx * T + T)) - it.z0;
-					if (!isFinite(y)) continue;
-					const row = Math.floor((y - 0.01) / T);
-					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, row));
-				}
-			}
-			return { names, top: Math.floor(top / T), cols };
-		});
-		const out = [];
-		for (let a = 0; a < pieces.length; a++)
-			for (let b = a + 1; b < pieces.length; b++)
-				for (const [cx, ra] of pieces[a].cols) {
-					if (!pieces[b].cols.has(cx)) continue;
-					const rb = pieces[b].cols.get(cx), ta = Math.min(pieces[a].top, ra), tb = Math.min(pieces[b].top, rb);
-					if (ra !== rb && ta <= rb + 1 && tb <= ra + 1) { out.push({ a: pieces[a].names, b: pieces[b].names, col: cx }); break; }
+	// reaches up to the top of its drawn art (both come from P.pieces: pass its result). Two pieces anchored on different rows of
+	// one column, whose spans come within a row of each other, clash: one layer measures them as one piece there.
+	// -> [{a: names, b: names, col}]
+	P.clashes = (pm) => {
+		const ps = pm.pieces, out = [];
+		for (let a = 0; a < ps.length; a++)
+			for (let b = a + 1; b < ps.length; b++)
+				for (const [cx, ra] of ps[a].cols) {
+					if (!ps[b].cols.has(cx)) continue;
+					const rb = ps[b].cols.get(cx), ta = Math.min(ps[a].top, ra), tb = Math.min(ps[b].top, rb);
+					if (ra !== rb && ta <= rb + 1 && tb <= ra + 1) { out.push({ a: ps[a].names, b: ps[b].names, col: cx }); break; }
 				}
 		return out;
 	};
@@ -661,7 +635,7 @@
 	// 2 px into one piece, puts each piece's light outline and collision on ONE cell per tile column (the cell holding its lowest
 	// bottom row there: its "anchor"), and the lighting then measures every painted cell as part of the first anchored cell at or
 	// below it in its column. So a cell is read correctly only when every piece with art or floor in it is the piece that owns
-	// that anchor. Returns {pieces: [{names, objs, cols: Map column -> anchor row}], pieceOf (per object index, -1 = no surfaces),
+	// that anchor. Returns {pieces: [{names, objs, cols: Map column -> anchor row, top: highest art row}], pieceOf (per object index, -1 = no surfaces),
 	// artPiece (per art pixel), floorPiece (per floor point), gw, gh, cells: [{cx, cy, content, engine, status, msg}], conflicts,
 	// floating}; status 0 fine, 1 floating (art with no anchored cell below it: flat art to the engine), 2 conflict (a piece's art or
 	// floor sits in a cell the engine reads as another piece's).
@@ -681,6 +655,8 @@
 		const pieceOf = new Int32Array(objects.length).fill(-1);
 		const pieces = [...groups.values()].map((its, id) => {
 			const cols = new Map(), names = [...new Set(its.map((it) => it.o.name))];
+			let top = Infinity; // highest drawn row of the piece's art (its tops), for the column-clash check
+			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
 			for (const it of its) {
 				pieceOf[it.oi] = id;
 				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
@@ -690,7 +666,7 @@
 					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, Math.floor((y - 0.01) / T)));
 				}
 			}
-			return { id, names, objs: its.map((it) => it.oi), cols };
+			return { id, names, objs: its.map((it) => it.oi), cols, top: Math.floor(top / T) };
 		});
 		const artPiece = new Int16Array(W * H).fill(-1), floorPiece = new Int16Array(W * rows).fill(-1);
 		for (let i = 0; i < W * H; i++) if (r.alpha[i] > cut && r.owner[i] >= 0) artPiece[i] = pieceOf[r.owner[i]];

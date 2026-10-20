@@ -395,24 +395,39 @@
 		S.result.pieceMap = TS.Process.pieces(S.objects, S.result, S.settings);
 		output.set(S.result, S.settings);
 		pieceInfo();
-		const st = S.result.stats, clashes = TS.Process.clashes(S.objects);
+		const st = S.result.stats;
 		holeCells = null;
-		const clashText = clashes.map((c) => `${c.a.join(", ")} / ${c.b.join(", ")} (tile column ${c.col})`);
 		$("stats").innerHTML = `covered ${st.covered} px · <b class="${st.unfilled ? "bad" : ""}">holes ${st.unfilled}</b> (+${st.filled} filled)` +
 			(st.unfilled ? `<button id="b_nexthole" title="Show the next uncovered spot in both views">next hole ›</button>` : "") +
-			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms` +
-			(clashes.length ? `<span class="clash" title="${esc(clashText.join("\n"))}&#10;Pieces standing on different rows of one tile column: in one tile layer the upper one is measured as part of the lower one there (the importer prints the same). Move one of them to its own columns, or onto the same row.">⚠ ${clashes.length} column clash${clashes.length > 1 ? "es" : ""}: ${esc(clashText[0])}${clashes.length > 1 ? " …" : ""}</span>` : "");
+			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
-		// Atlas cells shared by two models (the bundle's `clashes`): a warning here, never silent.
-		const own = TS.Process.cellOwnership(S.objects, S.result, S.settings), real = own.clashes.filter((c) => !c.samePiece);
-		if (own.clashes.length) {
-			const line = (c) => `${S.objects[c.models[0]].name} / ${S.objects[c.models[1]].name} (cell ${c.cell[0]}, ${c.cell[1]}${c.samePiece ? ", same piece" : ""})`;
-			const el = document.createElement("span");
-			el.className = "clash";
-			el.title = own.clashes.map(line).join("\n") + "\nTwo models paint or stand in one 32 px atlas cell. Same piece (footprints within 2 px) is usually fine; otherwise the importer cannot tell whose cell it is: move one, or give them their own cells.";
-			el.textContent = `⚠ ${own.clashes.length} shared cell${own.clashes.length > 1 ? "s" : ""}${real.length ? ` (${real.length} between separate pieces)` : " (same piece only)"}: ${line(real[0] || own.clashes[0])}${own.clashes.length > 1 ? " …" : ""}`;
-			$("stats").appendChild(el);
-		}
+		tileProblems();
+	}
+
+	// One warning for everything that makes the importer misread the tile cells: the Pieces view's conflicts and floating art,
+	// column clashes (the importer prints the same) and cells shared by separate pieces (the bundle's `clashes`). Cells shared
+	// within one piece are harmless and left out. The details are in the tooltip; clicking opens the Pieces view.
+	function tileProblems() {
+		const pm = S.result.pieceMap, name = (i) => S.objects[i].name;
+		const columns = TS.Process.clashes(pm);
+		const shared = TS.Process.cellOwnership(S.objects, S.result, S.settings).clashes.filter((c) => !c.samePiece);
+		const bad = pm.cells.filter((c) => c.status);
+		const parts = [], lines = [];
+		const count = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+		if (pm.conflicts) parts.push(count(pm.conflicts, "conflict cell", "conflict cells"));
+		if (pm.floating) parts.push(count(pm.floating, "floating cell", "floating cells"));
+		if (columns.length) parts.push(count(columns.length, "column clash", "column clashes"));
+		if (shared.length) parts.push(count(shared.length, "cell shared by separate pieces", "cells shared by separate pieces"));
+		if (!parts.length) return;
+		for (const c of bad) lines.push(`cell ${c.cx}, ${c.cy}: ${c.status === 2 ? "conflict" : "floating"}: ${c.msg}`);
+		for (const c of columns) lines.push(`column clash, tile column ${c.col}: ${c.a.join(", ")} / ${c.b.join(", ")} stand on different rows; one tile layer measures the upper as part of the lower`);
+		for (const c of shared) lines.push(`cell ${c.cell[0]}, ${c.cell[1]}: shared by ${name(c.models[0])} / ${name(c.models[1])}; the importer can't tell whose it is`);
+		const el = document.createElement("button");
+		el.className = "clash";
+		el.title = lines.join("\n") + "\nFix: move a piece to its own tile columns, or onto the same bottom row. Click to open the Pieces view.";
+		el.textContent = `⚠ Tile problems: ${parts.join(" · ")} — show ›`;
+		el.onclick = () => setOutMode("pieces");
+		$("stats").appendChild(el);
 	}
 
 	// Switch the output view (tabs, Learn and "next hole" all come here). The light bar only shows in the Lit view (CSS).
@@ -2276,7 +2291,9 @@
 		$("outfilter").oninput = () => panels();
 		$("outfilter").onkeydown = (e) => { if (e.key === "Escape") { $("outfilter").value = ""; panels(); $("view").focus(); } e.stopPropagation(); };
 		$("b_process").onclick = processNow;
-		$("auto").onchange = () => { S.autoProcess = $("auto").checked; if (S.autoProcess) processNow(); };
+		// The Process button is only needed while auto is off.
+		const syncAuto = () => { S.autoProcess = $("auto").checked; $("b_process").style.display = S.autoProcess ? "none" : ""; };
+		$("auto").onchange = () => { syncAuto(); if (S.autoProcess) processNow(); };
 		for (const b of document.querySelectorAll("[data-export]")) b.onclick = () => exportMaps(b.dataset.export);
 		// Export name: cleaned to a safe file name as you leave the field; Enter exports the Godot bundle.
 		$("exportname").onchange = () => {
@@ -2397,7 +2414,7 @@
 		// navigated page's form (that fires no events, so X-ray could show ticked while it was off).
 		const syncControls = () => {
 			{ const sv = parseFloat($("snap").value); S.snap = isNaN(sv) ? 1 : sv; } S.shade = $("shade").value; S.opacity = parseFloat($("opacity").value);
-			S.xray = $("xray").checked; S.belowZ = $("belowz").checked; S.grid = $("grid").checked; S.autoProcess = $("auto").checked;
+			S.xray = $("xray").checked; S.belowZ = $("belowz").checked; S.grid = $("grid").checked; syncAuto();
 			output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z;
 			output.light.radius = parseFloat($("lightr").value); output.shadows = $("shadows").checked;
 			dirty = true;

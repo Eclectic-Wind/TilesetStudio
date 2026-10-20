@@ -119,7 +119,7 @@ section.output { display: grid; grid-template-rows: auto 1fr auto auto; backgrou
 .lightbar label { display: flex; gap: 4px; align-items: center; }
 .stats { padding: 4px 8px 4px; }
 .stats button { padding: 0 6px; margin-left: 4px; }
-.stats .clash { display: block; margin-top: 3px; color: #ffb35c; }
+.stats .clash { display: block; margin: 3px 0 0; padding: 2px 6px; color: #ffb35c; text-align: left; }
 .badge { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 3px; background: #4a3a1c; color: #ffd24d; vertical-align: 1px; }
 .pieceinfo { display: none; padding: 2px 8px; font-size: 12px; max-height: 6.5em; overflow: auto; }
 .pieceinfo.on { display: block; }

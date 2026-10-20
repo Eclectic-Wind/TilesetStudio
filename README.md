@@ -7,7 +7,7 @@ over the drawing, in the tileset's own projection, and the studio renders height
 
 ## The interface
 
-The top bar holds **File** (open tileset / project, save), **Add**, and on the right **Process** and **Export**, then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
+The top bar holds **File** (open tileset / project, save, Import 3D / stamp), **Add**, and on the right **Export** (with **Process** beside it when "auto" is off), then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
 No install, no build, no internet: open `index.html` in a desktop browser (Chrome/Edge/Firefox with WebGL2), or serve the
 project with `serve.ps1` (`http://127.0.0.1:8765/tools/tileset_studio/`), which also lets you open files by URL:
 `?tileset=/art/x.png` or `?project=/tools/tileset_studio/samples/ward_bedroom2.studio.json`. The whole tool is this folder;
@@ -67,7 +67,7 @@ the bottom has axis locks (X across / Y depth / Z height), an exact-value field,
 
 ### Import / export 3D (v0.8)
 
-**Import 3D** opens a source browser. Load a Wavefront `.obj` mesh or another `.studio.json` project. This adds models to
+**File ▸ Import 3D / stamp** opens a source browser. Load a Wavefront `.obj` mesh or another `.studio.json` project. This adds models to
 your current scene; it does not replace the destination image or existing models. Images can have any rectangular size,
 including sheets such as 416 x 256; their pixels are not resized or padded.
 
@@ -80,7 +80,7 @@ including sheets such as 416 x 256; their pixels are not resized or padded.
   retains the source coordinates. Both add independent editable copies in one undo step. **Use as stamp** starts placement
   over your current image instead.
 
-**Export 3D** downloads a Wavefront OBJ of the whole scene or only the selected models. Coordinates are world coordinates,
+**Export ▸ 3D models (OBJ)** downloads a Wavefront OBJ of the whole scene or only the selected models. Coordinates are world coordinates,
 divided by **Pixels per OBJ unit**. Choose Z up or Y up, and use the matching settings on re-import. For Blender's OBJ
 axis settings, see its [OBJ manual](https://docs.blender.org/manual/en/5.0/files/import_export/obj.html).
 
@@ -90,7 +90,7 @@ Use **Save project** to retain the artwork, Studio materials, collision settings
 
 ### Model stamps (v0.8)
 
-Open your destination image, click **Stamp**, load the source project or OBJ, select all parts of a prop, and click
+Open your destination image, choose **File ▸ Import 3D / stamp**, load the source project or OBJ, select all parts of a prop, and click
 **Use as stamp**. The source remains available in the current session through **Choose source / models**.
 
 1. Move over the image to see the translucent mesh preview. Click to pin it; dragging repositions it.
@@ -241,10 +241,11 @@ The stats line gives covered / hole / filled pixel counts. Aim for no magenta: *
 uncovered spot (switching to Holes). Hover the output to read the pixel under the pointer (height, normal, roughness, metallic,
 which model, hole or not; floor top / bottom / spans in the Floor view); **double-click** it to select that model.
 
-A **⚠ column clash** line appears when pieces would clash in the importer (`tools/import_studio.gd` prints the same): models within
-2 px of each other are one piece, and two pieces standing on different rows of one 32 px tile column, close enough to overlap
-there, get measured as one piece in a single tile layer. Hover it for the full list; move one of the pieces to its own columns
-or onto the same row.
+One **⚠ Tile problems** line sums up everything the importer would misread; click it to open the Pieces view, hover it for
+the full list. It counts the Pieces view's **conflict** and **floating** cells, **column clashes** (`tools/import_studio.gd`
+prints the same: two pieces standing on different rows of one 32 px tile column, close enough to overlap there, get measured
+as one piece in a single tile layer) and **cells shared by separate pieces** (the bundle's `clashes`; cells shared within one
+piece are harmless and not counted). Move one of the pieces to its own columns or onto the same row.
 
 ## Saving and safety
 

@@ -14,13 +14,12 @@
 	<div class="menuwrap" data-click>
 		<button class="ghost">File ▾</button>
 		<div class="menu">
-			<button id="b_tileset" title="Open a power-of-two tileset PNG (or drop it on the window)">Open tileset…</button>
+			<button id="b_tileset" title="Open the tileset art, a PNG (or drop it on the window)">Open tileset…</button>
 			<button id="b_project" title="Open a .studio.json project">Open project…</button>
 			<hr>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
 			<hr>
-			<button id="b_import3d" title="Add models from a Wavefront OBJ or a Studio project">Import 3D…</button>
-			<button id="b_export3d" title="Export the scene or selected meshes as Wavefront OBJ">Export 3D (OBJ)…</button>
+			<button id="b_import3d" title="Import 3D / stamp: pick models from a Wavefront OBJ or another Studio project, then add them or stamp them over your art">Import 3D / stamp…</button>
 		</div>
 	</div>
 	<div class="menuwrap">
@@ -31,7 +30,6 @@
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
 		</div>
 	</div>
-	<button data-tool="stamp" class="ghost" title="Stamp: reuse models over the artwork">Stamp</button>
 	<span id="tileinfo" class="dim">no tileset</span>
 	<span class="grow"></span>
 	<div class="actions">
@@ -47,6 +45,8 @@
 				<button data-export="png" title="The tileset art itself, as a plain PNG">Raw PNG (art)</button>
 				<button data-export="height">Height map</button><button data-export="normal">Normal map</button>
 				<button data-export="pbr">Roughness / metallic</button><button data-export="footprints">Footprints (JSON)</button>
+				<hr>
+				<button id="b_export3d" title="3D models: mesh geometry of the scene or the selection as Wavefront OBJ, for Blender and other 3D tools">3D models (OBJ)…</button>
 			</div>
 		</div>
 	</div>
@@ -125,7 +125,7 @@
 			<div id="empty" class="empty">
 				<div class="ecard">
 					<h2>Start with your tileset art</h2>
-					<p>Drop a power-of-two PNG here, or open one.</p>
+					<p>Drop a tileset PNG here, or open one.</p>
 					<div class="cta-row">
 						<button id="e_open" class="primary big">Open tileset PNG</button>
 						<button id="e_project" class="big">Open project</button>
@@ -254,10 +254,6 @@
 <div id="help" class="modal">
 	<div class="card">
 		<h2>Tileset Studio</h2>
-		<p><b>3D import / export:</b> Import 3D loads an OBJ or Studio project into a source browser. Select the parts to add at the cursor or at their original coordinates. OBJ scale and up axis are adjustable. Export 3D writes the scene or selection to OBJ (mesh geometry only); Save project keeps all Studio data.</p>
-		<p><b>Model stamps:</b> choose models in the source browser, then Use as stamp. Move over the destination image; click to pin the preview. Adjust Size, Base height, or X/Y, then Place stamp / Enter. Keep stamping repeats the selected parts. Q / Esc exits. Each placement is one undo step. Base height keeps the image alignment fixed; stamped parts remain individually editable.</p>
-		<p><b>Drawing on objects:</b> surface placement is on by default. Start on a visible face to use its height and orientation; the first point locks that plane for the whole outline. Thickness builds outward, shown by the orange preview. A zero-thickness shape is a surface detail. Start in empty space, or uncheck <b>Draw on object surfaces</b>, to use the front/top setting.</p>
-		<p><b>Pencil (P):</b> draw a freehand outline and release to create an object, or choose <b>Click corners</b> and finish with Enter / the first point. Set Thickness for depth, choose Upright front or Flat top, and use Simplify for fewer freehand vertices. Esc clears; Q returns to selection; Tab edits the finished mesh. Concave outlines work; crossed outlines and holes do not.</p>
 		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → Process → check the output → Export.
 		Axes: <b class="ax-x">X across</b> (east-west), <b class="ax-y">Y depth</b> (north-south on the ground, bigger = nearer you), <b class="ax-z">Z height</b> (up).
 		The view is the tileset's own projection: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up; the axis key at the bottom right of the view shows the directions.
@@ -274,7 +270,7 @@
 			<tr><td>E on edges / vertices</td><td>grow quads / new points on lines, then move them</td><td>Alt+E</td><td>extrude manifold: pushed in, a face cuts the model (no inner walls); pulled out flush, it merges with the faces beside it</td></tr>
 			<tr><td>F (edit mode)</td><td>fill: 2 vertices → a line, 3+ vertices or an edge loop → a face (outside edit mode: frame)</td><td>Ctrl+E</td><td>bridge two faces (a tunnel / neck) or two edge loops / strips (a band); same vertex counts</td></tr>
 			<tr><td>Ctrl+right-click (edit)</td><td>new point at the pointer, joined to the selected one: draw an outline, F, E up</td><td>Ctrl+J</td><td>join the selected models into the active one (Add ▸ Point starts from nothing)</td></tr>
-			<tr><td>K (edit mode)</td><td>knife: click points along a cut (snap to vertices / edges, or start off the model), Enter / right-click cuts, Backspace drops a point, first point closes; X-ray cuts through</td><td></td><td></td></tr>
+			<tr><td>K (edit mode)</td><td>knife: click points along a cut (snap to vertices / edges, or start off the model), Enter / right-click cuts, Backspace drops a point, first point closes; X-ray cuts through</td><td>P</td><td>pencil: drag an outline (or click corners) and release; Esc clears, Q leaves</td></tr>
 			<tr><td>X / Y / Z twice</td><td>local axis while moving, scaling or turning (the model's own axes, each about its own middle; in edit mode the selection's normal)</td><td>click again</td><td>picks the next thing under the pointer (white outline = what a click takes); X-ray picks through faces</td></tr>
 			<tr><td>type a number</td><td>exact value while a tool runs</td><td>Shift</td><td>half the snap step (Snap off: no snapping)</td></tr>
 			<tr><td>Alt-drag, middle-drag</td><td>look round (eases back on release)</td><td>Space-drag, Shift+middle</td><td>pan</td></tr>
@@ -286,7 +282,8 @@
 			<tr><td>Ctrl+arrows, PageUp/Down</td><td>nudge one snap step (Shift: half)</td><td>[ / ]</td><td>snap step down / up</td></tr>
 			<tr><td>Alt+Z</td><td>X-ray</td><td>outliner</td><td>double-click renames, the dot hides, the box filters</td></tr>
 		</table>
-		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ column clash" warns of pieces the importer will merge. <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
+		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Pencil (P)</b> draws a custom-shaped object, on a model's face or in empty space. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models (OBJ)</b> writes mesh geometry for other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
+		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
 		<p><b>Into Godot:</b> set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p>
 		<p class="dim">Separate files: name_height.png (R height px/255; G/B highlights if packed), name_normal.png (OpenGL: R east, G up, B toward the viewer),
 		name_pbr.png (R roughness, G metallic), name_footprints.json (per model: floor footprint, height range, collision).</p>
