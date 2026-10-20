@@ -43,7 +43,8 @@
 				<label class="exportname" title="What the exported files are called (saved with the project). Letters, digits, - and _; empty = the tileset's name. In Godot the bundle unpacks to name.png, name_height.png ... and name_tileset.tres.">Name <input id="exportname" spellcheck="false" autocomplete="off"></label>
 				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★</button>
 				<hr>
-				<button data-export="all">Separate files (height, normal, pbr, footprints)</button>
+				<button data-export="all">Separate files (png, height, normal, pbr, footprints)</button>
+				<button data-export="png" title="The tileset art itself, as a plain PNG">Raw PNG (art)</button>
 				<button data-export="height">Height map</button><button data-export="normal">Normal map</button>
 				<button data-export="pbr">Roughness / metallic</button><button data-export="footprints">Footprints (JSON)</button>
 			</div>

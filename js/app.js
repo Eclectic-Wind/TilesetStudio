@@ -362,6 +362,7 @@
 		processNow();
 		const imgs = TS.Process.images(S.result, S.settings);
 		const files = [];
+		if (which === "all" || which === "png") files.push([`${name}.png`, await imageBlob(new ImageData(new Uint8ClampedArray(S.art.data), S.art.w, S.art.h))]);
 		if (which === "all" || which === "height") files.push([`${name}_height.png`, await imageBlob(imgs.height)]);
 		if (which === "all" || which === "normal") files.push([`${name}_normal.png`, await imageBlob(imgs.normal)]);
 		if (which === "all" || which === "pbr") files.push([`${name}_pbr.png`, await imageBlob(imgs.pbr)]);
