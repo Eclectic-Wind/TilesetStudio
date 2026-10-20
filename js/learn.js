@@ -427,7 +427,7 @@
 			{ t: 0, say: "The game reads your art in square tiles.", sub: "Each is 32 × 32 pixels." },
 			{ t: 1.8, say: "Every box owns the tiles it covers.", sub: "Character, then stone floor, then back wall." },
 			{ t: 8.6, say: "A few tiles are shared by the floor and the wall.", sub: "That's fine: they touch, so they count as one piece." },
-			{ t: 11.4, say: "But two separate things in one tile is a problem.", sub: "The game can't tell whose tile it is. The Studio warns you." },
+			{ t: 11.4, say: "But two separate things in one tile is a problem.", sub: "The game can't tell whose tile it is. The Studio flags it as ⚠ Tile problems." },
 			{ t: 15, say: "Fix it by moving one so each tile has one thing.", sub: "" },
 		],
 		show: [["pieces", "Pieces view"]],
@@ -479,13 +479,13 @@
 	L.push({
 		title: "Your first five minutes", dur: 20, steps: true,
 		caps: [{ t: 0, say: "Five steps. You've got this.", sub: "Tap a step to tick it off." }],
-		show: [["lit", "Lit"], ["holes", "Holes"], ["kind", "Kind"], ["collision", "Collision"]],
+		show: [["lit", "Lit view"], ["holes", "Holes view"], ["kind", "Kind view"], ["collision", "Collision view"]],
 		extra: `<ol class="todo">
-			<li style="--d:0s"><span>1</span><div><b>Cover the art with boxes.</b><br><small>Shift+A adds one. G moves, S resizes. Stuck? Add BasicSample as a ghost (left panel, References).</small></div></li>
+			<li style="--d:0s"><span>1</span><div><b>Open your tileset, then cover the art with boxes.</b><br><small>Shift+A adds one. G moves, S resizes. Stuck? Add BasicSample as a ghost (left panel, References).</small></div></li>
 			<li style="--d:.12s"><span>2</span><div><b>Fix the heights.</b><br><small>Select a box, then Properties → Placement. Bottoms on the floor.</small></div></li>
-			<li style="--d:.24s"><span>3</span><div><b>Press Process, then look at Lit.</b><br><small>Drag the light low across the scene. Do the shadows look right?</small></div></li>
+			<li style="--d:.24s"><span>3</span><div><b>Look at the Lit view.</b><br><small>The Studio re-processes as you work. Drag the light low across the scene: do the shadows look right?</small></div></li>
 			<li style="--d:.36s"><span>4</span><div><b>Check the jobs.</b><br><small>Wall and side set? Rugs walkable? See the Kind and Collision views.</small></div></li>
-			<li style="--d:.48s"><span>5</span><div><b>Export → Godot bundle.</b><br><small>Also Save project, so the export keeps its identity.</small></div></li>
+			<li style="--d:.48s"><span>5</span><div><b>Export → Godot bundle (Ctrl+Shift+E).</b><br><small>Also Save project (Ctrl+S), so the export keeps its identity.</small></div></li>
 		</ol>
 		<div class="row"><button id="l_sample" class="primary">Open the BasicSample scene</button><button id="l_ghost">👻 Add it as a ghost</button></div>`,
 		make() {
@@ -500,12 +500,22 @@
 	});
 
 	// The BasicSample scene (js/sample_basic.js), opened as the project.
-	async function loadSample() {
+	async function loadSample(quiet) {
 		const p = JSON.parse(JSON.stringify(B()));
 		p.bundleId = undefined; // a fresh identity: it is a copy to play with
-		if (!(await TS.api.openProject(JSON.stringify(p)))) return; // cancelled at "Save changes?"
+		if (!(await TS.api.openProject(JSON.stringify(p)))) return false; // cancelled at "Save changes?"
+		if (!quiet) { close(); TS.api.setOutMode("kind"); }
+		return true;
+	}
+
+	// "See it in the Studio": the lessons draw the BasicSample, so with nothing open it is opened first (the output view would be
+	// blank otherwise); then the window closes, the output view switches and a note says where to go next.
+	async function showInStudio(mode, label) {
+		if (!TS.state.art && !(await loadSample(true))) return;
 		close();
-		const b = document.querySelector('#outmodes button[data-mode="kind"]'); if (b) b.click();
+		if (!TS.state.result) TS.api.processNow();
+		TS.api.setOutMode(mode);
+		TS.api.toast(`Showing the ${label}. Press L to go back to the lessons.`, "ok");
 	}
 
 	// --- the window ---------------------------------------------------------------------------------------------------
@@ -549,7 +559,7 @@
 		$("learn_next").textContent = cur === L.length - 1 ? "Done ✓" : "Next →";
 		const ex = $("learn_extra");
 		ex.innerHTML = (lesson.extra || "") + (lesson.show && lesson.show.length ? `<div class="row seeit"><span class="dim">See it in the Studio:</span>${lesson.show.map(([m, t]) => `<button class="try" data-show="${m}">👁 ${t}</button>`).join("")}</div>` : "");
-		ex.querySelectorAll("[data-show]").forEach((b) => { b.onclick = () => { const v = document.querySelector(`#outmodes button[data-mode="${b.dataset.show}"]`); close(); if (v) v.click(); const s = $("status"); if (s) s.textContent = "Showing the " + b.textContent.replace("👁 ", "") + ". Press L to go back to the lessons."; }; });
+		ex.querySelectorAll("[data-show]").forEach((b) => { b.onclick = () => showInStudio(b.dataset.show, b.textContent.replace("👁 ", "").replace(/ \(.*\)$/, "")); });
 		ex.querySelectorAll(".todo li").forEach((li) => { li.onclick = () => li.classList.toggle("done"); });
 		if ($("l_sample")) $("l_sample").onclick = () => loadSample();
 		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => TS.api.toast(e.message, "bad")); };
