@@ -404,7 +404,7 @@
 					const kd = KINDS[idx], m = models.find((q) => q.key === kd.key), b = bounds(m), mid = project([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2], cam);
 					const a = sege(local, 0, 0.4) * (1 - sege(local, 2.6, 3)), lx = W - 100, ly = 56 + 0;
 					arrow(g, [lx - 52, ly + 14], [mid[0] + (mid[0] < lx ? 14 : -14), mid[1] - 8], C[kd.k], a * 0.8, 2);
-					pill(g, lx, ly, `${kd.k.toUpperCase()} · ${kd.auto ? "AUTO" : "BY HAND"}`, C[kd.k], a, 18);
+					pill(g, lx, ly, `${kd.k} · ${kd.auto ? "auto" : "by hand"}`, C[kd.k], a, 18);
 				}
 				KINDS.forEach((kd, i) => { const y = 36 + i * 27; g.save(); g.globalAlpha = i === idx ? 1 : 0.35; g.fillStyle = C[kd.k]; g.beginPath(); g.roundRect(18, y - 8, 16, 16, 4); g.fill(); g.restore(); text(g, kd.k, 42, y, i === idx || summary ? C.ink : C.dim, 14, "left"); text(g, kd.auto ? "auto" : "by hand", 92, y, kd.auto ? C.ok : C.amber, 12, "left", i === idx || summary ? 1 : 0.4); });
 				if (summary) pill(g, W / 2 + 40, H - 30, "Deco, Wall, Side: set by hand in Properties → Kind", C.amber, sege(t, 17.4, 18.2), 13);
