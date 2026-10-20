@@ -18,6 +18,9 @@
 			<button id="b_project" title="Open a .studio.json project">Open project…</button>
 			<hr>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
+			<hr>
+			<button id="b_import3d" title="Add models from a Wavefront OBJ or a Studio project">Import 3D…</button>
+			<button id="b_export3d" title="Export the scene or selected meshes as Wavefront OBJ">Export 3D (OBJ)…</button>
 		</div>
 	</div>
 	<div class="menuwrap">
@@ -28,6 +31,7 @@
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
 		</div>
 	</div>
+	<button data-tool="stamp" class="ghost" title="Stamp: reuse models over the artwork">Stamp</button>
 	<span id="tileinfo" class="dim">no tileset</span>
 	<span class="grow"></span>
 	<div class="actions">
@@ -51,11 +55,35 @@
 </header>
 <main>
 	<aside class="left">
+		<div id="stamppanel" class="stamppanel">
+			<h3>Model stamp</h3>
+			<button id="stamp_choose">Choose source / models</button>
+			<p id="stamp_name" class="dim"></p>
+			<label>Size <input id="stamp_scale" type="number" min="0.1" max="10000" step="1" value="100"> %</label>
+			<label title="Lowest vertex height. Changes height and depth together so the preview stays aligned with the image.">Base height <input id="stamp_base" type="number" step="1" value="0"> px</label>
+			<div class="stamp_xy"><label title="Left edge in the image">X <input id="stamp_x" type="number" step="1"></label><label title="Top edge in the image">Y <input id="stamp_y" type="number" step="1"></label></div>
+			<label><input id="stamp_snap" type="checkbox"> Use grid snap</label>
+			<label><input id="stamp_repeat" type="checkbox" checked> Keep stamping</label>
+			<p id="stamp_help" aria-live="polite"></p>
+			<div class="pencilactions"><button id="stamp_place" class="primary">Place stamp</button><button id="stamp_move">Move preview</button><button id="stamp_done">Done (Q)</button></div>
+		</div>
 			<details class="sec" open id="sec_models">
 				<summary id="models_h">Models</summary>
 				<input id="outfilter" class="outfilter" type="search" placeholder="Filter models…" title="Show only models whose name contains this">
 				<ul id="outliner" data-empty="No models yet. Pick Add ▾ (or press Shift+A) to place one."></ul>
 			</details>
+		<div id="pencilpanel" class="pencilpanel">
+			<h3>Pencil &middot; custom object</h3>
+			<label>Draw <select id="pencil_mode"><option value="freehand">Freehand</option><option value="corners">Click corners</option></select></label>
+			<label title="Start on an existing object's face to draw on its plane. The first point locks the surface for the whole outline."><input id="pencil_surface" type="checkbox" checked> Draw on object surfaces</label>
+			<p id="pencil_target" class="penciltarget" aria-live="polite">Start on a face to draw on it.</p>
+			<label title="Used when the first point is in empty space, or surface placement is off.">Empty space <select id="pencil_plane"><option value="front">Upright front</option><option value="top">Flat top</option></select></label>
+			<label title="On an object: build outward from the starting face. In empty space: front depth or top height. Zero makes a single face.">Thickness <input id="pencil_thickness" type="number" min="0" max="255" step="1" value="8"> px</label>
+			<label title="Remove small wobbles from freehand strokes, in image pixels. Higher values make simpler shapes. Clicked corners are kept.">Simplify <input id="pencil_simplify" type="number" min="0" max="32" step="0.5" value="1"> px</label>
+			<label><input id="pencil_snap" type="checkbox"> Snap outline to grid</label>
+			<p id="pencil_help" class="dim">Drag around an outline and release to create an object.</p>
+			<div class="pencilactions"><button id="pencil_finish" class="primary">Finish shape</button><button id="pencil_back" title="Remove the last corner (Backspace)">Undo point</button><button id="pencil_clear">Clear</button><button id="pencil_done">Done (Q)</button></div>
+		</div>
 			<details class="sec" open id="sec_props">
 				<summary>Properties</summary>
 				<div id="props"></div>
@@ -90,6 +118,8 @@
 			</div>
 			<div class="viewport">
 			<canvas id="view" tabindex="0"></canvas>
+			<svg id="pencil_overlay" class="penciloverlay" aria-hidden="true"></svg>
+			<canvas id="stamp_overlay" class="penciloverlay" aria-hidden="true"></canvas>
 			<div id="empty" class="empty">
 				<div class="ecard">
 					<h2>Start with your tileset art</h2>
@@ -116,6 +146,7 @@
 			<button data-tool="ref" title="Move reference: drag to slide the active reference across the floor (X, Y). Its height stays locked. Add one under References.">⤧</button>
 			<button data-tool="cursor" title="3D cursor (C): tap where the next piece goes (on a top to stack)">⊕</button>
 			<button data-act="add" title="Add a primitive at the cursor (Shift+A)">＋</button>
+			<button data-tool="pencil" title="Pencil (P): draw a custom-shaped object">&#9998;</button>
 			<span class="gap"></span>
 			<button data-act="grab" title="Move (G)">✥</button>
 			<button data-act="scale" title="Scale (S)">⤢</button>
@@ -196,10 +227,36 @@
 <input type="file" id="f_tileset" accept="image/png" hidden>
 <input type="file" id="f_ref" accept=".json,application/json" multiple hidden>
 <input type="file" id="f_project" accept=".json,application/json" hidden>
+<input type="file" id="f_source" accept=".obj,.json" hidden>
+<div id="source_dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="source_title">
+	<div class="card sourcecard">
+		<div class="sourcebar"><h2 id="source_title">Import 3D &amp; model stamps</h2><span class="grow"></span><button id="source_close">Close</button></div>
+		<div class="sourcebar"><button id="source_load" class="primary">Load source (.obj / .studio.json)</button><span id="source_name" class="dim">No source loaded</span></div>
+		<div id="source_obj_options" class="sourcebar" hidden><label>Pixels per OBJ unit <input id="source_units" type="number" min="0.0001" max="100000" step="1" value="1"></label><label>File up axis <select id="source_up"><option value="z">Z up</option><option value="y">Y up</option></select></label></div>
+		<p id="source_message" aria-live="polite">Load an existing model file. Your open image and models stay in place.</p>
+		<div class="sourcebody"><div class="sourcecanvas"><canvas id="source_view"></canvas><p class="dim">Drag a box around complete parts. Shift adds / toggles. Wheel zooms; right-drag pans.</p></div><div class="sourcelist"><input id="source_filter" type="search" placeholder="Filter source models"><div id="source_list"></div></div></div>
+		<div class="sourcebar"><button id="source_all">Select all</button><button id="source_none">Clear</button><button id="source_fit">Fit sheet</button><button id="source_frame" disabled>Frame selected</button><span id="source_count" class="dim">0 part(s) selected</span></div>
+		<div class="sourcebar"><button id="source_add" disabled title="Add the selected models at the 3D cursor, with their lowest point at cursor height">Add at cursor</button><button id="source_keep" disabled title="Add the selected models with their existing coordinates">Add at original position</button><span class="grow"></span><button id="source_stamp" class="primary" disabled>Use as stamp</button></div>
+	</div>
+</div>
+<div id="obj_export" class="modal" role="dialog" aria-modal="true" aria-labelledby="obj_title"><div class="card objcard">
+	<h2 id="obj_title">Export 3D &middot; Wavefront OBJ</h2>
+	<p>Export mesh geometry and object names. Keep a Studio project for the image, materials, and collision settings.</p>
+	<label><input id="obj_selected" type="checkbox"> Selected models only</label>
+	<label>Pixels per OBJ unit <input id="obj_units" type="number" min="0.0001" max="100000" step="1" value="1"></label>
+	<label>File up axis <select id="obj_up"><option value="z">Z up</option><option value="y">Y up</option></select></label>
+	<p class="dim">Use matching units and up axis when importing again. OBJ exchange includes faces and loose edges; it does not transfer textures, UVs, rigging, or animations.</p>
+	<p id="obj_export_error" class="bad" aria-live="polite"></p>
+	<div class="sourcebar"><button id="obj_download" class="primary">Download OBJ</button><button id="obj_close">Cancel</button></div>
+</div></div>
 <div id="help" class="modal">
 	<div class="card">
 		<h2>Tileset Studio</h2>
-		<p><b>Flow:</b> Open tileset (power-of-two PNG) → lay models over the art → Process → check the output → Export.
+		<p><b>3D import / export:</b> Import 3D loads an OBJ or Studio project into a source browser. Select the parts to add at the cursor or at their original coordinates. OBJ scale and up axis are adjustable. Export 3D writes the scene or selection to OBJ (mesh geometry only); Save project keeps all Studio data.</p>
+		<p><b>Model stamps:</b> choose models in the source browser, then Use as stamp. Move over the destination image; click to pin the preview. Adjust Size, Base height, or X/Y, then Place stamp / Enter. Keep stamping repeats the selected parts. Q / Esc exits. Each placement is one undo step. Base height keeps the image alignment fixed; stamped parts remain individually editable.</p>
+		<p><b>Drawing on objects:</b> surface placement is on by default. Start on a visible face to use its height and orientation; the first point locks that plane for the whole outline. Thickness builds outward, shown by the orange preview. A zero-thickness shape is a surface detail. Start in empty space, or uncheck <b>Draw on object surfaces</b>, to use the front/top setting.</p>
+		<p><b>Pencil (P):</b> draw a freehand outline and release to create an object, or choose <b>Click corners</b> and finish with Enter / the first point. Set Thickness for depth, choose Upright front or Flat top, and use Simplify for fewer freehand vertices. Esc clears; Q returns to selection; Tab edits the finished mesh. Concave outlines work; crossed outlines and holes do not.</p>
+		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → Process → check the output → Export.
 		Axes: <b class="ax-x">X across</b> (east-west), <b class="ax-y">Y depth</b> (north-south on the ground, bigger = nearer you), <b class="ax-z">Z height</b> (up).
 		The view is the tileset's own projection: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up; the axis key at the bottom right of the view shows the directions.
 		Model what the art shows: fronts stand on the floor line, tops sit at their height. Holes (art no model covers) show in magenta.</p>
@@ -234,10 +291,13 @@
 	</div>
 </div>
 <script src="js/math.js"></script>
+<script src="js/shape.js"></script>
 <script src="js/mesh.js"></script>
 <script src="js/render.js"></script>
 <script src="js/process.js"></script>
 <script src="js/output.js"></script>
+<script src="js/transfer.js"></script>
+<script src="js/transfer-ui.js"></script>
 <script src="js/sample_basic.js"></script>
 <script src="js/learn.js"></script>
 <script src="js/app.js"></script>

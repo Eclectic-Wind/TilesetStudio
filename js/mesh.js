@@ -156,11 +156,18 @@
 	// Does some face run a -> b (in that direction)?
 	const runs = (obj, a, b) => obj.faces.some((f) => f.v.some((v, i) => v === a && f.v[(i + 1) % f.v.length] === b));
 
-	// Fan triangulation: [{a, b, c, face}] (vertex indices).
+	// Project onto the face's dominant plane, then triangulate without filling concave notches.
+	// Return corner indices so material/smooth normals stay attached to the right vertices.
+	M.faceTriangles = (obj, face) => {
+		const n = M.faceNormal(obj, face).map(Math.abs), drop = n.indexOf(Math.max(...n));
+		const axes = [0, 1, 2].filter((i) => i !== drop);
+		return TS.Shape.triangulate(face.v.map((i) => axes.map((k) => obj.verts[i][k])));
+	};
+	// [{a, b, c, face}] (vertex indices).
 	M.triangles = (obj) => {
 		const tris = [];
 		obj.faces.forEach((f, fi) => {
-			for (let i = 1; i + 1 < f.v.length; i++) tris.push({ a: f.v[0], b: f.v[i], c: f.v[i + 1], face: fi });
+			for (const [a, b, c] of M.faceTriangles(obj, f)) tris.push({ a: f.v[a], b: f.v[b], c: f.v[c], face: fi });
 		});
 		return tris;
 	};

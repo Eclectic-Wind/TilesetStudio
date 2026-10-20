@@ -26,6 +26,40 @@ button.cta:hover { background: #3b2a16; border-color: var(--accent); }
 .actions { display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
 .autoopt { color: var(--dim); margin-right: 2px; }
 #tileinfo { margin-left: 8px; }
+.brand { color: var(--accent); margin-right: 6px; }
+header [data-tool].on { border-color: var(--accent); background: #3b2a16; }
+.pencilpanel { display: none; margin-top: 10px; padding: 0 8px 10px; border: 1px solid var(--accent); border-radius: 6px; }
+.pencilpanel.open { display: block; }
+.pencilpanel label { display: flex; align-items: center; gap: 5px; margin: 7px 0; }
+.pencilpanel select { flex: 1; min-width: 0; }
+.pencilpanel p { margin: 8px 0; }
+.penciltarget { color: #64d9c4; overflow-wrap: anywhere; font-size: 11px; }
+.pencilactions { display: flex; flex-wrap: wrap; gap: 5px; }
+.penciloverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.stamppanel { display: none; padding: 0 8px 10px; border: 1px solid var(--accent); border-radius: 6px; }
+.stamppanel.open { display: block; }
+.stamppanel label, .objcard > label { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.stamppanel p { overflow-wrap: anywhere; }
+.stamp_xy { display: flex; gap: 10px; }
+.stamppanel input[type=number] { width: 72px; }
+.modal .card.sourcecard { width: min(1080px, calc(100vw - 32px)); max-width: 1080px; }
+.sourcebar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.sourcebar h2 { margin: 0; }
+.sourcebar label { display: flex; align-items: center; gap: 5px; }
+.sourcebar[hidden] { display: none; }
+#source_name { overflow-wrap: anywhere; }
+.sourcebody { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; }
+.sourcecanvas { min-width: 0; }
+#source_view { display: block; width: 100%; height: min(48vh, 440px); border: 1px solid var(--line); touch-action: none; cursor: crosshair; }
+.sourcecanvas p { margin: 5px 0; }
+.sourcelist { display: flex; flex-direction: column; min-height: 0; }
+#source_filter { width: 100%; margin-bottom: 6px; }
+#source_list { overflow-y: auto; max-height: min(48vh, 440px); border: 1px solid var(--line); flex: 1; }
+#source_list label { display: flex; align-items: center; gap: 6px; padding: 4px; cursor: pointer; }
+#source_list label.sel { background: #3a2b1b; }
+#source_list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media(max-width: 700px) { .sourcebody { grid-template-columns: minmax(0, 1fr) 140px; } }
+button:disabled { opacity: .45; cursor: default; }
 .sep { width: 1px; height: 18px; background: var(--line); }
 .grow { flex: 1; }
 .dim { color: var(--dim); }

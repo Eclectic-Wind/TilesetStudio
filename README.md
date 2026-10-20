@@ -8,6 +8,13 @@ over the drawing, in the tileset's own projection, and the studio renders height
 ## The interface
 
 The top bar holds **File** (open tileset / project, save), **Add**, and on the right **Process** and **Export**, then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
+No install, no build, no internet: open `index.html` in a desktop browser (Chrome/Edge/Firefox with WebGL2), or serve the
+project with `serve.ps1` (`http://127.0.0.1:8765/tools/tileset_studio/`), which also lets you open files by URL:
+`?tileset=/art/x.png` or `?project=/tools/tileset_studio/samples/ward_bedroom2.studio.json`. The whole tool is this folder;
+copy it anywhere to hand it out.
+
+Try the sample: open `samples/ward_bedroom2.studio.json` (Open project), a 128x128 crop of the Ward's Bedroom 2 with the bed,
+wheelchair, bucket and cart modelled.
 
 ## The view
 
@@ -57,6 +64,79 @@ started from the palette are "armed": press on the view where to start, drag, an
 the bottom has axis locks (X across / Y depth / Z height), an exact-value field, "fine" (half the snap step), apply and cancel.
 
 ## Modelling
+
+### Import / export 3D (v0.8)
+
+**Import 3D** opens a source browser. Load a Wavefront `.obj` mesh or another `.studio.json` project. This adds models to
+your current scene; it does not replace the destination image or existing models. Images can have any rectangular size,
+including sheets such as 416 x 256; their pixels are not resized or padded.
+
+- **OBJ:** check **Pixels per OBJ unit** and **File up axis**. The default is 1 pixel per unit, Z up. A model made in metre-sized
+  units may need a larger value, such as 32 pixels per unit. Y-up imports convert `(x, y, z)` to Studio `(x, -z, y)`.
+- **Studio project:** shows its embedded source artwork and the existing models. Scale and geometry are kept as authored.
+- Drag a box that fully contains the parts you want. Click a face to select one part; Shift-click toggles it, and Shift-drag
+  adds parts. The checklist also lets you select obscured parts. Wheel zooms; right-drag pans; **Frame selected** zooms in.
+- **Add at cursor** places the group at the 3D cursor with its lowest point at the cursor's height. **Add at original position**
+  retains the source coordinates. Both add independent editable copies in one undo step. **Use as stamp** starts placement
+  over your current image instead.
+
+**Export 3D** downloads a Wavefront OBJ of the whole scene or only the selected models. Coordinates are world coordinates,
+divided by **Pixels per OBJ unit**. Choose Z up or Y up, and use the matching settings on re-import. For Blender's OBJ
+axis settings, see its [OBJ manual](https://docs.blender.org/manual/en/5.0/files/import_export/obj.html).
+
+This is basic **mesh geometry** exchange: object names, polygon faces, points and loose edges. OBJ texture coordinates,
+textures/material files, custom normals, rigging and animations are not transferred. Normals are calculated from the mesh.
+Use **Save project** to retain the artwork, Studio materials, collision settings, and exact project state.
+
+### Model stamps (v0.8)
+
+Open your destination image, click **Stamp**, load the source project or OBJ, select all parts of a prop, and click
+**Use as stamp**. The source remains available in the current session through **Choose source / models**.
+
+1. Move over the image to see the translucent mesh preview. Click to pin it; dragging repositions it.
+2. Adjust **Size**, **Base height**, or **X/Y** (the upper-left corner of the preview in image pixels). Arrow keys nudge by
+   1 px, Shift by 0.5 px; Page Up/Down adjusts the base height. **Move preview** makes it follow the pointer again.
+3. Click **Place stamp** or press **Enter**. **Keep stamping** allows repeated copies. Q / Esc exits without adding the preview.
+
+Uniform size scales the whole group together. Base height sets its lowest vertex and shifts depth along with height so
+the image alignment stays fixed. The parts keep their relative shapes, heights, materials and collision modes. Stamps are
+independent editable models; each placement is one undo step. The preview never enters saved projects, processing or exports.
+Stamping adds geometry only; it does not paint source artwork onto the destination, auto-match sprites, or conform to surfaces.
+Placed geometry is saved normally; reload the source file to create new stamps after restarting the app.
+
+### Pencil: custom-shaped objects (v0.7)
+
+Click **Pencil** in the header or palette, or press **P**. The options appear in the left panel.
+
+**Draw on object surfaces** is on by default. Start your stroke (or first corner) on a visible face and the new shape sits on
+that face's plane, at its actual height and orientation. Tops, upright fronts, slopes and rotated faces work, including faces of
+other pencil shapes. The nearest visible face is used; hidden models are ignored. The cyan outline and label show the target.
+**Thickness** builds outward from the surface; the orange preview shows the outer face. Thickness 0 makes a surface detail,
+lifted just 0.01 px to prevent flicker. The finished shape is a separate, editable object.
+
+The first point locks the plane for the entire outline, so crossing another face does not change its height unexpectedly.
+The outline may extend beyond the starting face; it does not wrap around edges or conform to a curved object's changing
+surface. On a warped face, the triangle under the first point supplies the plane. Clear the outline (or undo all its corners)
+to pick a different face. Starting in empty space, or unchecking surface placement, uses the **Empty space** setting below.
+
+- **Freehand:** press and drag around the object's outline, then release. The outline closes automatically and becomes one object.
+- **Click corners:** click each corner; click the green first point, press **Enter**, or click **Finish shape** to close it. **Backspace** / **Undo point** removes the last corner.
+- **Empty space / Upright front:** the drawn outline becomes the front face; **Thickness** adds depth behind it. Its lowest point sits at the 3D cursor's height (normally the floor).
+- **Empty space / Flat top:** the outline becomes the top face of a slab. **Thickness** sets its height above the cursor's height. The drawn face stays aligned with the art.
+- **Thickness 0** creates one face, useful for filling an outline and extruding later in edit mode. It starts with collision disabled.
+- **Simplify** removes small freehand wobbles, in image pixels. The default is 1 px; increase it for fewer vertices. Clicked corners are kept, apart from redundant points along a straight edge.
+- **Snap outline to grid** is optional; when enabled it uses the header's Snap step. Reduce the step for small shapes.
+
+**Esc / Clear / right-click** clears an unfinished outline. **Q / Done** returns to selection. Space-drag and middle-drag pan;
+the wheel zooms. Drawing uses the tileset view; choosing Pencil from 3D returns to that view. Mouse, pen and single-touch drawing
+are supported; a second finger cancels the current freehand stroke and starts pan/zoom.
+
+Each finished outline is an ordinary named model: select, move, resize, duplicate, delete, or **Tab** to edit its vertices and faces.
+One shape is one undo step. Save project, autosave and exports include it. Shapes with thickness use footprint collision by default;
+change that in Properties. Simple concave outlines (such as L and U shapes) are supported. Crossed outlines and holes within an
+outline are not supported; the tool leaves an invalid outline visible so you can clear/redraw it, or remove a corner.
+
+### Existing modelling tools
 
 Blender-style, with **strict snapping**: results land on the **Snap** grid (32 px = one tile by default; 16, 8, 4, 2, 1 for detail).
 Moves put the piece's corner (or the first vertex) on a grid point; scaling snaps sizes to whole steps and edges onto grid lines
@@ -214,6 +294,7 @@ Tilesets must be power-of-two on both sides (64, 128, ..., 4096); the studio ref
 Plain ES2020 in classic scripts (so it runs from `file://`), WebGL2, no libraries:
 
 - `js/math.js`: vectors, matrices, snapping
+- `js/shape.js`: pencil outlines, simplification, validation, concave triangulation and custom solids
 - `js/mesh.js`: n-gon meshes (plus loose lines), primitives, extrude (plain / manifold, faces / edges / points) / inset / bevel /
   loop cut / knife / fill / bridge / join / transforms
 - `js/render.js`: the oblique and free-look views, art projection, picking

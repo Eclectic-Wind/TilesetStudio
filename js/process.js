@@ -27,8 +27,7 @@
 			const corners = Mesh.shadingNormals(obj);
 			obj.faces.forEach((f, fi) => {
 				const mat = Mesh.faceMat(obj, f);
-				for (let i = 1; i + 1 < f.v.length; i++) {
-					const ids = [0, i, i + 1];
+				for (const ids of Mesh.faceTriangles(obj, f)) {
 					const p = ids.map((k) => obj.verts[f.v[k]]), n = ids.map((k) => corners[fi][k]);
 					rasterTri(p, n, (idx, z, nx, ny, nz) => {
 						if (!(z > height[idx]) && !isNaN(height[idx])) return;
