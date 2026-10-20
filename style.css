@@ -318,3 +318,16 @@ section.output[data-mode]:not([data-mode="lit"]) .lightbar { display: none; }
 
 /* Unsaved work: a dot before the tileset name (the tab title gets one too) */
 #tileinfo.unsaved::before { content: "● "; color: var(--accent); }
+
+/* Learn timeline: play / pause, step, scrub bar with a tick per step, time, speed */
+.learn .tl { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.learn .tl button { min-width: 30px; height: 28px; padding: 0 6px; }
+.learn .tl #tl_speed { min-width: 44px; font-variant-numeric: tabular-nums; }
+.learn .track { position: relative; flex: 1; height: 28px; cursor: pointer; touch-action: none; outline: none; }
+.learn .track::before { content: ""; position: absolute; left: 0; right: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--line); }
+.learn .track #tl_fill { position: absolute; left: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.learn .track #tl_marks i { position: absolute; top: 8px; width: 2px; height: 12px; margin-left: -1px; border-radius: 1px; background: #6f6f80; pointer-events: none; }
+.learn .track #tl_thumb { position: absolute; top: 7px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); pointer-events: none; transition: transform .1s; }
+.learn .track:hover #tl_thumb, .learn .track:focus-visible #tl_thumb { transform: scale(1.2); }
+.learn .track:focus-visible { outline: 2px solid #4aa8d8; outline-offset: 1px; border-radius: 4px; }
+.learn #tl_time { min-width: 76px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }

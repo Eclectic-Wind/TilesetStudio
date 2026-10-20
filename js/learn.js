@@ -519,13 +519,52 @@
 	}
 
 	// --- the window ---------------------------------------------------------------------------------------------------
-	let cur = 0, built = false, raf = 0, scene = null, clock = 0, last = 0, paused = false, capIdx = -1, lesson = null;
+	let cur = 0, built = false, raf = 0, scene = null, clock = 0, last = 0, paused = false, capIdx = -1, lesson = null, speed = 1;
+	const SPEEDS = [0.5, 1, 1.5, 2]; // x the base SPEED: 1x is the pace the lessons were written to be read at
+
+	// --- timeline: scrub bar with a marker per caption, play / pause, step between captions, speed ---
+	const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+	const capTimes = () => lesson.caps.filter((c) => c.say).map((c) => c.t);
+	function seek(t) { clock = clamp(t, 0, lesson.dur - 0.001); capIdx = -1; }
+	function stepCaption(dir) {
+		const ts = capTimes(), t = clock % lesson.dur;
+		if (dir < 0) { const back = ts.filter((x) => x < t - 0.8); seek(back.length ? back[back.length - 1] : 0); }
+		else { const next = ts.find((x) => x > t + 0.05); seek(next === undefined ? 0 : next); }
+	}
+	function setPlayLabel() { const b = $("learn_pause"); b.textContent = paused ? "▶" : "⏸"; b.title = (paused ? "Play" : "Pause") + " (Space)"; }
+	function setPaused(p) { paused = p; setPlayLabel(); }
+	function timeline(t) {
+		const f = t / lesson.dur;
+		$("tl_fill").style.width = f * 100 + "%"; $("tl_thumb").style.left = f * 100 + "%";
+		$("tl_time").textContent = `${mmss(t / (SPEED))} / ${mmss(lesson.dur / SPEED)}`;
+		$("tl_track").setAttribute("aria-valuenow", Math.round(f * 100));
+	}
+	function bindTimeline() {
+		const track = $("tl_track");
+		let drag = null;
+		const at = (e) => { const r = track.getBoundingClientRect(); seek(clamp((e.clientX - r.left) / r.width, 0, 1) * lesson.dur); };
+		track.onpointerdown = (e) => { track.setPointerCapture(e.pointerId); drag = { was: paused }; paused = true; at(e); e.preventDefault(); };
+		track.onpointermove = (e) => { if (drag) at(e); };
+		const end = () => { if (drag) { paused = drag.was; drag = null; setPlayLabel(); } };
+		track.onpointerup = end; track.onpointercancel = end;
+		track.onkeydown = (e) => {
+			const k = e.key;
+			if (k === "Home") seek(0); else if (k === "End") seek(lesson.dur - 0.5);
+			else if (k === "ArrowUp" || k === "ArrowDown") seek(clock % lesson.dur + (k === "ArrowUp" ? 1 : -1));
+			else return;
+			e.preventDefault(); e.stopPropagation();
+		};
+		$("tl_prev").onclick = () => stepCaption(-1);
+		$("tl_next").onclick = () => stepCaption(1);
+		$("learn_pause").onclick = () => setPaused(!paused);
+		$("tl_speed").onclick = () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; $("tl_speed").textContent = speed + "×"; };
+	}
 
 	function frame(now) {
 		raf = requestAnimationFrame(frame);
 		const open = $("learn_back") && $("learn_back").classList.contains("open");
 		if (!open || !scene) { last = now; return; }
-		if (!paused) clock += Math.min(0.25, (now - last) / 1000) * SPEED;
+		if (!paused) clock += Math.min(0.25, (now - last) / 1000) * SPEED * speed;
 		last = now;
 		const t = clock % lesson.dur, cv = $("learn_cv"), g = cv.getContext("2d"), d = dpr();
 		if (cv.width !== W * d) { cv.width = W * d; cv.height = H * d; }
@@ -533,8 +572,7 @@
 		g.imageSmoothingEnabled = false;
 		g.clearRect(0, 0, W, H);
 		try { scene(g, t); } catch (err) { g.fillStyle = "#111"; g.fillRect(0, 0, W, H); text(g, "(animation error: " + err.message + ")", W / 2, H / 2, C.bad, 13); }
-		// progress along the loop
-		g.fillStyle = "rgba(255,255,255,0.1)"; g.fillRect(0, H - 4, W, 4); g.fillStyle = C.amber; g.fillRect(0, H - 4, W * (t / lesson.dur), 4);
+		timeline(t);
 		// captions follow the clock
 		let ci = 0;
 		lesson.caps.forEach((c, i) => { if (t >= c.t) ci = i; });
@@ -552,6 +590,8 @@
 		scene = lesson.make();
 		clock = 0; capIdx = -1; last = performance.now();
 		$("learn").classList.toggle("compact", !!lesson.steps);
+		$("learn_tl").style.display = lesson.steps ? "none" : "";
+		$("tl_marks").innerHTML = capTimes().map((t) => `<i style="left:${(t / lesson.dur) * 100}%"></i>`).join("");
 		$("learn_title").textContent = lesson.title;
 		$("learn_dots").innerHTML = L.map((l, i) => `<button class="dot${i === cur ? " on" : i < cur ? " seen" : ""}" data-i="${i}" title="${l.title}">${i + 1}</button>`).join("");
 		$("learn_dots").querySelectorAll(".dot").forEach((d) => { d.onclick = () => { cur = parseInt(d.dataset.i); render(); }; });
@@ -563,7 +603,7 @@
 		ex.querySelectorAll(".todo li").forEach((li) => { li.onclick = () => li.classList.toggle("done"); });
 		if ($("l_sample")) $("l_sample").onclick = () => loadSample();
 		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => TS.api.toast(e.message, "bad")); };
-		$("learn_pause").textContent = paused ? "▶ Play" : "⏸ Pause";
+		setPlayLabel();
 		try { localStorage.setItem("ts.learn", String(cur)); } catch (err) { /* storage blocked */ }
 	}
 
@@ -573,23 +613,28 @@
 		back.innerHTML = `<div id="learn" class="learn" role="dialog" aria-label="Lessons">
 			<div class="lh"><b id="learn_title"></b><span class="grow"></span><div id="learn_dots" class="dots"></div><button id="learn_x" title="Close (Esc)">✕</button></div>
 			<canvas id="learn_cv" class="stage" width="${W}" height="${H}"></canvas>
+			<div id="learn_tl" class="tl">
+				<button id="tl_prev" title="Previous step (,)">⏮</button><button id="learn_pause" title="Pause (Space)">⏸</button><button id="tl_next" title="Next step (.)">⏭</button>
+				<div id="tl_track" class="track" role="slider" tabindex="0" aria-label="Lesson timeline" aria-valuemin="0" aria-valuemax="100" title="Timeline: drag to scrub. The ticks are the steps"><div id="tl_fill"></div><div id="tl_marks"></div><div id="tl_thumb"></div></div>
+				<span id="tl_time" class="dim"></span><button id="tl_speed" title="Playback speed">1×</button>
+			</div>
 			<div id="learn_cap" class="cap"><div id="learn_say" class="say"></div><div id="learn_sub" class="subc"></div></div>
 			<div id="learn_extra" class="extra"></div>
-			<div class="lf"><button id="learn_prev">← Back</button><button id="learn_pause" title="Pause / play (Space)"></button><span class="grow"></span><button id="learn_next" class="primary">Next →</button></div>
+			<div class="lf"><button id="learn_prev">← Back</button><span class="grow"></span><button id="learn_next" class="primary">Next →</button></div>
 		</div>`;
 		document.body.appendChild(back);
 		back.addEventListener("mousedown", (e) => { if (e.target === back) close(); });
 		$("learn_x").onclick = close;
 		$("learn_prev").onclick = () => { cur = Math.max(0, cur - 1); render(); };
 		$("learn_next").onclick = () => { if (cur === L.length - 1) close(); else { cur++; render(); } };
-		$("learn_pause").onclick = () => { paused = !paused; $("learn_pause").textContent = paused ? "▶ Play" : "⏸ Pause"; };
+		bindTimeline();
 		built = true;
 		raf = requestAnimationFrame(frame);
 	}
 	function open(n) {
 		if (!built) { build(); try { cur = clamp(parseInt(localStorage.getItem("ts.learn") || "0") || 0, 0, L.length - 1); } catch (err) { cur = 0; } }
 		if (typeof n === "number") cur = clamp(n, 0, L.length - 1);
-		paused = false;
+		setPaused(false);
 		$("learn_back").classList.add("open");
 		render();
 	}
@@ -597,7 +642,7 @@
 	const isOpen = () => !!$("learn_back") && $("learn_back").classList.contains("open");
 	function toggle() { if (isOpen()) close(); else open(); }
 
-	TS.Learn = { open, close, toggle, lessons: L, seek: (t) => { clock = t; paused = true; } }; // seek: for scripted checks
+	TS.Learn = { open, close, toggle, lessons: L, seek: (t) => { seek(t); paused = true; setPlayLabel(); } }; // seek: for scripted checks
 	document.addEventListener("DOMContentLoaded", () => { const b = $("b_learn"); if (b) b.onclick = toggle; });
 	document.addEventListener("keydown", (e) => {
 		if (isOpen()) {
@@ -605,6 +650,8 @@
 			else if (e.key === "ArrowRight") { $("learn_next").click(); e.preventDefault(); e.stopPropagation(); }
 			else if (e.key === "ArrowLeft") { $("learn_prev").click(); e.preventDefault(); e.stopPropagation(); }
 			else if (e.key === " ") { $("learn_pause").click(); e.preventDefault(); e.stopPropagation(); }
+			else if (e.key === "," || e.key === ".") { stepCaption(e.key === "." ? 1 : -1); e.preventDefault(); e.stopPropagation(); }
+			else if (e.key === "Home") { seek(0); e.preventDefault(); e.stopPropagation(); }
 			else if (e.key === "l" || e.key === "L") close();
 			return;
 		}
