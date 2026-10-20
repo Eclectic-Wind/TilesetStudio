@@ -8,12 +8,13 @@
 		name: "tileset", art: null, artURL: null,
 		objects: [], active: null, selected: new Set(),
 		edit: false, elemMode: "face", elemSel: new Set(),
-		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, grid: true,
+		cursor: [0, 0, 0], snap: 32, shade: "art", opacity: 0.55, xray: false, grid: true,
 		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4 },
 		autoProcess: true, result: null,
 	});
 	const undoStack = [], redoStack = [];
 	let renderer, output, modal = null, loopHover = null, mouse = [0, 0], spaceDown = false, dirty = true;
+	let pencil = null, exchange = null;
 
 	// --- state helpers ---
 
@@ -50,6 +51,8 @@
 	function status(text) { $("status").textContent = text; }
 	function hint() {
 		if (modal) return;
+		if (S.tool === "pencil") return pencilHint();
+		if (S.tool === "stamp" && exchange) return exchange.hint();
 		const base = "Shift+A add · G move (or drag a selected piece) · S scale · R turn · Tab edit · right-click/C: 3D cursor (stacks on tops) · F frame · wheel/+/-: zoom · Space-drag: pan · Alt/middle-drag: look round · 5: stay in 3D · snap " + S.snap + " px";
 		const edit = "1/2/3 vertex/edge/face · white = what a click picks; click again: the one behind · Alt+Z X-ray: pick through faces · E extrude (Alt+E manifold) · F fill · Ctrl+E bridge · Ctrl+right-click: new point · K knife · I inset · Ctrl+B bevel · Ctrl+R loop cut · A all · G/S/R, then X/Y/Z (twice: local) · Shift fine";
 		const in3d = "3D view (5 goes back): drag orbits · Shift-drag pans · Ctrl-drag box-selects · drag a selected piece to move it · wheel zooms · F frames · all tools and keys work · ";
@@ -64,11 +67,8 @@
 
 	async function setTileset(dataURL, name) {
 		const img = await loadImage(dataURL);
-		if (!TS.isPow2(img.width) || !TS.isPow2(img.height)) {
-			alert(`"${name}" is ${img.width}x${img.height}. Tilesets must be power-of-two on both sides (e.g. 256x256, 512x1024).`);
-			return false;
-		}
 		const c = document.createElement("canvas");
+		if (pencil || S.tool === "stamp") setTool("select");
 		c.width = img.width; c.height = img.height;
 		const g = c.getContext("2d");
 		g.drawImage(img, 0, 0);
@@ -87,7 +87,7 @@
 		return true;
 	}
 
-	const readFile = (file, asText) => new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); asText ? r.readAsText(file) : r.readAsDataURL(file); });
+	const readFile = (file, asText) => new Promise((ok, fail) => { const r = new FileReader(); r.onerror = () => fail(new Error("Could not read this file.")); r.onload = () => ok(r.result); asText ? r.readAsText(file) : r.readAsDataURL(file); });
 
 	async function openTilesetFile(file) {
 		if (await setTileset(await readFile(file), file.name)) { status(`Loaded ${file.name}`); }
@@ -107,6 +107,7 @@
 	async function openProject(text) {
 		const p = JSON.parse(text);
 		if (p.format !== "tileset-studio") { alert("Not a Tileset Studio project."); return; }
+		if (pencil || S.tool === "stamp") setTool("select");
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.objects = p.objects || [];
 		Mesh.bumpIds(S.objects);
@@ -140,6 +141,7 @@
 		autosaveTimer = setTimeout(autosave, 1500);
 	}
 	function saveProject() {
+		if (pencil && pencil.pts.length) return status("Finish or clear the current pencil outline before saving.");
 		download(`${S.name}.studio.json`, projectJSON());
 		unsaved = false;
 		clearTimeout(autosaveTimer);
@@ -304,6 +306,7 @@
 
 	function addPrimitive(kind) {
 		if (!S.art) return alert("Open a tileset first.");
+		if (pencil || S.tool === "stamp") setTool("select");
 		pushUndo();
 		if (S.edit) S.edit = false;
 		// The cursor sits on grid intersections; a new piece fills the tile(s) south-east of it.
@@ -1111,8 +1114,8 @@
 				const tint = picked ? [...sel, 0.55] : faceMode && hv && hv.key === fi ? [1, 1, 1, 0.3] : isSel && !S.edit ? [...sel, 0.18] : [0, 0, 0, 0];
 				// Face dots (centres) to aim at in face mode; X-ray shows the ones behind too.
 				if (faceMode) vtx(dots, Mesh.faceCentre(obj, f), [0, 0, 1], picked ? [1, 0.6, 0.1, 1] : [0.08, 0.08, 0.1, 1]);
-				for (let i = 1; i + 1 < f.v.length; i++)
-					for (const k of [0, i, i + 1]) vtx(tris, obj.verts[f.v[k]], corners[fi][k], tint);
+				for (const triangle of Mesh.faceTriangles(obj, f))
+					for (const k of triangle) vtx(tris, obj.verts[f.v[k]], corners[fi][k], tint);
 			});
 			const edgeCol = editing ? [0.95, 0.95, 1, 0.9] : isSel ? [1, 0.65, 0.3, 0.95] : [0.85, 0.9, 1, 0.35];
 			for (const [k, e] of Mesh.edges(obj)) {
@@ -1204,6 +1207,7 @@
 	}
 	// Stay in 3D (nav "3D" button, key 5): the look-round holds until toggled off; drag orbits, Shift/Space-drag pans, wheel zooms.
 	function toggleStay3d(on) {
+		if (pencil || S.tool === "stamp") setTool("select");
 		const want = on === undefined ? !S.stay3d : on;
 		if (want === !!S.stay3d) return;
 		if (modal) cancelModal();
@@ -1225,6 +1229,133 @@
 		dirty = true;
 	}
 
+	// --- pencil: trace a simple outline, then create an ordinary editable mesh ---
+	function pencilHint() {
+		const corners = $("pencil_mode").value === "corners";
+		const help = corners ? "Click corners, then click the first point or press Enter to finish. Backspace removes a corner." :
+			"Drag around an outline and release to create an object. Small wobbles are simplified.";
+		const placement = $("pencil_surface").checked ? " Start on an object to use its face; thickness builds outward." : " Surface placement is off; empty-space settings apply.";
+		$("pencil_help").textContent = help + placement + " Thickness 0 creates a single face. Q returns to selection.";
+		status("Pencil: " + help + " Space-drag pans; wheel zooms; Esc clears the outline.");
+	}
+	function clearPencil() {
+		if (!pencil) return;
+		pencil.pts = []; pencil.hover = null; pencil.pointer = null; pencil.error = false; pencil.surface = null; pencil.hoverSurface = null;
+		dirty = true; pencilHint();
+	}
+	function pencilBack() {
+		if (!pencil) return;
+		pencil.pts.pop(); pencil.error = false;
+		if (!pencil.pts.length) { pencil.surface = null; pencil.hoverSurface = null; }
+		dirty = true;
+	}
+	function pencilPickSurface(px, py) {
+		if (!$("pencil_surface").checked) return null;
+		const hit = pickObject(px, py);
+		if (!hit) return null;
+		const face = hit.obj.faces[hit.face], ray = renderer.ray(px, py);
+		let outline = face.v.map((i) => hit.obj.verts[i].slice()), normal = Mesh.faceNormal(hit.obj, face);
+		// For a warped n-gon use the actual hit triangle, rather than an averaged plane floating above the mesh.
+		if (outline.some((p) => Math.abs(v3.dot(normal, v3.sub(p, outline[0]))) > 1e-5)) {
+			let nearest = Infinity;
+			for (const tri of Mesh.faceTriangles(hit.obj, face)) {
+				const points = tri.map((i) => hit.obj.verts[face.v[i]]);
+				const t = TS.Renderer.rayTri(ray.o, ray.d, ...points);
+				if (t !== null && t < nearest) { nearest = t; outline = points.map((p) => p.slice()); }
+			}
+			normal = v3.norm(v3.cross(v3.sub(outline[1], outline[0]), v3.sub(outline[2], outline[0])));
+		}
+		if (v3.dot(normal, ray.d) > 0) normal = v3.scale(normal, -1);
+		if (Math.abs(normal[1] + normal[2]) < 1e-6) return null;
+		return { origin: hit.point.slice(), normal, outline, objectId: hit.obj.id, name: hit.obj.name, face: hit.face };
+	}
+	function pencilPoint(px, py) {
+		const p = renderer.canvasPoint(px, py).map((v) => Math.round(v * 100) / 100);
+		if ($("pencil_snap").checked) return p.map((v) => TS.snap(v, S.snap));
+		return p;
+	}
+	function pencilAdd(p) {
+		const prev = pencil.pts[pencil.pts.length - 1];
+		if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 0.01) pencil.pts.push(p);
+		pencil.error = false; dirty = true;
+	}
+	function pencilFinish() {
+		if (!pencil || !pencil.pts.length) return;
+		try {
+			const corners = $("pencil_mode").value === "corners";
+			const simplify = Number($("pencil_simplify").value);
+			if (!Number.isFinite(simplify) || simplify < 0 || simplify > 32) throw new Error("Simplify must be between 0 and 32 px.");
+			const obj = TS.Shape.create(pencil.pts, {
+				plane: $("pencil_plane").value, thickness: Number($("pencil_thickness").value), base: Math.max(0, S.cursor[2]),
+				simplify: corners ? 0 : simplify, snap: $("pencil_snap").checked ? S.snap : 0,
+				surface: pencil.surface,
+			});
+			const surfaceName = pencil.surface && pencil.surface.name;
+			pushUndo();
+			obj.name = `Custom shape.${String(S.objects.length + 1).padStart(2, "0")}`;
+			S.objects.push(obj); S.active = obj.id; S.selected = new Set([obj.id]); S.edit = false; S.elemSel.clear();
+			clearPencil(); changed();
+			status(`Added ${obj.name}${surfaceName ? ` on ${surfaceName}` : ""} (${obj.faces[0].v.length} outline corners). Draw another, or press Q to select and Tab to edit.`);
+			return obj;
+		} catch (err) { pencil.pointer = null; pencil.error = true; dirty = true; status("Pencil: " + err.message + " Use Clear to redraw."); }
+	}
+	function pencilDown(e) {
+		if (!pencil || renderer.free.blend > 0) return;
+		const p = pencilPoint(...mouse);
+		if ($("pencil_mode").value === "corners") {
+			const first = pencil.pts[0], s = first && renderer.toScreen([first[0], first[1], 0]);
+			if (pencil.pts.length >= 3 && Math.hypot(s[0] - mouse[0], s[1] - mouse[1]) <= 10) { pencilFinish(); return; }
+			if (pencil.pts.length >= 256) return status("Pencil: 256 corners reached. Finish this shape or remove a corner.");
+			if (!pencil.pts.length) pencil.surface = pencilPickSurface(...mouse);
+			pencilAdd(p); pencil.hover = p;
+		} else {
+			clearPencil(); pencil.surface = pencilPickSurface(...mouse); pencil.pointer = e.pointerId; pencilAdd(p);
+		}
+	}
+	function pencilMove(e) {
+		if (!pencil) return;
+		pencil.hover = pencilPoint(...mouse);
+		if (!pencil.pts.length) pencil.hoverSurface = pencilPickSurface(...mouse);
+		if (pencil.pointer === e.pointerId) {
+			const last = pencil.pts[pencil.pts.length - 1], d = Math.hypot(pencil.hover[0] - last[0], pencil.hover[1] - last[1]);
+			if (pencil.pts.length < 4096 && d >= Math.max(0.25, 2 / renderer.cam.zoom)) pencilAdd(pencil.hover);
+			else if (pencil.pts.length >= 4096) status("Pencil: stroke limit reached. Release to finish this outline.");
+		}
+		dirty = true;
+	}
+	function drawPencil() {
+		const svg = $("pencil_overlay");
+		svg.replaceChildren();
+		if (!pencil) return;
+		$("pencil_finish").disabled = pencil.pts.length < 3;
+		$("pencil_back").disabled = !pencil.pts.length || $("pencil_mode").value !== "corners";
+		$("pencil_clear").disabled = !pencil.pts.length;
+		const add = (tag, attrs) => { const el = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value); svg.appendChild(el); };
+		const target = pencil.pts.length ? pencil.surface : pencil.hoverSurface;
+		const targetText = target ? `${pencil.pts.length ? "Drawing on" : "Surface"}: ${target.name} (face ${target.face + 1})` :
+			pencil.pts.length || !$("pencil_surface").checked ? "Empty space: " + $("pencil_plane").selectedOptions[0].textContent : "Start on a face to draw on it.";
+		if ($("pencil_target").textContent !== targetText) $("pencil_target").textContent = targetText;
+		$("pencil_plane").disabled = !!pencil.surface;
+		// The outlined face and label show what the first point will attach to, even with X-ray enabled.
+		if (target) add("polygon", { points: target.outline.map((p) => renderer.toScreen(p).join(",")).join(" "), fill: "#64d9c411", stroke: "#64d9c4", "stroke-width": 1, "stroke-dasharray": "3 4" });
+		const toWorld = (p) => pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : [p[0], p[1], 0];
+		const toScreen = (p) => renderer.toScreen(toWorld(p));
+		const corners = $("pencil_mode").value === "corners", path = pencil.pts.slice();
+		if (corners && pencil.hover && path.length) path.push(pencil.hover);
+		if (!path.length) return;
+		let points = path.map(toScreen);
+		if (pencil.surface) {
+			const depth = Number($("pencil_thickness").value), lift = Number.isFinite(depth) ? TS.clamp(depth, 0, 255) || 0.01 : 0;
+			const upper = path.map((p) => renderer.toScreen(v3.add(toWorld(p), v3.scale(pencil.surface.normal, lift))));
+			add("polygon", { points: points.map((p) => p.join(",")).join(" "), fill: "none", stroke: "#64d9c4", "stroke-width": 1.5, "stroke-dasharray": "5 3" });
+			// Show thickness without drawing a connector for every freehand sample.
+			for (let i = 0; i < points.length; i += Math.max(1, Math.ceil(points.length / 16))) add("line", { x1: points[i][0], y1: points[i][1], x2: upper[i][0], y2: upper[i][1], stroke: "#ffb45d66", "stroke-width": 1 });
+			points = upper;
+		}
+		add("polygon", { points: points.map((p) => p.join(",")).join(" "), fill: pencil.error ? "#ff5b8a22" : "#f08c2e22", stroke: pencil.error ? "#ff5b8a" : "#ffb45d", "stroke-width": 2, "stroke-dasharray": pencil.pointer === null ? "5 3" : "none" });
+		if (corners) pencil.pts.forEach((p, i) => { const s = toScreen(p); add("circle", { cx: s[0], cy: s[1], r: i ? 3 : 6, fill: i ? "#ffb45d" : "#56deaa", stroke: "#141418", "stroke-width": 1.5 }); });
+	}
+
 	// --- input: pointer events (mouse, pen, touch) ---
 	// Tools (palette or keys): select (tap/click picks; drag a selected piece to move it; drag empty space to box-select),
 	// cursor (tap places the 3D cursor), pan, zoom, look (drag; look eases back on release). Middle-drag looks, Space/Shift+middle
@@ -1236,7 +1367,22 @@
 	let press = null, pinch = null;
 
 	function setTool(tool) {
+		if (tool === "stamp" && exchange && !exchange.hasSelection()) { exchange.showSource(); return; }
+		if (tool === "pencil" || tool === "stamp") {
+			if (!S.art && tool === "pencil") return status("Open a tileset or project first, then choose Pencil (P).");
+			if (modal) cancelModal();
+			S.armed = null; S.armedOpts = null; knife = null; S.loopCut = false; loopHover = null; hover = null;
+			if (renderer.free.blend > 0 || S.stay3d) { if (S.stay3d) toggleStay3d(false); anim = null; renderer.free.blend = 0; }
+			S.edit = false; S.elemSel.clear();
+			pencil = tool === "pencil" ? { pts: [], hover: null, pointer: null, error: false, surface: null, hoverSurface: null } : null;
+			modalBar(); panels();
+		} else if (pencil) pencil = null;
+		press = null; marquee(null);
 		S.tool = tool;
+		$("pencilpanel").classList.toggle("open", tool === "pencil");
+		$("stamppanel").classList.toggle("open", tool === "stamp");
+		if (exchange) { if (tool === "stamp") exchange.begin(); else exchange.end(); }
+		dirty = true;
 		document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === tool));
 		$("view").style.cursor = tool === "pan" ? "grab" : tool === "zoom" ? "ns-resize" : tool === "look" ? "move" : "crosshair";
 		if (!modal) hint();
@@ -1343,6 +1489,8 @@
 				const [p, q] = [...pointers.values()];
 				pinch = { d: Math.hypot(p[0] - q[0], p[1] - q[1]), mid: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], zoom: renderer.cam.zoom };
 				press = null; marquee(null);
+				if (pencil && pencil.pointer !== null) clearPencil();
+				if (exchange?.draft) exchange.draft.pointer = null;
 				return;
 			}
 			const button = e.pointerType === "pen" && e.button === 5 ? "eraser" : e.button;
@@ -1359,6 +1507,18 @@
 			if (knife) { if (button === 0) knifeClick(mouse[0], mouse[1], e); else if (button === 2) knifeApply(); return; }
 			if (S.loopCut) { if (button === 0) { loopCutHover(mouse[0], mouse[1]); loopCutApply(e.pointerType !== "mouse"); } else { S.loopCut = false; loopHover = null; hint(); dirty = true; } return; }
 			if ((button === 1 && e.shiftKey) || (button === 0 && spaceDown) || (button === 0 && S.tool === "pan")) { press = { kind: "pan", last: mouse.slice() }; return; }
+			if (S.tool === "stamp" && exchange.draft) {
+				if (button === 0) { exchange.draft.pointer = e.pointerId; exchange.move(renderer.canvasPoint(...mouse), true); }
+				else if (button === 2) setTool("select");
+				else if (button === 1) press = { kind: "pan", last: mouse.slice() };
+				return;
+			}
+			if (pencil) {
+				if (button === 0) pencilDown(e);
+				else if (button === 2) clearPencil();
+				else if (button === 1) press = { kind: "pan", last: mouse.slice() };
+				return;
+			}
 			// Held 3D view: a click selects (Shift-click adds); a drag on the selection moves it, Ctrl-drag box-selects, Shift-drag
 			// pans, any other drag orbits.
 			if (S.stay3d && button === 0 && S.tool !== "zoom" && S.tool !== "cursor") {
@@ -1414,6 +1574,8 @@
 			if (press && press.kind === "box") marquee(press.start, mouse);
 			else if (modal) updateModal(e);
 			else if (knife) { knife.hover = knifePoint(mouse[0], mouse[1], e); dirty = true; }
+			else if (pencil && !press) pencilMove(e);
+			else if (S.tool === "stamp" && !press) exchange.move(renderer.canvasPoint(...mouse));
 			else if (S.loopCut) loopCutHover(mouse[0], mouse[1]);
 			else if (!press && !pinch) updateHover(mouse[0], mouse[1]);
 			if (S.art && renderer.free.blend === 0) {
@@ -1424,6 +1586,16 @@
 		const release = (e) => {
 			pointers.delete(e.pointerId);
 			if (pinch) { if (pointers.size < 2) pinch = null; return; }
+			if (exchange?.draft?.pointer === e.pointerId) { exchange.draft.pointer = null; return; }
+			if (pencil && pencil.pointer === e.pointerId) {
+				mouse = localPoint(e); const end = pencilPoint(...mouse), first = pencil.pts[0];
+				if (Math.hypot(end[0] - first[0], end[1] - first[1]) * renderer.cam.zoom <= 10) {
+					// Close at the first corner, discarding only the last sample if it also sits near the start.
+					const last = pencil.pts[pencil.pts.length - 1];
+					if (pencil.pts.length > 3 && Math.hypot(last[0] - first[0], last[1] - first[1]) * renderer.cam.zoom <= 10) pencil.pts.pop();
+				} else pencilAdd(end);
+				pencil.pointer = null; pencilFinish(); return;
+			}
 			if (modal && modal.dragRelease) { confirmModal(); return; }
 			if (!press) return;
 			if (press.kind === "look") endLook();
@@ -1432,6 +1604,8 @@
 			press = null;
 		};
 		canvas.addEventListener("pointerup", release);
+		canvas.addEventListener("pointercancel", () => { if (exchange?.draft) exchange.draft.pointer = null; });
+		canvas.addEventListener("pointercancel", (e) => { if (pencil && pencil.pointer === e.pointerId) clearPencil(); });
 		canvas.addEventListener("pointerleave", () => { if (hover) { hover = null; dirty = true; } });
 		canvas.addEventListener("pointercancel", (e) => { pointers.delete(e.pointerId); pinch = null; if (press && press.kind === "look") endLook(); press = null; marquee(null); });
 		canvas.addEventListener("wheel", (e) => {
@@ -1472,11 +1646,13 @@
 	}
 
 	function startTool(type, armed) {
+		if (pencil || S.tool === "stamp") setTool("select");
 		if (armed) { S.armed = type; modalBar(); status("Press on the view where to start, drag, and let go to apply. Esc or the ✕ cancels."); return; }
 		beginModal(type);
 	}
 
 	function toggleEdit() {
+		if (pencil || S.tool === "stamp") setTool("select");
 		if (!S.edit && !activeObj()) return status("Select an object, then Tab to edit it.");
 		S.edit = !S.edit; S.elemSel.clear();
 		knife = null;
@@ -1499,6 +1675,27 @@
 		let k = e.key.toLowerCase();
 		const ctrl = e.ctrlKey || e.metaKey;
 		if (k === "return" || e.code === "Enter" || e.code === "NumpadEnter") k = "enter";
+		if (S.tool === "stamp" && exchange.draft) {
+			if (k === "escape" || k === "q") { setTool("select"); e.preventDefault(); return; }
+			if (k === "enter") { if (!e.repeat) exchange.place(); e.preventDefault(); return; }
+			if (k.startsWith("arrow") || k === "pageup" || k === "pagedown") {
+				const d = exchange.draft, step = e.shiftKey ? .5 : 1;
+				if (k === "arrowleft") d.x -= step; if (k === "arrowright") d.x += step;
+				if (k === "arrowup") d.y -= step; if (k === "arrowdown") d.y += step;
+				if (k === "pageup") d.base += step; if (k === "pagedown") d.base -= step;
+				d.pinned = true; exchange.syncControls(); exchange.hint(); dirty = true; e.preventDefault(); return;
+			}
+			if (["p", "tab", "5"].includes(k) && !ctrl) setTool("select");
+			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]"].includes(k) || (ctrl && ["z", "y", "s"].includes(k)))) { e.preventDefault(); return; }
+		}
+		if (pencil) {
+			if (k === "escape") { pencil.pts.length ? clearPencil() : setTool("select"); e.preventDefault(); return; }
+			if (k === "enter") { pencilFinish(); e.preventDefault(); return; }
+			if (k === "backspace" || (ctrl && k === "z" && pencil.pts.length)) { pencilBack(); e.preventDefault(); return; }
+			if (k === "q" || k === "p" || k === "tab" || k === "5") { setTool("select"); if (k === "p") { e.preventDefault(); return; } }
+			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(k) || (ctrl && ["z", "y", "s"].includes(k)))) { e.preventDefault(); return; }
+			if (ctrl && k === "s" && pencil && pencil.pts.length) { status("Finish or clear the current pencil outline before saving."); e.preventDefault(); return; }
+		}
 		if (knife) {
 			if (k === "escape") { knife = null; dirty = true; hint(); }
 			else if (k === "enter" || k === " ") knifeApply();
@@ -1578,6 +1775,7 @@
 			case "arrowdown": renderer.cam.y += 32; dirty = true; e.preventDefault(); break;
 			case "5": toggleStay3d(); break;
 			case "q": setTool("select"); break;
+			case "p": setTool("pencil"); break;
 			case "c": setTool("cursor"); break;
 			case "f1": case "?": toggleHelp(); e.preventDefault(); break;
 		}
@@ -1730,7 +1928,7 @@
 
 	function frame() {
 		if (anim) anim();
-		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); }
+		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
 		requestAnimationFrame(frame);
 	}
 
@@ -1752,7 +1950,20 @@
 		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife;
 		acts.mirror = (e) => mirrorSelection(e && e.shiftKey ? "y" : "x");
 		acts.hide = (e) => (e && e.shiftKey ? unhideAll() : hideModels("selected"));
-		for (const b of document.querySelectorAll("[data-act]")) b.onclick = (e) => { e.stopPropagation(); acts[b.dataset.act](e); $("view").focus(); };
+		for (const b of document.querySelectorAll("[data-act]")) b.onclick = (e) => {
+			e.stopPropagation();
+			if ((pencil || S.tool === "stamp") && !["undo", "redo", "zoomin", "zoomout", "pixel", "fit", "frame"].includes(b.dataset.act)) setTool("select");
+			if (pencil && pencil.pts.length && b.dataset.act === "undo") pencilBack();
+			else acts[b.dataset.act](e);
+			$("view").focus();
+		};
+		$("pencil_finish").onclick = () => { pencilFinish(); $("view").focus(); };
+		$("pencil_clear").onclick = () => { clearPencil(); $("view").focus(); };
+		$("pencil_back").onclick = () => { pencilBack(); $("view").focus(); };
+		$("pencil_done").onclick = () => { setTool("select"); $("view").focus(); };
+		$("pencil_mode").onchange = () => { clearPencil(); $("pencil_simplify").disabled = $("pencil_mode").value === "corners"; pencilHint(); };
+		$("pencil_surface").onchange = () => { if (pencil) { pencil.surface = $("pencil_surface").checked && pencil.pts.length ? pencilPickSurface(...renderer.toScreen([pencil.pts[0][0], pencil.pts[0][1], 0])) : null; pencil.hoverSurface = null; pencil.error = false; dirty = true; pencilHint(); } };
+		for (const id of ["pencil_plane", "pencil_thickness", "pencil_simplify", "pencil_snap"]) $(id).onchange = () => { if (pencil) { pencil.error = false; dirty = true; } };
 		// « / » fold the palette and nav panels (remembered per browser).
 		for (const b of document.querySelectorAll("[data-fold]")) {
 			const panel = $(b.dataset.fold), key = "ts.fold." + b.dataset.fold, open = b.textContent;
@@ -1775,8 +1986,11 @@
 		renderer = new TS.Renderer($("view"));
 		renderer.setArt(null, 256, 256);
 		output = new TS.Output($("out"));
+		exchange = new TS.TransferUI({ state: S, renderer: () => renderer, status, setTool, readFile, loadImage, download,
+			changed: () => { dirty = true; }, frame: frameSelection, commit: commitModels });
 		bindViewport($("view"));
 		window.addEventListener("keydown", onKey);
+		window.addEventListener("blur", () => { spaceDown = false; if (exchange?.draft) exchange.draft.pointer = null; if (pencil) { if (pencil.pointer !== null) clearPencil(); pointers.clear(); pinch = null; press = null; marquee(null); } });
 		window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; if (modal && (e.key === "Shift" || e.key === "Control")) updateModal(e); });
 		window.addEventListener("resize", () => { dirty = true; if (S.result) output.render(); });
 		$("f_tileset").onchange = (e) => e.target.files[0] && openTilesetFile(e.target.files[0]);
@@ -1916,15 +2130,26 @@
 		if (q.get("project")) fetch(q.get("project")).then((r) => r.text()).then(openProject).catch((err) => status("Could not open project: " + err));
 	}
 
+	function commitModels(models, verb) {
+		if (!models.length) return;
+		if (modal) cancelModal();
+		pushUndo(); Mesh.bumpIds(S.objects);
+		const copies = models.map(o => { const copy = Mesh.cloneNew(o); copy.hidden = false; return copy; });
+		S.objects.push(...copies); S.selected = new Set(copies.map(o => o.id)); S.active = copies[copies.length - 1].id;
+		S.edit = false; S.elemSel.clear(); hover = null; cycle = null;
+		changed(); status(verb + " " + copies.length + " model(s). Ctrl+Z undoes the whole placement.");
+	}
+
 	// For scripted use and tests (window.TS.api).
 	TS.api = {
 		state: S, get renderer() { return renderer; }, get output() { return output; },
+		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
 		addPrimitive, processNow, exportMaps, bundleJSON, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
 		select: (id) => { S.selected = new Set([id]); S.active = id; changed(); },
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		// Draw now (a hidden tab gets no animation frames): for scripted captures.
-		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); },
+		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs,
 	};
 
