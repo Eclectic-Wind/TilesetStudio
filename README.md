@@ -209,7 +209,7 @@ drawn silhouette, then turn the facing to where the surface was meant to face. T
 ## Processing and the output view
 
 **Process** (automatic after every change unless "auto" is off) renders each canvas pixel's surface: the highest point of any
-model along that pixel's line of sight. The output view tests the result before you export. Its tabs are **Lit**, **Maps ▾** (Height / Normals / Rough / Metal), **Holes** and **Plan ▾** (Floor / Collision / Pieces); a ▾ tab opens a short list and shows the view you picked:
+model along that pixel's line of sight. The output view tests the result before you export. Its tabs are **Lit**, **Maps ▾** (Height / Normals / Rough / Metal), **Holes** and **Plan ▾** (Floor / Collision / Kind / Pieces); a ▾ tab opens a short list and shows the view you picked:
 
 - **Lit**: the art lit by a light you drag around (Shift+wheel or slider = its height, "reach" = its radius), shaded with the
   normals, roughness and metallic, with shadows traced through the floor heightfield the same way the engine does.
@@ -228,6 +228,8 @@ pans, and ⛶ fits it again.
   (under or over the body). A **24x12 feet box** follows the pointer: green where the feet can stand, red where they can't, and
   the readout names what blocks it.
 
+- **Kind**: models tinted by their resolved kind (green floor, blue deco, orange solid, magenta wall, cyan side); a small rug or a
+  2 px bump shows up as floor. Hover reads a cell's model, kind (set or inferred), height range and collision.
 - **Pieces**: how the engine will group the art into "tiles". Models whose footprints come within 2 px are one **piece**; the
   view tints the art by piece (one colour each, legend under the view) and draws the 32 px cells. A cell's **border** is the piece
   the engine reads that cell as; a **diamond** marks a piece's anchor cell (its lowest row in that tile column). **Red hatched** =
@@ -287,7 +289,7 @@ Keep separate pieces out of each other's tile columns, or at least on the same b
 per bottom row, so a piece drawn above another's base row in the same column is lit as part of it (the importer prints a
 `clash`). `samples/ward_bedroom2_spread.studio.json` is the sample laid out that way.
 
-Tilesets must be power-of-two on both sides (64, 128, ..., 4096); the studio refuses others.
+The Studio opens images of any size (it does not check for power-of-two). The grid, cells and pieces assume 32 px tiles, so keep both sides a multiple of 32.
 
 ## Code
 
@@ -301,6 +303,9 @@ Plain ES2020 in classic scripts (so it runs from `file://`), WebGL2, no librarie
 - `js/process.js`: rasterises models into surface data, maps, holes, floor heightfield, footprints
 - `js/output.js`: the output view
 - `js/app.js`: state, undo, tools, input, panels, files (`window.TS.api` for scripting and tests)
+- `js/ui.js`: menus, tooltips, start screen, drop overlay, remembered panel sections (optional polish)
+- `js/transfer.js`, `js/transfer-ui.js`: OBJ read / write, Import 3D source browser, model stamps
+- `js/learn.js`, `js/sample_basic.js`: the Learn lessons and the built-in BasicSample they draw
 
 `serve.ps1` is a small static server for opening project art by URL.
 

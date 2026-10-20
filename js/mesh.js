@@ -574,20 +574,6 @@
 		}
 	};
 
-	M.rotateAbout = (obj, indices, c, rad) => { for (const i of indices) obj.verts[i] = v3.rotZ(obj.verts[i], c, rad); };
-
-	// Turn about a world axis ("x", "y" or "z") through c.
-	M.rotateAxis = (obj, indices, c, axis, rad) => {
-		const s = Math.sin(rad), k = Math.cos(rad);
-		const [a, b] = axis === "x" ? [1, 2] : axis === "y" ? [2, 0] : [0, 1];
-		for (const i of indices) {
-			const p = obj.verts[i].slice(), u = p[a] - c[a], w = p[b] - c[b];
-			p[a] = c[a] + u * k - w * s;
-			p[b] = c[b] + u * s + w * k;
-			obj.verts[i] = p;
-		}
-	};
-
 	// Turn about any axis `u` (unit) through c (right-handed: + turns by the right-hand rule about u).
 	M.rotateAround = (obj, indices, c, u, rad) => { for (const i of indices) obj.verts[i] = M.turnVec(v3.sub(obj.verts[i], c), u, rad).map((v, k) => v + c[k]); };
 	M.turnVec = (p, u, rad) => {

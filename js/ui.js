@@ -31,7 +31,7 @@
 	document.body.append(tip);
 	let cur = null, timer = 0, lastShown = 0;
 	const hideTip = () => { clearTimeout(timer); tip.classList.remove("on"); cur = null; };
-	const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 	const fillTip = (text) => {
 		const m = text.match(/^(.{1,48}?)(?::\s|;\s|\.\s)([\s\S]+)$/);
 		if (m) tip.innerHTML = `<b>${esc(m[1])}</b><span>${esc(m[2])}</span>`;
@@ -94,11 +94,4 @@
 		if (v === "1") d.open = true; else if (v === "0") d.open = false;
 		d.addEventListener("toggle", () => store.set(k, d.open ? "1" : "0"));
 	}
-
-	// --- The light controls only matter in the Lit view ---
-	const outSection = document.querySelector("section.output");
-	const syncMode = () => { const o = TS.api && TS.api.output; if (o && outSection.dataset.mode !== o.mode) outSection.dataset.mode = o.mode; };
-	$("outmodes").addEventListener("click", () => setTimeout(syncMode, 0));
-	setInterval(syncMode, 400);
-	syncMode();
 })();

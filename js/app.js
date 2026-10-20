@@ -9,11 +9,12 @@
 		objects: [], active: null, selected: new Set(),
 		edit: false, elemMode: "face", elemSel: new Set(),
 		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, belowZ: false, grid: true,
-		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 },
+		settings: defaultSettings(),
 		autoProcess: true, result: null,
 		bundleId: newUUID(),
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
+	function defaultSettings() { return { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 }; }
 	// The Studio had no version number yet: this is the one written to bundles (bump it by hand per release).
 	const STUDIO_VERSION = "1.0.0";
 	// Generated once per project, saved in the project file; lets the importer tell a moved / renamed export from a new one.
@@ -53,11 +54,23 @@
 	function undo() { if (undoStack.length) { redoStack.push(snapshot()); restore(undoStack.pop()); markUnsaved(); status(`Undo (${undoStack.length} more)`); } else status("Nothing to undo."); }
 	function redo() { if (redoStack.length) { undoStack.push(snapshot()); restore(redoStack.pop()); markUnsaved(); status(`Redo (${redoStack.length} more)`); } else status("Nothing to redo."); }
 
+	// The models changed: redraw, refresh the panels and (auto) reprocess.
 	let processTimer = 0;
-	function changed(geometryOnly) {
+	function changed() {
 		dirty = true;
-		if (!geometryOnly) panels();
+		panels();
 		if (S.autoProcess && S.art) { clearTimeout(processTimer); processTimer = setTimeout(processNow, 250); }
+	}
+	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
+	function selChanged() { dirty = true; panels(); }
+
+	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+	const selVerts = (o) => Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel);
+	// Bounding box of a list of points.
+	function pointBounds(pts) {
+		const b = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+		for (const p of pts) for (let k = 0; k < 3; k++) { b.min[k] = Math.min(b.min[k], p[k]); b.max[k] = Math.max(b.max[k], p[k]); }
+		return b;
 	}
 
 	function status(text) { $("status").textContent = text; }
@@ -80,7 +93,7 @@
 	async function setTileset(dataURL, name) {
 		const img = await loadImage(dataURL);
 		const c = document.createElement("canvas");
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		c.width = img.width; c.height = img.height;
 		const g = c.getContext("2d");
 		g.drawImage(img, 0, 0);
@@ -177,7 +190,6 @@
 	function refPanel() {
 		const el = $("refs");
 		if (!el) return;
-		const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 		if (!S.refs.length) { el.innerHTML = `<p class="dim">Add another tileset (.studio.json, or a Godot .export.json) as a faint ghost to trace over or compare with. It only slides across the floor; its height stays locked.</p>`; return; }
 		el.innerHTML = S.refs.map((r) => `<div class="ref${r.id === S.refActive ? " active" : ""}" data-id="${r.id}">
 			<div class="rh"><button class="eye" data-a="vis" title="Show / hide">${r.visible ? "●" : "◌"}</button><span class="rn" title="${esc(r.name)}">${esc(r.name)}${r.approx ? " <i title='From a bundle: models show as footprint outlines'>(outlines)</i>" : ""}</span>
@@ -212,13 +224,13 @@
 		// A Godot bundle is not a project to edit: it is added as a reference ghost (drop one in, or Add reference).
 		if (p.format === "tileset-studio-export") { addReference(text).catch((err) => alert(err.message)); return; }
 		if (p.format !== "tileset-studio") { alert("Not a Tileset Studio project."); return; }
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.objects = p.objects || [];
 		Mesh.bumpIds(S.objects);
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
-		Object.assign(S.settings, { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 }, p.settings || {});
+		Object.assign(S.settings, defaultSettings(), p.settings || {});
 		S.bundleId = typeof p.bundleId === "string" && p.bundleId ? p.bundleId : newUUID();
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
 		for (const r of S.refs) renderer.dropRefArt(r.id);
@@ -385,7 +397,6 @@
 		pieceInfo();
 		const st = S.result.stats, clashes = TS.Process.clashes(S.objects);
 		holeCells = null;
-		const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 		const clashText = clashes.map((c) => `${c.a.join(", ")} / ${c.b.join(", ")} (tile column ${c.col})`);
 		$("stats").innerHTML = `covered ${st.covered} px · <b class="${st.unfilled ? "bad" : ""}">holes ${st.unfilled}</b> (+${st.filled} filled)` +
 			(st.unfilled ? `<button id="b_nexthole" title="Show the next uncovered spot in both views">next hole ›</button>` : "") +
@@ -404,6 +415,13 @@
 		}
 	}
 
+	// Switch the output view (tabs, Learn and "next hole" all come here). The light bar only shows in the Lit view (CSS).
+	function setOutMode(mode) {
+		output.mode = mode;
+		document.querySelectorAll("#outmodes button[data-mode]").forEach((x) => x.classList.toggle("on", x.dataset.mode === mode));
+		document.querySelector("section.output").dataset.mode = mode;
+		pieceInfo(); syncModeTabs(); output.render(); savePrefs();
+	}
 	// The output tabs are grouped (Maps, Plan): the group's tab shows the active member and opens a small list.
 	function syncModeTabs() {
 		for (const g of document.querySelectorAll("#outmodes .grp")) {
@@ -424,7 +442,7 @@
 		const el = $("pieceinfo"), r = S.result;
 		el.classList.toggle("on", !!r && (output.mode === "pieces" || output.mode === "kind" || output.mode === "collision"));
 		if (!r || !r.pieceMap) return;
-		const pm = r.pieceMap, esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+		const pm = r.pieceMap;
 		if (output.mode === "kind" || output.mode === "collision") {
 			const rows = [], rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`, roles = r.roles || [];
 			if (output.mode === "kind") {
@@ -469,7 +487,7 @@
 		renderer.cam.x = x; renderer.cam.y = y;
 		zoomAt(...viewCentre(), Math.max(renderer.cam.zoom, 6));
 		renderer.cam.x = x; renderer.cam.y = y;
-		document.querySelector('#outmodes button[data-mode="holes"]').click();
+		setOutMode("holes");
 		output.view = { s: Math.max(output.scale(), 4), cx: x, cy: y };
 		output.draw();
 		status(`Hole spot ${holeIdx + 1} of ${holeCells.length} at canvas ${x}, ${y} (magenta in the Holes view). Model it, or raise "Fill holes up to".`);
@@ -479,7 +497,7 @@
 
 	function addPrimitive(kind) {
 		if (!S.art) return alert("Open a tileset first.");
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		pushUndo();
 		if (S.edit) S.edit = false;
 		// The cursor sits on grid intersections; a new piece fills the tile(s) south-east of it.
@@ -723,7 +741,7 @@
 		pushUndo();
 		for (const o of targets) { o.hidden = true; S.selected.delete(o.id); }
 		if (activeObj() && activeObj().hidden) S.active = null;
-		changed(true); panels();
+		selChanged();
 		status(`Hid ${targets.length} model(s): they still process and export. Alt+H shows them again.`);
 	}
 	function unhideAll() {
@@ -732,14 +750,14 @@
 		pushUndo();
 		for (const o of hidden) { o.hidden = false; S.selected.add(o.id); }
 		S.active = hidden[hidden.length - 1].id;
-		changed(true); panels();
+		selChanged();
 		status(`Showing ${hidden.length} model(s) again (selected).`);
 	}
 	function toggleHidden(o) {
 		pushUndo();
 		o.hidden = !o.hidden;
 		if (o.hidden) { S.selected.delete(o.id); if (S.active === o.id) { S.active = null; if (S.edit) S.edit = false; } }
-		changed(true); panels();
+		selChanged();
 	}
 
 	// Ctrl+I: invert the selection (models, or elements in edit mode).
@@ -749,7 +767,7 @@
 			S.selected = new Set(visibleObjs().filter((o) => !S.selected.has(o.id)).map((o) => o.id));
 			if (!S.selected.has(S.active)) S.active = S.selected.size ? [...S.selected].pop() : null;
 		}
-		changed(true); panels();
+		selChanged();
 	}
 
 	// Ctrl+C / Ctrl+V: copy models, paste them in place (also into another project or tab: kept in the browser's storage).
@@ -796,7 +814,7 @@
 		if (!objs.length) return false;
 		if (S.edit && !S.elemSel.size) return false;
 		pushUndo();
-		for (const o of objs) Mesh.translate(o, Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel), d.map((v) => v * step));
+		for (const o of objs) Mesh.translate(o, selVerts(o), d.map((v) => v * step));
 		changed();
 		status(`Nudged ${d.map((v, k) => (v ? "XYZ"[k] + " " + (v > 0 ? "+" : "") + v * step : "")).join("")} px`);
 		return true;
@@ -927,8 +945,7 @@
 			} else if (!add) S.active = null;
 		}
 		hover = null;
-		changed(true);
-		panels();
+		selChanged();
 		if (note) status(note); else hint();
 	}
 
@@ -983,9 +1000,8 @@
 			axis: null, local: false, numeric: "", data: Object.assign({}, opts), fromDuplicate: !!fromDuplicate };
 		// Pivot / reference point.
 		const pts = [];
-		for (const [o] of modal.base) for (const i of Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel)) pts.push(o.verts[i]);
-		const b = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-		for (const p of pts) for (let k = 0; k < 3; k++) { b.min[k] = Math.min(b.min[k], p[k]); b.max[k] = Math.max(b.max[k], p[k]); }
+		for (const [o] of modal.base) for (const i of selVerts(o)) pts.push(o.verts[i]);
+		const b = pointBounds(pts);
 		modal.data.ref = S.edit ? (pts[0] || [0, 0, 0]) : b.min;
 		modal.data.box = b;
 		modal.data.pivot = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, S.edit ? (b.min[2] + b.max[2]) / 2 : b.min[2]];
@@ -1087,7 +1103,7 @@
 				const u = axisVec(m, base), s0 = axisParam(m.data.pivot, u, m.start), s1 = axisParam(m.data.pivot, u, mouse);
 				let s = num !== null ? num : s0 === null || s1 === null ? (m.start[1] - mouse[1]) / z : TS.clamp(s1 - s0, -4096, 4096);
 				if (num === null) s = TS.snap(s, step);
-				Mesh.translate(o, Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel), v3.scale(u, s));
+				Mesh.translate(o, selVerts(o), v3.scale(u, s));
 				shown = s;
 			}
 			info = `Move ${+shown.toFixed(2)} px along ${axisName(m)}`;
@@ -1099,7 +1115,7 @@
 				const moving = m.axis ? ["xyz".indexOf(m.axis)] : [0, 1];
 				d = d.map((v, k) => (moving.includes(k) ? TS.snap(m.data.ref[k] + v, step) - m.data.ref[k] : 0));
 			}
-			for (const [o] of m.base) Mesh.translate(o, Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel), d);
+			for (const [o] of m.base) Mesh.translate(o, selVerts(o), d);
 			info = `Move ${d.map((v, k) => "XYZ"[k] + " " + +v.toFixed(2)).join(" · ")}${m.axis ? " along " + AXIS[m.axis] : " (across and in depth on the ground; Z for height)"}`;
 		} else if (m.type === "scale" && m.axis && m.local) {
 			// Along a local axis, about each model's middle (edit mode: the selection's): the size along it snaps.
@@ -1107,7 +1123,7 @@
 			const d0 = Math.max(4, Math.hypot(m.start[0] - p[0], m.start[1] - p[1])), d1 = Math.hypot(mouse[0] - p[0], mouse[1] - p[1]);
 			const f = num !== null ? num : d1 / d0, sizes = [];
 			for (const [o, base] of m.base) {
-				const u = axisVec(m, base), idx = Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel);
+				const u = axisVec(m, base), idx = selVerts(o);
 				const proj = idx.map((i) => v3.dot(o.verts[i], u)), lo = Math.min(...proj), hi = Math.max(...proj), size = hi - lo;
 				if (!(size > 1e-6)) continue;
 				const kstep = Math.max(1, Math.min(step, 2 ** Math.floor(Math.log2(Math.max(1, size)))));
@@ -1134,7 +1150,7 @@
 				if (num === null && !fromBase) a = TS.snap(a, kstep);
 				const b = a + size2;
 				for (const [o] of m.base)
-					for (const i of Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel)) { const p = o.verts[i].slice(); p[k] = a + ((p[k] - lo) * (b - a)) / size; o.verts[i] = p; }
+					for (const i of selVerts(o)) { const p = o.verts[i].slice(); p[k] = a + ((p[k] - lo) * (b - a)) / size; o.verts[i] = p; }
 				sizes.push("XYZ"[k] + " " + +(b - a).toFixed(2));
 			}
 			info = `Scale to ${sizes.join(" · ")} px${m.axis ? " (" + AXIS[m.axis] + " only)" : ""}`;
@@ -1148,7 +1164,7 @@
 				const u = m.axis ? axisVec(m, base) : [0, 0, 1];
 				// Local turns in object mode: each model about its own middle (individual origins); else one shared pivot.
 				const c = m.local && !S.edit ? Mesh.centre(base) : m.data.pivot;
-				Mesh.rotateAround(o, Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel), c, u, rad);
+				Mesh.rotateAround(o, selVerts(o), c, u, rad);
 				if (!S.edit) o.basis = Mesh.basis(base).map((a) => Mesh.turnVec(a, u, rad));
 			}
 			info = `Turn ${+deg.toFixed(1)}° about ${m.axis ? axisName(m) : "the vertical (Z)"}${m.local && !S.edit && m.base.length > 1 ? ", each about its own middle" : ""}`;
@@ -1218,10 +1234,7 @@
 		modalBar();
 		pushUndo(m.before);
 		if (m.data.extruded) Mesh.orientLoose(m.base[0][0], toViewer());
-		if (m.type === "bevel" || m.type === "extrude" || m.type === "inset") {
-			// Bevel renumbers edges and faces; keep the selection sensible.
-			if (m.type === "bevel") S.elemSel.clear();
-		}
+		if (m.type === "bevel") S.elemSel.clear(); // bevel renumbers edges and faces
 		if (m.type === "loopslide") {
 			const o = m.base[0][0], set = new Set(m.data.loop);
 			S.elemMode = "edge";
@@ -1332,13 +1345,12 @@
 			if (knife.hover) vtx(hov.points, knife.hover.p, [0, 0, 1], knife.hover.snap === "vertex" ? [1, 1, 1, 1] : knife.hover.snap === "edge" ? [0.4, 1, 0.6, 1] : [1, 0.85, 0.2, 0.6]);
 		}
 		if (loopHover) {
-			const { obj, ring } = loopHover, f = (k) => k.split("_").map((i) => obj.verts[+i]);
+			const { obj, ring } = loopHover;
 			const mids = ring.faces.map(({ fi, i }) => {
 				const face = obj.faces[fi], a = obj.verts[face.v[i]], b = obj.verts[face.v[(i + 1) % 4]], c = obj.verts[face.v[(i + 2) % 4]], d = obj.verts[face.v[(i + 3) % 4]];
 				return [v3.lerp(a, b, 0.5), v3.lerp(c, d, 0.5)];
 			});
 			for (const [a, b] of mids) { vtx(overlay, a, [0, 0, 1], [1, 0.9, 0.2, 1]); vtx(overlay, b, [0, 0, 1], [1, 0.9, 0.2, 1]); }
-			void f;
 		}
 		if (modal && modal.axis) {
 			// The locked axis through the pivot (local: each model's own, through its middle when it turns about it).
@@ -1395,7 +1407,7 @@
 	}
 	// Stay in 3D (nav "3D" button, key 5): the look-round holds until toggled off; drag orbits, Shift/Space-drag pans, wheel zooms.
 	function toggleStay3d(on) {
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		const want = on === undefined ? !S.stay3d : on;
 		if (want === !!S.stay3d) return;
 		if (modal) cancelModal();
@@ -1582,7 +1594,7 @@
 		const after = renderer.canvasPoint(px, py);
 		renderer.cam.x += before[0] - after[0]; renderer.cam.y += before[1] - after[1];
 		dirty = true;
-		$("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`;
+		zoomLabel();
 	}
 	// Steps through pixel-friendly zoom levels (whole pixels per art pixel above 1).
 	function zoomStep(px, py, dir) {
@@ -1591,6 +1603,11 @@
 		if (next) zoomAt(px, py, next);
 	}
 	const viewCentre = () => { const r = $("view").getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+	const zoomLabel = () => { $("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`; };
+	function fitView() { renderer.fit(); zoomLabel(); dirty = true; }
+	// Pencil and stamp own the pointer: most other actions leave them first.
+	function leaveDrawTools() { if (pencil || S.tool === "stamp") setTool("select"); }
+	function toggleXray() { S.xray = !S.xray; $("xray").checked = S.xray; savePrefs(); dirty = true; }
 
 	// Frame the selection (or everything) in the tileset view.
 	function frameSelection() {
@@ -1600,23 +1617,22 @@
 		if (renderer.free.blend > 0) {
 			// 3D view: orbit round the selection's middle, far enough back to see all of it.
 			if (!pts.length) { renderer.free.target = [renderer.art.w / 2, renderer.art.h / 2, 0]; dirty = true; return; }
-			const b = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-			for (const p of pts) for (let k = 0; k < 3; k++) { b.min[k] = Math.min(b.min[k], p[k]); b.max[k] = Math.max(b.max[k], p[k]); }
+			const b = pointBounds(pts);
 			renderer.free.target = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
 			const r = $("view").getBoundingClientRect(), size = Math.max(16, v3.dist(b.min, b.max));
 			renderer.cam.zoom = TS.clamp((Math.min(r.width, r.height) / size) * 0.6, ZOOMS[0], ZOOMS[ZOOMS.length - 1]);
-			$("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`;
+			zoomLabel();
 			dirty = true;
 			return;
 		}
-		if (!pts.length) { renderer.fit(); dirty = true; return; }
+		if (!pts.length) return fitView();
 		let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
 		for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1] - p[2]); y1 = Math.max(y1, p[1] - p[2]); }
 		const r = $("view").getBoundingClientRect();
 		const want = Math.min(r.width / Math.max(x1 - x0, 16), r.height / Math.max(y1 - y0, 16)) * 0.6;
 		renderer.cam.x = (x0 + x1) / 2; renderer.cam.y = (y0 + y1) / 2;
 		renderer.cam.zoom = [...ZOOMS].reverse().find((v) => v <= want) || ZOOMS[0];
-		$("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`;
+		zoomLabel();
 		dirty = true;
 	}
 
@@ -1656,7 +1672,7 @@
 			for (const o of hits) { S.selected.add(o.id); S.active = o.id; }
 			status(`Box: ${hits.length} model${hits.length === 1 ? "" : "s"} selected${S.selected.size > 1 ? " · the properties panel edits all of them (collision, kind, tags, material)" : ""}`);
 		}
-		changed(true); panels();
+		selChanged();
 	}
 
 	function marquee(a, b) {
@@ -1809,15 +1825,17 @@
 			press = null;
 		};
 		canvas.addEventListener("pointerup", release);
-		canvas.addEventListener("pointercancel", () => { if (exchange?.draft) exchange.draft.pointer = null; });
-		canvas.addEventListener("pointercancel", (e) => { if (pencil && pencil.pointer === e.pointerId) clearPencil(); });
 		canvas.addEventListener("pointerleave", () => { if (hover) { hover = null; dirty = true; } });
-		canvas.addEventListener("pointercancel", (e) => { pointers.delete(e.pointerId); pinch = null; if (press && press.kind === "look") endLook(); press = null; marquee(null); });
+		canvas.addEventListener("pointercancel", (e) => {
+			if (exchange?.draft) exchange.draft.pointer = null;
+			if (pencil && pencil.pointer === e.pointerId) clearPencil();
+			pointers.delete(e.pointerId); pinch = null; if (press && press.kind === "look") endLook(); press = null; marquee(null);
+		});
 		canvas.addEventListener("wheel", (e) => {
 			e.preventDefault();
 			if (renderer.free.blend > 0) {
 				// 3D view: the wheel moves the eye in and out (the zoom sets its distance).
-				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); $("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`; dirty = true; }
+				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); dirty = true; }
 				return;
 			}
 			const [px, py] = localPoint(e);
@@ -1851,18 +1869,18 @@
 	}
 
 	function startTool(type, armed) {
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		if (armed) { S.armed = type; modalBar(); status("Press on the view where to start, drag, and let go to apply. Esc or the ✕ cancels."); return; }
 		beginModal(type);
 	}
 
 	function toggleEdit() {
-		if (pencil || S.tool === "stamp") setTool("select");
+		leaveDrawTools();
 		if (!S.edit && !activeObj()) return status("Select an object, then Tab to edit it.");
 		S.edit = !S.edit; S.elemSel.clear();
 		knife = null;
 		if (S.edit) S.selected = new Set([S.active]);
-		changed(true); panels(); hint();
+		selChanged(); hint();
 	}
 	function setElemMode(mode) {
 		if (!S.edit) return;
@@ -1905,7 +1923,7 @@
 			if (k === "escape") { knife = null; dirty = true; hint(); }
 			else if (k === "enter" || k === " ") knifeApply();
 			else if (k === "backspace") { knife.pts.pop(); dirty = true; }
-			else if (k === "z" && e.altKey) { S.xray = !S.xray; $("xray").checked = S.xray; savePrefs(); dirty = true; }
+			else if (k === "z" && e.altKey) toggleXray();
 			else if (!["5", "+", "=", "-", "_", "home", ".", "arrowleft", "arrowright", "arrowup", "arrowdown", "[", "]"].includes(k)) { e.preventDefault(); return; }
 			// Navigation keys (and the snap step) still work while cutting.
 			if (k === "escape" || k === "enter" || k === " " || k === "backspace" || k === "z") { e.preventDefault(); return; }
@@ -1948,7 +1966,7 @@
 		if (e.shiftKey && k === "a") { toggleAddMenu(true); e.preventDefault(); return; }
 		if (e.shiftKey && k === "d") { duplicate(); e.preventDefault(); return; }
 		if (k === "h") { if (e.altKey) unhideAll(); else hideModels(e.shiftKey ? "unselected" : "selected"); e.preventDefault(); return; }
-		if (e.altKey && k === "z") { S.xray = !S.xray; $("xray").checked = S.xray; savePrefs(); dirty = true; e.preventDefault(); return; }
+		if (e.altKey && k === "z") { toggleXray(); e.preventDefault(); return; }
 		if (k === "pageup" || k === "pagedown") { nudge([0, 0, k === "pageup" ? 1 : -1], e); e.preventDefault(); return; }
 		if (k === "[" || k === "]" || k === "{" || k === "}") { snapStep(k === "[" || k === "{" ? -1 : 1); return; }
 		switch (k) {
@@ -1960,7 +1978,7 @@
 				if (e.altKey) { S.edit ? S.elemSel.clear() : S.selected.clear(); }
 				else if (S.edit) { const o = activeObj(); if (o) S.elemSel = new Set(allElems(o)); }
 				else S.selected = new Set(visibleObjs().map((o) => o.id));
-				changed(true); panels();
+				selChanged();
 				break;
 			case "g": beginModal("grab"); break;
 			case "s": beginModal("scale"); break;
@@ -1969,7 +1987,7 @@
 			case "e": e.preventDefault(); beginModal("extrude", false, e.altKey ? { manifold: true } : null); break;
 			case "i": beginModal("inset"); break;
 			case "x": case "delete": deleteSelection(); break;
-			case "home": renderer.fit(); $("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`; dirty = true; break;
+			case "home": fitView(); break;
 			case "f": if (S.edit) fillSelection(); else frameSelection(); break;
 			case ".": frameSelection(); break;
 			case "+": case "=": zoomStep(...viewCentre(), 1); break;
@@ -2023,7 +2041,7 @@
 						S.active = o.id;
 					} else if (e.shiftKey || e.ctrlKey || e.metaKey) { if (S.selected.has(o.id)) S.selected.delete(o.id); else { S.selected.add(o.id); S.active = o.id; } }
 				else { S.selected = new Set([o.id]); S.active = o.id; }
-				changed(true); panels();
+				selChanged();
 			};
 			li.ondblclick = (e) => {
 				e.stopPropagation();
@@ -2050,11 +2068,11 @@
 		const common = (get) => (targets.every((t) => get(t) === get(targets[0])) ? get(targets[0]) : undefined);
 		const mixedOpt = `<option value="__mixed" selected disabled>— mixed —</option>`;
 		const reqValue = common(TS.Process.collisionRequested), kindValue = common((t) => (TS.Process.KINDS.includes(t.kind) ? t.kind : ""));
-		const role = roles ? roles[S.objects.indexOf(o)] : null, esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+		const role = roles ? roles[S.objects.indexOf(o)] : null;
 		const faceSel = S.edit && S.elemMode === "face" && S.elemSel.size;
 		const fm = faceSel ? Mesh.faceMat(o, o.faces[[...S.elemSel][0]]) : null;
 		props.innerHTML = `
-			${multi ? `<p class="multi"><b>${multi.length} models selected.</b> Changes here apply to all of them. Name and placement are single-model: select one, or use G / S / R to move the group.</p>` : `<label>Name <input id="p_name" value="${o.name.replace(/"/g, "&quot;")}"></label>`}
+			${multi ? `<p class="multi"><b>${multi.length} models selected.</b> Changes here apply to all of them. Name and placement are single-model: select one, or use G / S / R to move the group.</p>` : `<label>Name <input id="p_name" value="${esc(o.name)}"></label>`}
 			<label title="How it blocks the player in the game. Strip: only a 4 px strip along the south edge of its footprint, you walk into its drawn top. Footprint (walk-behind): the floor it really covers blocks wherever it reaches between the step and body heights (Processing), so you walk round it and can stand behind it. None: never blocks. The Collision view shows it.">Collision
 				<select id="p_collision">${reqValue === undefined ? mixedOpt : ""}${[["auto", `auto${role && !multi ? " (now: " + role.mode + ")" : ""}`], ["strip", "strip (walk into the top)"], ["footprint", "footprint (walk behind)"], ["none", "none"]].map(([v, t]) =>
 					`<option value="${v}" ${reqValue === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
@@ -2160,9 +2178,15 @@
 		svg.innerHTML = html;
 	}
 
+	// Draw the model view now (frame() calls it when something changed; a hidden tab gets no animation frames).
+	function drawNow() {
+		dirty = false;
+		renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
+		drawAxes(); drawPencil(); if (exchange) exchange.drawPreview();
+	}
 	function frame() {
 		if (anim) anim();
-		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
+		if (dirty && renderer) { if (knife || $("modalbar").classList.contains("open")) modalBar(); drawNow(); }
 		requestAnimationFrame(frame);
 	}
 
@@ -2178,7 +2202,7 @@
 			zoomin: () => zoomStep(...viewCentre(), 1), zoomout: () => zoomStep(...viewCentre(), -1),
 			pixel: () => zoomAt(...viewCentre(), Math.max(1, Math.round(renderer.cam.zoom))), frame: frameSelection,
 			stay3d: () => toggleStay3d(),
-			fit: () => { if (S.stay3d) toggleStay3d(false); renderer.fit(); $("zoomlabel").textContent = `${Math.round(renderer.cam.zoom * 100)}%`; dirty = true; },
+			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};
 		acts.extrudeman = () => { if (S.edit && S.elemMode === "face") { S.armed = "extrude"; S.armedOpts = { manifold: true }; modalBar(); status("Press on the view, drag, and let go to extrude (manifold)."); } else status("Extrude manifold works on faces (3)."); };
 		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife;
@@ -2263,8 +2287,7 @@
 		$("exportname").onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") { $("exportname").onchange(); exportMaps("bundle"); } else if (e.key === "Escape") $("exportname").blur(); };
 		$("b_help").onclick = toggleHelp;
 		$("help").onclick = toggleHelp;
-		for (const b of document.querySelectorAll("#outmodes button[data-mode]"))
-			b.onclick = () => { output.mode = b.dataset.mode; document.querySelectorAll("#outmodes button[data-mode]").forEach((x) => x.classList.toggle("on", x === b)); pieceInfo(); syncModeTabs(); output.render(); };
+		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
 			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
 		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
@@ -2341,7 +2364,7 @@
 			const o = S.objects[r.owner[y * r.w + x]];
 			if (!o) return status("No model at that pixel.");
 			S.selected = new Set([o.id]); S.active = o.id;
-			changed(true); panels();
+			selChanged();
 			status(`Selected ${o.name} (from the output view). F frames it.`);
 		});
 		const outUp = () => { lightDrag = false; outPan = null; };
@@ -2369,7 +2392,6 @@
 			if (f.name.endsWith(".json")) openProject(await readFile(f, true)); else openTilesetFile(f);
 		});
 		for (const id of PREF_IDS) $(id).addEventListener("change", savePrefs);
-		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.addEventListener("click", savePrefs);
 		loadPrefs();
 		// The view settings follow their controls, whatever set them: our prefs, or the browser restoring a reloaded / back-
 		// navigated page's form (that fires no events, so X-ray could show ticked while it was off).
@@ -2408,12 +2430,11 @@
 		state: S, get renderer() { return renderer; }, get output() { return output; },
 		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
 		addPrimitive, processNow, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
-		select: (id) => { S.selected = new Set([id]); S.active = id; changed(); },
+		select: (id) => { S.selected = new Set([id]); S.active = id; selChanged(); },
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
-		// Draw now (a hidden tab gets no animation frames): for scripted captures.
-		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
-		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs,
+		redraw: drawNow, // for scripted captures
+		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode,
 	};
 
 	window.addEventListener("DOMContentLoaded", boot);

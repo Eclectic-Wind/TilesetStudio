@@ -450,7 +450,7 @@
 				const phase = [["char", 1.8, 4.6], ["floor", 4.6, 6.8], ["wall", 6.8, 8.8]];
 				for (const [key, a, b] of phase) {
 					const k = seg(t, a, a + 0.8), keep = t > b ? 0.35 : 1;
-					for (const c of data.cells[key]) cell(c, hexA(colors[key]), 0.45 * k * keep * (t > b ? 1 : 0.8 + 0.2 * Math.sin(t * 6)));
+					for (const c of data.cells[key]) cell(c, colors[key], 0.45 * k * keep * (t > b ? 1 : 0.8 + 0.2 * Math.sin(t * 6)));
 					if (t >= a && t < b + 0.2) pill(g, W - 90, 40, key === "char" ? "character" : key === "floor" ? "stone floor" : "back wall", colors[key], k, 15);
 				}
 				// shared tiles of floor + wall (same piece)
@@ -474,7 +474,6 @@
 			};
 		},
 	});
-	function hexA(h) { return h; }
 
 	// 7 ---------------------------------------------------------------------------------------------------------------
 	L.push({

@@ -173,8 +173,11 @@
 			} catch (err) { $("stamp_help").textContent = err.message; this.api.status(err.message); }
 		}
 		drawPreview() {
+			// Without a stamp in progress, only clear what the last preview left (resizing reallocates the canvas every frame).
+			if (!this.draft && !this.drawn) return;
 			const c = $("stamp_overlay"), r = $("view").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-			c.width = Math.max(1, Math.round(r.width * dpr)); c.height = Math.max(1, Math.round(r.height * dpr)); if (!this.draft) return;
+			c.width = Math.max(1, Math.round(r.width * dpr)); c.height = Math.max(1, Math.round(r.height * dpr));
+			this.drawn = !!this.draft; if (!this.draft) return;
 			const d = this.draft; let objects;
 			try { objects = this.preview(); d.valid = true; } catch (err) { d.valid = false; $("stamp_help").textContent = err.message; $("stamp_place").disabled = true; return; }
 			$("stamp_place").disabled = false;

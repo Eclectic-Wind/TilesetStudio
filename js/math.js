@@ -14,11 +14,6 @@ TS.v3 = {
 	lerp: (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t],
 	dist: (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]),
 	copy: (a) => [a[0], a[1], a[2]],
-	// Rotate about the vertical axis through `c` by `rad` (+ turns east toward south, i.e. clockwise seen from above).
-	rotZ: (p, c, rad) => {
-		const s = Math.sin(rad), k = Math.cos(rad), x = p[0] - c[0], y = p[1] - c[1];
-		return [c[0] + x * k - y * s, c[1] + x * s + y * k, p[2]];
-	},
 };
 
 // Column-major 4x4 matrices (WebGL order).
@@ -80,4 +75,3 @@ TS.m4 = {
 
 TS.snap = (v, step) => (step > 0 ? Math.round(v / step) * step : v);
 TS.clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-TS.isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
