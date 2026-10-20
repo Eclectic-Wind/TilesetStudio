@@ -501,11 +501,9 @@
 
 	// The BasicSample scene (js/sample_basic.js), opened as the project.
 	async function loadSample() {
-		const S = TS.state;
-		if ((S.objects.length || S.art) && !confirm("Replace the open project with the BasicSample scene? Unsaved work will be lost.")) return;
 		const p = JSON.parse(JSON.stringify(B()));
 		p.bundleId = undefined; // a fresh identity: it is a copy to play with
-		await TS.api.openProject(JSON.stringify(p));
+		if (!(await TS.api.openProject(JSON.stringify(p)))) return; // cancelled at "Save changes?"
 		close();
 		const b = document.querySelector('#outmodes button[data-mode="kind"]'); if (b) b.click();
 	}
@@ -554,7 +552,7 @@
 		ex.querySelectorAll("[data-show]").forEach((b) => { b.onclick = () => { const v = document.querySelector(`#outmodes button[data-mode="${b.dataset.show}"]`); close(); if (v) v.click(); const s = $("status"); if (s) s.textContent = "Showing the " + b.textContent.replace("👁 ", "") + ". Press L to go back to the lessons."; }; });
 		ex.querySelectorAll(".todo li").forEach((li) => { li.onclick = () => li.classList.toggle("done"); });
 		if ($("l_sample")) $("l_sample").onclick = () => loadSample();
-		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => alert(e.message)); };
+		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => TS.api.toast(e.message, "bad")); };
 		$("learn_pause").textContent = paused ? "▶ Play" : "⏸ Pause";
 		try { localStorage.setItem("ts.learn", String(cur)); } catch (err) { /* storage blocked */ }
 	}

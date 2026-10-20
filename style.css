@@ -300,3 +300,21 @@ section.output[data-mode]:not([data-mode="lit"]) .lightbar { display: none; }
 @keyframes splash { 0%, 65% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
 @keyframes splashlogo { 0% { opacity: 0; transform: scale(.94); } 25% { opacity: 1; transform: none; } 100% { transform: scale(1.03); } }
 @media (prefers-reduced-motion: reduce) { .splash, .splash img { animation-duration: .6s; } }
+
+/* Toasts: short notes over the view that fade by themselves (js/app.js toast) */
+.toasts { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 95; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+.toast { max-width: min(560px, calc(100vw - 32px)); padding: 7px 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); animation: toastin .18s ease; transition: opacity .3s, transform .3s; }
+.toast.ok { border-color: #3f7a55; }
+.toast.ok::before { content: "✓ "; color: #5fd08a; }
+.toast.bad { border-color: var(--bad); }
+.toast.bad::before { content: "⚠ "; color: var(--bad); }
+.toast.out { opacity: 0; transform: translateY(-6px); }
+@keyframes toastin { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* "Save changes?" before something replaces the open project */
+.modal .card.askcard { width: min(440px, calc(100vw - 32px)); }
+.askcard h2 { color: var(--text); }
+.askcard p { color: var(--dim); }
+
+/* Unsaved work: a dot before the tileset name (the tab title gets one too) */
+#tileinfo.unsaved::before { content: "● "; color: var(--accent); }

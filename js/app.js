@@ -74,14 +74,25 @@
 	}
 
 	function status(text) { $("status").textContent = text; }
+	// A short note over the view that fades by itself (the footer keeps the full status line). kind: "ok" or "bad".
+	function toast(text, kind) {
+		const box = $("toasts"), el = document.createElement("div");
+		el.className = "toast" + (kind ? " " + kind : "");
+		el.textContent = text;
+		box.append(el);
+		while (box.children.length > 3) box.firstChild.remove();
+		setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 300); }, kind === "bad" ? 6000 : 3500);
+	}
+	// The footer hint: what matters in the current mode, short enough to fit; F1 lists everything.
 	function hint() {
 		if (modal) return;
 		if (S.tool === "pencil") return pencilHint();
 		if (S.tool === "stamp" && exchange) return exchange.hint();
-		const base = "Shift+A add · G move (or drag a selected piece) · S scale · R turn · Tab edit · right-click/C: 3D cursor (stacks on tops) · F frame · wheel/+/-: zoom · Space-drag: pan · Alt/middle-drag: look round · 5: stay in 3D · snap " + snapText();
-		const edit = "1/2/3 vertex/edge/face · white = what a click picks; click again: the one behind · Alt+Z X-ray: pick through faces · E extrude (Alt+E manifold) · F fill · Ctrl+E bridge · Ctrl+right-click: new point · K knife · I inset · Ctrl+B bevel · Ctrl+R loop cut · A all · G/S/R, then X/Y/Z (twice: local) · Shift fine";
-		const in3d = "3D view (5 goes back): drag orbits · Shift-drag pans · Ctrl-drag box-selects · drag a selected piece to move it · wheel zooms · F frames · all tools and keys work · ";
-		status((S.stay3d ? in3d : "") + (S.edit ? "EDIT " + S.elemMode + " — " + edit : S.stay3d ? "Tab edit · Shift+A add · G/S/R" : base));
+		const more = " · F1: all shortcuts";
+		const base = `Shift+A add · drag or G move · S scale · R turn · Tab edit · right-click: 3D cursor · Space-drag pan · 5: 3D · snap ${snapText()}`;
+		const edit = `Editing ${{ vert: "vertices", edge: "edges", face: "faces" }[S.elemMode]} (1/2/3) · E extrude · I inset · K knife · F fill · click again: the one behind · Alt+Z X-ray · Tab done`;
+		const in3d = "3D: drag orbits · Shift-drag pans · Ctrl-drag box-selects · 5 goes back · ";
+		status((S.stay3d ? in3d : "") + (S.edit ? edit : S.stay3d ? "Tab edit · Shift+A add · G/S/R" : base) + more);
 	}
 
 	// --- tileset / project files ---
@@ -107,6 +118,7 @@
 		renderer.fit();
 		S.cursor = [Math.round(img.width / 2 / 32) * 32, Math.round(img.height / 2 / 32) * 32, 0];
 		$("exportname").placeholder = S.name;
+		setUnsaved(unsaved);
 		$("tileinfo").textContent = `${S.name} ·${img.width}x${img.height} · ${(img.width / 32) * (img.height / 32)} tiles`;
 		changed();
 		return true;
@@ -222,8 +234,9 @@
 	async function openProject(text) {
 		const p = JSON.parse(text);
 		// A Godot bundle is not a project to edit: it is added as a reference ghost (drop one in, or Add reference).
-		if (p.format === "tileset-studio-export") { addReference(text).catch((err) => alert(err.message)); return; }
-		if (p.format !== "tileset-studio") { alert("Not a Tileset Studio project."); return; }
+		if (p.format === "tileset-studio-export") { addReference(text).catch((err) => toast(err.message, "bad")); return; }
+		if (p.format !== "tileset-studio") { toast("That file is not a Tileset Studio project (.studio.json).", "bad"); return; }
+		if (!(await guardUnsaved(`Opening ${p.name || "another project"}`))) return;
 		leaveDrawTools();
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.objects = p.objects || [];
@@ -238,12 +251,13 @@
 		S.refs.forEach((r) => loadRefArt(r).catch(() => {}));
 		refPanel();
 		undoStack.length = 0; redoStack.length = 0;
-		unsaved = !p.bundleId; // an older project gets its id now: autosave keeps it until the project is saved
-		if (unsaved) markUnsaved();
+		setUnsaved(false);
+		if (!p.bundleId) markUnsaved(); // an older project gets its id now: autosave keeps it until the project is saved
 		$("snap").value = S.snap;
 		settingsToControls();
 		changed();
 		status(`Opened project ${p.name}`);
+		return true;
 	}
 
 	// The Processing panel shows the open project's settings.
@@ -258,18 +272,42 @@
 	// project file clears both; on the next start an autosave left behind is offered back (banner over the view).
 
 	let unsaved = false, autosaveTimer = 0;
+	// Unsaved work shows as ● in the tab title and before the tileset name.
+	function setUnsaved(v) {
+		unsaved = v;
+		document.title = (v ? "● " : "") + (S.art ? S.name + " · " : "") + "Tileset Studio";
+		$("tileinfo").classList.toggle("unsaved", v);
+	}
 	function markUnsaved() {
-		unsaved = true;
+		setUnsaved(true);
 		clearTimeout(autosaveTimer);
 		autosaveTimer = setTimeout(autosave, 1500);
 	}
 	function saveProject() {
 		if (pencil && pencil.pts.length) return status("Finish or clear the current pencil outline before saving.");
 		download(`${S.name}.studio.json`, projectJSON());
-		unsaved = false;
+		setUnsaved(false);
 		clearTimeout(autosaveTimer);
 		idb("delete", "last").catch(() => {});
 		status(`Saved ${S.name}.studio.json (to your downloads)`);
+		toast(`Saved ${S.name}.studio.json to your downloads`, "ok");
+	}
+	// Before something replaces the open project: with unsaved changes, ask Save first / Discard / Cancel. Resolves true to go on.
+	function guardUnsaved(what) {
+		if (!unsaved || !(S.objects.length || S.refs.length)) return Promise.resolve(true);
+		return new Promise((done) => {
+			const box = $("ask");
+			$("ask_title").textContent = `Save changes to ${S.name}?`;
+			$("ask_text").textContent = `${what} replaces the open project, and its unsaved changes will be lost.`;
+			const close = (go) => { box.classList.remove("open"); box.onkeydown = box.onclick = null; $("view").focus(); done(go); };
+			$("ask_save").onclick = () => { saveProject(); close(!unsaved); };
+			$("ask_discard").onclick = () => close(true);
+			$("ask_cancel").onclick = () => close(false);
+			box.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") close(false); };
+			box.onclick = (e) => { if (e.target === box) close(false); };
+			box.classList.add("open");
+			$("ask_save").focus();
+		});
 	}
 	function autosave() {
 		if (!S.art || !unsaved) return;
@@ -297,7 +335,7 @@
 		const bar = $("restore"), when = new Date(saved.time);
 		$("restore_text").textContent = `Unsaved work from ${when.toLocaleString()}: ${saved.name}, ${saved.count} model(s).`;
 		bar.classList.add("open");
-		$("restore_yes").onclick = async () => { bar.classList.remove("open"); await openProject(saved.json); unsaved = true; status(`Restored ${saved.name} from ${when.toLocaleTimeString()}. Save project to keep it as a file.`); };
+		$("restore_yes").onclick = async () => { bar.classList.remove("open"); if (!(await openProject(saved.json))) return; markUnsaved(); status(`Restored ${saved.name} from ${when.toLocaleTimeString()}. Save project to keep it as a file.`); toast(`Restored ${saved.name}: Save project (Ctrl+S) to keep it as a file.`, "ok"); };
 		$("restore_no").onclick = () => { bar.classList.remove("open"); idb("delete", "last").catch(() => {}); };
 	}
 
@@ -364,11 +402,12 @@
 	}
 
 	async function exportMaps(which) {
-		if (!S.art) return alert("Open a tileset first.");
+		if (!S.art) return toast("Open a tileset first.", "bad");
 		const name = exportName(), st = () => S.result.stats;
 		if (which === "bundle") {
 			const text = bundleJSON();
 			download(`${name}.export.json`, text);
+			toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}`, st().unfilled ? "" : "ok");
 			return status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 		}
 		processNow();
@@ -380,6 +419,7 @@
 		if (which === "all" || which === "pbr") files.push([`${name}_pbr.png`, await imageBlob(imgs.pbr)]);
 		if (which === "all" || which === "footprints") files.push([`${name}_footprints.json`, JSON.stringify(TS.Process.footprints(S.objects, S.art, S.result, S.settings), null, 1)]);
 		for (const [n, b] of files) { download(n, b); await new Promise((r) => setTimeout(r, 250)); }
+		toast(`Exported ${files.length === 1 ? files[0][0] : files.length + " files"}`, "ok");
 		status(`Exported ${files.map((f) => f[0]).join(", ")}${name !== S.name ? ` (the atlas must be called ${name}.png beside them)` : ""}${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 	}
 
@@ -511,7 +551,7 @@
 	// --- adding / deleting ---
 
 	function addPrimitive(kind) {
-		if (!S.art) return alert("Open a tileset first.");
+		if (!S.art) return toast("Open a tileset first.", "bad");
 		leaveDrawTools();
 		pushUndo();
 		if (S.edit) S.edit = false;
@@ -1924,14 +1964,14 @@
 				d.pinned = true; exchange.syncControls(); exchange.hint(); dirty = true; e.preventDefault(); return;
 			}
 			if (["p", "tab", "5"].includes(k) && !ctrl) setTool("select");
-			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]"].includes(k) || (ctrl && ["z", "y", "s"].includes(k)))) { e.preventDefault(); return; }
+			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]"].includes(k) || (ctrl && ["z", "y", "s", "o"].includes(k)))) { e.preventDefault(); return; }
 		}
 		if (pencil) {
 			if (k === "escape") { pencil.pts.length ? clearPencil() : setTool("select"); e.preventDefault(); return; }
 			if (k === "enter") { pencilFinish(); e.preventDefault(); return; }
 			if (k === "backspace" || (ctrl && k === "z" && pencil.pts.length)) { pencilBack(); e.preventDefault(); return; }
 			if (k === "q" || k === "p" || k === "tab" || k === "5") { setTool("select"); if (k === "p") { e.preventDefault(); return; } }
-			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(k) || (ctrl && ["z", "y", "s"].includes(k)))) { e.preventDefault(); return; }
+			else if (!(k === " " || ["+", "=", "-", "_", "home", "[", "]", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(k) || (ctrl && ["z", "y", "s", "o"].includes(k)))) { e.preventDefault(); return; }
 			if (ctrl && k === "s" && pencil && pencil.pts.length) { status("Finish or clear the current pencil outline before saving."); e.preventDefault(); return; }
 		}
 		if (knife) {
@@ -1958,6 +1998,8 @@
 		if (ctrl && k === "z") { e.shiftKey ? redo() : undo(); e.preventDefault(); return; }
 		if (ctrl && k === "y") { redo(); e.preventDefault(); return; }
 		if (ctrl && k === "s") { saveProject(); e.preventDefault(); return; }
+		if (ctrl && k === "o") { $(e.shiftKey ? "f_tileset" : "f_project").click(); e.preventDefault(); return; }
+		if (ctrl && e.shiftKey && k === "e") { exportMaps("bundle"); e.preventDefault(); return; }
 		if (ctrl && k === "c") { copySelection(); e.preventDefault(); return; }
 		if (ctrl && k === "v") { paste(); e.preventDefault(); return; }
 		if (ctrl && k === "i") { invertSelection(); e.preventDefault(); return; }
@@ -2269,12 +2311,12 @@
 		$("f_tileset").onchange = (e) => e.target.files[0] && openTilesetFile(e.target.files[0]);
 		$("f_project").onchange = async (e) => e.target.files[0] && openProject(await readFile(e.target.files[0], true));
 		$("f_ref").onchange = async (e) => {
-			for (const f of e.target.files) { try { await addReference(await readFile(f, true)); } catch (err) { alert(err.message); } }
+			for (const f of e.target.files) { try { await addReference(await readFile(f, true)); } catch (err) { toast(err.message, "bad"); } }
 			e.target.value = "";
 		};
 		$("b_addref").onclick = (e) => { e.stopPropagation(); $("refmenu").classList.toggle("open"); };
 		document.addEventListener("click", () => $("refmenu").classList.remove("open"));
-		$("ref_sample").onclick = () => addReference(JSON.stringify(TS.samples.basic)).catch((err) => alert(err.message));
+		$("ref_sample").onclick = () => addReference(JSON.stringify(TS.samples.basic)).catch((err) => toast(err.message, "bad"));
 		$("ref_file").onclick = () => $("f_ref").click();
 		refPanel();
 		$("b_tileset").onclick = () => $("f_tileset").click();
@@ -2451,7 +2493,7 @@
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		redraw: drawNow, // for scripted captures
-		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode,
+		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode, toast, guardUnsaved,
 	};
 
 	window.addEventListener("DOMContentLoaded", boot);

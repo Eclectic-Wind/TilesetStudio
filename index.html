@@ -14,8 +14,8 @@
 	<div class="menuwrap" data-click>
 		<button class="ghost">File ▾</button>
 		<div class="menu">
-			<button id="b_tileset" title="Open the tileset art, a PNG (or drop it on the window)">Open tileset…</button>
-			<button id="b_project" title="Open a .studio.json project">Open project…</button>
+			<button id="b_tileset" title="Open the tileset art, a PNG (or drop it on the window)">Open tileset… <kbd>Ctrl+Shift+O</kbd></button>
+			<button id="b_project" title="Open a .studio.json project">Open project… <kbd>Ctrl+O</kbd></button>
 			<hr>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
 			<hr>
@@ -39,7 +39,7 @@
 			<button class="cta">Export ▾</button>
 			<div class="menu">
 				<label class="exportname" title="What the exported files are called (saved with the project). Letters, digits, - and _; empty = the tileset's name. In Godot the bundle unpacks to name.png, name_height.png ... and name_tileset.tres.">Name <input id="exportname" spellcheck="false" autocomplete="off"></label>
-				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★</button>
+				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★ <kbd>Ctrl+Shift+E</kbd></button>
 				<hr>
 				<button data-export="all">Separate files (png, height, normal, pbr, footprints)</button>
 				<button data-export="png" title="The tileset art itself, as a plain PNG">Raw PNG (art)</button>
@@ -226,6 +226,12 @@
 	</section>
 </main>
 <footer><span id="status"></span></footer>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="ask" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="ask_title"><div class="card askcard">
+	<h2 id="ask_title"></h2>
+	<p id="ask_text"></p>
+	<div class="sourcebar"><button id="ask_save" class="primary">Save first</button><button id="ask_discard">Discard changes</button><span class="grow"></span><button id="ask_cancel">Cancel</button></div>
+</div></div>
 <input type="file" id="f_tileset" accept="image/png" hidden>
 <input type="file" id="f_ref" accept=".json,application/json" multiple hidden>
 <input type="file" id="f_project" accept=".json,application/json" hidden>
@@ -277,6 +283,7 @@
 			<tr><td>B</td><td>Box select tool: drag a rectangle (3D too) to select every model it touches; Shift adds, Alt-drag orbits. The properties panel then edits all selected models</td><td>L</td><td>Learn: visual lessons on Z placement, lighting, collision, kinds</td></tr>
 			<tr><td>wheel, + / −</td><td>zoom in whole-pixel steps</td><td>. (or F outside edit mode) / Home</td><td>frame selection / fit the tileset</td></tr><tr><td>arrows</td><td>pan a tile</td><td>Q</td><td>select tool (drag a selected piece to move it, drag empty space to box-select)</td></tr>
 			<tr><td>Ctrl+Z / Ctrl+Shift+Z</td><td>undo / redo</td><td>Ctrl+S</td><td>save project (unsaved work is autosaved and offered back on the next start)</td></tr>
+			<tr><td>Ctrl+O / Ctrl+Shift+O</td><td>open a project / a tileset PNG</td><td>Ctrl+Shift+E</td><td>export the Godot bundle</td></tr>
 			<tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste models in place (also between projects)</td><td>Ctrl+I</td><td>invert selection</td></tr>
 			<tr><td>Ctrl+M, X / Y / Z</td><td>mirror the selection on that axis</td><td>H / Shift+H / Alt+H</td><td>hide selected / hide others / show all (hidden still exports)</td></tr>
 			<tr><td>Ctrl+arrows, PageUp/Down</td><td>nudge one snap step (Shift: half)</td><td>[ / ]</td><td>snap step down / up</td></tr>
