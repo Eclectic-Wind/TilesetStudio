@@ -19,10 +19,11 @@
 	const FS = `#version 300 es
 	precision highp float;
 	in vec3 v_nrm; in vec4 v_col; in vec2 v_uv; in vec3 v_pos;
-	uniform sampler2D u_tex; uniform int u_mode; uniform float u_opacity; uniform int u_hasArt; uniform vec3 u_light; uniform int u_cut;
+	uniform sampler2D u_tex; uniform int u_mode; uniform float u_opacity; uniform int u_hasArt; uniform vec3 u_light; uniform int u_cut; uniform int u_below;
 	out vec4 o;
 	void main() {
-		if (u_mode == 0) { o = v_col; return; }                       // lines, points, flat colour
+		bool under = u_below == 1 && v_pos.z < -0.001;                  // "below the floor" highlight (view option)
+		if (u_mode == 0) { o = under ? vec4(mix(v_col.rgb, vec3(1.0, 0.15, 0.15), 0.7), max(v_col.a, 0.9)) : v_col; return; }
 		vec3 n = normalize(v_nrm);
 		float lit = 0.45 + 0.55 * max(dot(n, normalize(u_light)), 0.0);
 		vec4 art = u_hasArt == 1 ? texture(u_tex, v_uv) : vec4(0.0);
@@ -31,6 +32,7 @@
 		vec3 base = (u_mode == 2 && art.a > 0.05 && inside) ? art.rgb : vec3(0.62, 0.66, 0.72);
 		vec3 c = base * lit;
 		c = mix(c, v_col.rgb, v_col.a);                                  // selection tint
+		if (under) c = mix(c, vec3(1.0, 0.15, 0.15), 0.65);
 		o = vec4(c, u_opacity);
 	}`;
 	// Art backdrop: a quad over the canvas in screen space, under everything.
@@ -326,6 +328,7 @@
 			gl.uniform1i(gl.getUniformLocation(this.prog, "u_tex"), 0);
 			gl.uniform1i(gl.getUniformLocation(this.prog, "u_hasArt"), this.art.has ? 1 : 0);
 			gl.uniform3f(gl.getUniformLocation(this.prog, "u_light"), -0.4, 0.8, 0.9);
+			gl.uniform1i(gl.getUniformLocation(this.prog, "u_below"), opts.belowZ ? 1 : 0);
 			gl.enable(gl.DEPTH_TEST);
 			gl.depthFunc(gl.LEQUAL);
 			gl.enable(gl.BLEND);

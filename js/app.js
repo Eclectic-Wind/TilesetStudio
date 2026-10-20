@@ -8,7 +8,7 @@
 		name: "tileset", art: null, artURL: null,
 		objects: [], active: null, selected: new Set(),
 		edit: false, elemMode: "face", elemSel: new Set(),
-		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, grid: true,
+		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, belowZ: false, grid: true,
 		settings: { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 },
 		autoProcess: true, result: null,
 		bundleId: newUUID(),
@@ -290,7 +290,7 @@
 	}
 
 	// View preferences remembered per browser (snap, display, output view and light).
-	const PREF_IDS = ["snap", "shade", "opacity", "xray", "grid", "auto", "lightz", "lightr", "shadows"];
+	const PREF_IDS = ["snap", "shade", "opacity", "xray", "belowz", "grid", "auto", "lightz", "lightr", "shadows"];
 	function savePrefs() {
 		const p = { outMode: output ? output.mode : "lit", snapV: 2 };
 		for (const id of PREF_IDS) { const el = $(id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
@@ -2161,7 +2161,7 @@
 
 	function frame() {
 		if (anim) anim();
-		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
+		if (dirty && renderer) { dirty = false; if (knife || $("modalbar").classList.contains("open")) modalBar(); renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); }
 		requestAnimationFrame(frame);
 	}
 
@@ -2246,6 +2246,7 @@
 		$("shade").onchange = () => { S.shade = $("shade").value; dirty = true; };
 		$("opacity").oninput = () => { S.opacity = parseFloat($("opacity").value); dirty = true; };
 		$("xray").onchange = () => { S.xray = $("xray").checked; dirty = true; };
+		$("belowz").onchange = () => { S.belowZ = $("belowz").checked; dirty = true; };
 		$("grid").onchange = () => { S.grid = $("grid").checked; dirty = true; };
 		$("outfilter").oninput = () => panels();
 		$("outfilter").onkeydown = (e) => { if (e.key === "Escape") { $("outfilter").value = ""; panels(); $("view").focus(); } e.stopPropagation(); };
@@ -2373,7 +2374,7 @@
 		// navigated page's form (that fires no events, so X-ray could show ticked while it was off).
 		const syncControls = () => {
 			{ const sv = parseFloat($("snap").value); S.snap = isNaN(sv) ? 1 : sv; } S.shade = $("shade").value; S.opacity = parseFloat($("opacity").value);
-			S.xray = $("xray").checked; S.grid = $("grid").checked; S.autoProcess = $("auto").checked;
+			S.xray = $("xray").checked; S.belowZ = $("belowz").checked; S.grid = $("grid").checked; S.autoProcess = $("auto").checked;
 			output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z;
 			output.light.radius = parseFloat($("lightr").value); output.shadows = $("shadows").checked;
 			dirty = true;
@@ -2410,7 +2411,7 @@
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		// Draw now (a hidden tab gets no animation frames): for scripted captures.
-		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
+		redraw: () => { dirty = false; renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) }); drawAxes(); drawPencil(); if (exchange) exchange.drawPreview(); },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs,
 	};
 
