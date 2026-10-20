@@ -16,6 +16,8 @@
 	const rad = (d) => (d * Math.PI) / 180;
 	const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
+	// Canvas text uses the page's own font stack (style.css) so the animations match the interface.
+	const FONT = getComputedStyle(document.documentElement).fontFamily || "system-ui, sans-serif";
 	const SPEED = 0.75; // playback speed: slower than the timelines are written, so there is time to read
 	const dpr = () => Math.min(2, window.devicePixelRatio || 1);
 	const B = () => TS.samples && TS.samples.basic;
@@ -170,7 +172,7 @@
 	}
 	function pill(g, x, y, text, col, a = 1, size = 14) {
 		if (a <= 0.01) return;
-		g.save(); g.globalAlpha = a; g.font = `bold ${size}px system-ui, sans-serif`;
+		g.save(); g.globalAlpha = a; g.font = `bold ${size}px ${FONT}`;
 		const w = g.measureText(text).width + 18, h = size + 10;
 		g.fillStyle = "rgba(12,13,18,0.88)"; g.strokeStyle = col; g.lineWidth = 2;
 		g.beginPath(); g.roundRect(x - w / 2, y - h / 2, w, h, h / 2); g.fill(); g.stroke();
@@ -185,7 +187,7 @@
 		g.restore();
 	}
 	function text(g, s, x, y, col = C.ink, size = 14, align = "center", a = 1) {
-		g.save(); g.globalAlpha = a; g.fillStyle = col; g.font = `bold ${size}px system-ui, sans-serif`; g.textAlign = align; g.textBaseline = "middle"; g.fillText(s, x, y); g.restore();
+		g.save(); g.globalAlpha = a; g.fillStyle = col; g.font = `bold ${size}px ${FONT}`; g.textAlign = align; g.textBaseline = "middle"; g.fillText(s, x, y); g.restore();
 	}
 	function bg(g) {
 		const k = g.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, W * 0.62); k.addColorStop(0, "#1d2029"); k.addColorStop(1, "#0d0e13");
