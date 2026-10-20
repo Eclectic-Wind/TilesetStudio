@@ -8,18 +8,18 @@
 
 	const VS = `#version 300 es
 	in vec3 a_pos; in vec3 a_nrm; in vec4 a_col;
-	uniform mat4 u_vp; uniform vec2 u_art; uniform float u_point;
+	uniform mat4 u_vp; uniform vec2 u_art; uniform float u_point; uniform vec2 u_uvoff;
 	out vec3 v_nrm; out vec4 v_col; out vec2 v_uv; out vec3 v_pos;
 	void main() {
 		gl_Position = u_vp * vec4(a_pos, 1.0);
 		gl_PointSize = u_point;
 		v_nrm = a_nrm; v_col = a_col; v_pos = a_pos;
-		v_uv = vec2(a_pos.x, a_pos.y - a_pos.z) / u_art;
+		v_uv = (vec2(a_pos.x, a_pos.y - a_pos.z) - u_uvoff) / u_art;
 	}`;
 	const FS = `#version 300 es
 	precision highp float;
 	in vec3 v_nrm; in vec4 v_col; in vec2 v_uv; in vec3 v_pos;
-	uniform sampler2D u_tex; uniform int u_mode; uniform float u_opacity; uniform int u_hasArt; uniform vec3 u_light;
+	uniform sampler2D u_tex; uniform int u_mode; uniform float u_opacity; uniform int u_hasArt; uniform vec3 u_light; uniform int u_cut;
 	out vec4 o;
 	void main() {
 		if (u_mode == 0) { o = v_col; return; }                       // lines, points, flat colour
@@ -27,6 +27,7 @@
 		float lit = 0.45 + 0.55 * max(dot(n, normalize(u_light)), 0.0);
 		vec4 art = u_hasArt == 1 ? texture(u_tex, v_uv) : vec4(0.0);
 		bool inside = v_uv.x >= 0.0 && v_uv.y >= 0.0 && v_uv.x <= 1.0 && v_uv.y <= 1.0;
+			if (u_cut == 1 && !(art.a > 0.05 && inside)) discard;                  // reference faces: only where its art is
 		vec3 base = (u_mode == 2 && art.a > 0.05 && inside) ? art.rgb : vec3(0.62, 0.66, 0.72);
 		vec3 c = base * lit;
 		c = mix(c, v_col.rgb, v_col.a);                                  // selection tint
@@ -44,6 +45,14 @@
 		o = vec4(mix(vec3(chk), c.rgb * u_dim, c.a), 1.0);
 	}`;
 
+	// Reference art: a translucent copy of another tileset laid over the canvas at an offset (a ghost to trace or compare with).
+	const RVS = `#version 300 es
+	in vec2 a_pos; uniform mat4 u_vp; uniform vec2 u_off; uniform vec2 u_size; out vec2 v_uv;
+	void main() { gl_Position = u_vp * vec4(a_pos, 0.0, 1.0); gl_Position.z = 0.998 * gl_Position.w; v_uv = (a_pos - u_off) / u_size; }`;
+	const RFS = `#version 300 es
+	precision highp float; in vec2 v_uv; uniform sampler2D u_tex; uniform float u_alpha; out vec4 o;
+	void main() { vec4 c = texture(u_tex, v_uv); o = vec4(c.rgb, c.a * u_alpha); }`;
+
 	class Renderer {
 		constructor(canvas) {
 			this.canvas = canvas;
@@ -51,6 +60,8 @@
 			if (!gl) throw new Error("WebGL2 is not available in this browser.");
 			this.prog = this._program(VS, FS);
 			this.back = this._program(BVS, BFS);
+			this.ref = this._program(RVS, RFS);
+			this.refTex = new Map();
 			this.buf = gl.createBuffer();
 			this.backBuf = gl.createBuffer();
 			this.tex = gl.createTexture();
@@ -86,6 +97,22 @@
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		}
+
+		// A reference's art texture (id -> texture); image null / dropRefArt removes it.
+		setRefArt(id, image) {
+			const gl = this.gl;
+			this.dropRefArt(id);
+			if (!image) return;
+			const tex = gl.createTexture();
+			gl.bindTexture(gl.TEXTURE_2D, tex);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			this.refTex.set(id, tex);
+		}
+		dropRefArt(id) { if (this.refTex.has(id)) { this.gl.deleteTexture(this.refTex.get(id)); this.refTex.delete(id); } }
 
 		fit() {
 			const r = this.canvas.getBoundingClientRect();
@@ -268,6 +295,30 @@
 				gl.uniform1f(gl.getUniformLocation(this.back, "u_dim"), 1 - this.free.blend);
 				gl.drawArrays(gl.TRIANGLES, 0, 6);
 				gl.disableVertexAttribArray(loc);
+				// Reference art over it: only in the tileset view (in 3D the art is carried by the models), fading out as 3D comes in.
+				const refs = (opts.refs || []).filter((r) => r.showArt && this.refTex.has(r.id) && r.opacity > 0);
+				if (refs.length) {
+					gl.useProgram(this.ref);
+					gl.enable(gl.BLEND);
+					gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+					const rl = gl.getAttribLocation(this.ref, "a_pos");
+					gl.enableVertexAttribArray(rl);
+					gl.uniformMatrix4fv(gl.getUniformLocation(this.ref, "u_vp"), false, vp);
+					gl.uniform1i(gl.getUniformLocation(this.ref, "u_tex"), 0);
+					for (const r of refs) {
+						const x0 = r.dx, y0 = r.dy, x1 = r.dx + r.w, y1 = r.dy + r.h;
+						gl.bindTexture(gl.TEXTURE_2D, this.refTex.get(r.id));
+						gl.bindBuffer(gl.ARRAY_BUFFER, this.backBuf);
+						gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1]), gl.DYNAMIC_DRAW);
+						gl.vertexAttribPointer(rl, 2, gl.FLOAT, false, 8, 0);
+						gl.uniform2f(gl.getUniformLocation(this.ref, "u_off"), x0, y0);
+						gl.uniform2f(gl.getUniformLocation(this.ref, "u_size"), r.w, r.h);
+						gl.uniform1f(gl.getUniformLocation(this.ref, "u_alpha"), r.opacity * (1 - this.free.blend));
+						gl.drawArrays(gl.TRIANGLES, 0, 6);
+					}
+					gl.disableVertexAttribArray(rl);
+					gl.bindTexture(gl.TEXTURE_2D, this.tex);
+				}
 			}
 			gl.useProgram(this.prog);
 			gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, "u_vp"), false, vp);
@@ -296,9 +347,28 @@
 				this._stream(geometry.tris, gl.TRIANGLES);
 				gl.colorMask(true, true, true, true);
 			}
+			// Reference models in 3D: their faces carry the reference's own art (the flat backdrop is hidden there), fading in with 3D.
+			if (free && geometry.ghosts) {
+				const loc = (n) => gl.getUniformLocation(this.prog, n);
+				gl.depthMask(false);
+				gl.uniform1i(loc("u_cut"), 1); gl.uniform1i(loc("u_hasArt"), 1);
+				for (const g of geometry.ghosts) {
+					if (!this.refTex.has(g.id) || !g.tris.length || g.opacity <= 0.001) continue;
+					gl.bindTexture(gl.TEXTURE_2D, this.refTex.get(g.id));
+					gl.uniform2f(loc("u_art"), g.w, g.h); gl.uniform2f(loc("u_uvoff"), g.dx, g.dy);
+					gl.uniform1i(loc("u_mode"), g.art ? 2 : 1);
+					gl.uniform1f(loc("u_opacity"), g.opacity * this.free.blend);
+					this._stream(g.tris, gl.TRIANGLES);
+				}
+				gl.bindTexture(gl.TEXTURE_2D, this.tex);
+				gl.uniform1i(loc("u_cut"), 0); gl.uniform1i(loc("u_hasArt"), this.art.has ? 1 : 0);
+				gl.uniform2f(loc("u_art"), this.art.w, this.art.h); gl.uniform2f(loc("u_uvoff"), 0, 0);
+			}
 			gl.disable(gl.POLYGON_OFFSET_FILL);
 			gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), 0);
 			gl.depthMask(false);
+			// Reference models: faint faces, then their wires (flat colour with alpha).
+			if (geometry.ghostLines && geometry.ghostLines.length) this._stream(geometry.ghostLines, gl.LINES);
 			if (geometry.grid && geometry.grid.length) { gl.disable(gl.DEPTH_TEST); this._stream(geometry.grid, gl.LINES); gl.enable(gl.DEPTH_TEST); }
 			gl.depthFunc(opts.xray ? gl.ALWAYS : gl.LEQUAL);
 			if (geometry.lines.length) this._stream(geometry.lines, gl.LINES);

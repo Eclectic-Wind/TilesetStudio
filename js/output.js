@@ -37,7 +37,18 @@
 			this.render();
 		}
 
-		floorPlan() { return this.mode === "heightfield" || this.mode === "collision"; }
+		floorPlan() { return this.mode === "heightfield" || this.mode === "collision" || this.mode === "pieces" || this.mode === "kind"; }
+
+		// Kind view tints and collision-view outlines, as [r, g, b].
+		static KIND_COLOURS = { floor: [90, 200, 110], deco: [90, 150, 235], solid: [235, 150, 60], wall: [210, 90, 210], side: [70, 210, 220] };
+		static MODE_COLOURS = { none: "#5dff8a", strip: "#ffa030", footprint: "#ff4d4d" };
+
+		// A distinct colour per piece (golden-angle hues), as [r, g, b].
+		static pieceColour(id) {
+			const h = ((id * 137.508) % 360) / 60, c = 0.75, x = c * (1 - Math.abs((h % 2) - 1)), m = 0.2;
+			const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h) % 6];
+			return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+		}
 		rows() { return this.floorPlan() ? this.result.floor.shown : this.result.h; }
 
 		// The collision under the player's feet box at this.feet (floor px; the box is FEET wide, FEET.h tall above the feet):
@@ -101,6 +112,8 @@
 				const rows = this.rows(), img = new ImageData(r.w, rows);
 				if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
+				else if (this.mode === "pieces") this._pieces(img);
+				else if (this.mode === "kind") this._kinds(img);
 				else this._pixels(img);
 				this.off = document.createElement("canvas");
 				this.off.width = r.w; this.off.height = rows;
@@ -137,6 +150,7 @@
 				ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.stroke();
 				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(fx, hy, 5, 0, Math.PI * 2); ctx.fill();
 			}
+			if (this.mode === "pieces" && r.pieceMap) this._pieceOverlay(ctx, r.pieceMap, s);
 			if (this.mode === "collision") {
 				// The exported polygons, then the feet box under the pointer (green: the feet can stand here, red: blocked).
 				ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 1;
@@ -146,6 +160,17 @@
 						poly.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](this.ox + p[0] * s + 0.5, this.oy + p[1] * s + 0.5));
 						ctx.closePath(); ctx.stroke();
 					}
+				// Each model's footprint outlined by its resolved collision mode: green dashed = none (walkable), orange = strip, red = footprint.
+				ctx.lineWidth = 1.5;
+				for (const role of r.roles || []) {
+					if (role.hull.length < 3) continue;
+					ctx.strokeStyle = Output.MODE_COLOURS[role.mode];
+					ctx.setLineDash(role.mode === "none" ? [4, 3] : []);
+					ctx.beginPath();
+					role.hull.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](this.ox + p[0] * s + 0.5, this.oy + p[1] * s + 0.5));
+					ctx.closePath(); ctx.stroke();
+				}
+				ctx.setLineDash([]); ctx.lineWidth = 1;
 				if (this.feet) {
 					const F = TS.Process.FEET, fx = Math.round(this.feet[0]), fy = Math.round(this.feet[1]), hit = this.feetHit();
 					ctx.strokeStyle = hit ? "#ff4d4d" : "#5dff8a"; ctx.lineWidth = 2;
@@ -172,6 +197,73 @@
 					else if (m & 1) col = [120, 40, 44];
 					d.set([col[0], col[1], col[2], 255], o);
 				}
+		}
+
+		// Pieces: the art tinted by the piece that paints it (as the importer groups models: footprints within 2 px = one piece);
+		// art no model covers stays grey, floor with no art above it is a dim tint of its piece.
+		_pieces(img) {
+			const r = this.result, pm = r.pieceMap, d = img.data, cut = this.settings.alphaCut, art = r.art.data;
+			const cols = pm.pieces.map((p) => Output.pieceColour(p.id));
+			for (let y = 0; y < r.floor.shown; y++)
+				for (let x = 0; x < r.w; x++) {
+					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut;
+					const ap = inArt ? pm.artPiece[k] : -1, fp = pm.floorPiece[k];
+					let col = [y < r.h ? 26 : 16, y < r.h ? 26 : 16, y < r.h ? 30 : 20];
+					if (inArt) {
+						const g = (art[o] * 0.3 + art[o + 1] * 0.59 + art[o + 2] * 0.11) * 0.55 + 40;
+						if (ap >= 0) { const c = cols[ap]; col = [c[0] * g / 255 * 1.1, c[1] * g / 255 * 1.1, c[2] * g / 255 * 1.1]; }
+						else col = [g * 0.5 + 60, g * 0.5 + 60, g * 0.5 + 60];
+					} else if (fp >= 0) { const c = cols[fp]; col = [c[0] * 0.3, c[1] * 0.3, c[2] * 0.3]; }
+					d.set([col[0], col[1], col[2], 255], o);
+				}
+		}
+
+		// Kind: like Pieces, but tinted by the resolved kind (floor / deco / solid / wall / side) of the model that paints each pixel;
+		// floor with no art above it is a dim tint of its model's kind.
+		_kinds(img) {
+			const r = this.result, d = img.data, cut = this.settings.alphaCut, art = r.art.data, roles = r.roles;
+			const col = (oi) => Output.KIND_COLOURS[roles[oi].kind];
+			for (let y = 0; y < r.floor.shown; y++)
+				for (let x = 0; x < r.w; x++) {
+					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut, ao = inArt ? r.owner[k] : -1, fo = r.floor.owner[k];
+					let c = [y < r.h ? 26 : 16, y < r.h ? 26 : 16, y < r.h ? 30 : 20];
+					if (inArt) {
+						const g = (art[o] * 0.3 + art[o + 1] * 0.59 + art[o + 2] * 0.11) * 0.55 + 40;
+						if (ao >= 0) { const t = col(ao); c = [t[0] * g / 255 * 1.1, t[1] * g / 255 * 1.1, t[2] * g / 255 * 1.1]; }
+						else c = [g * 0.5 + 60, g * 0.5 + 60, g * 0.5 + 60];
+					} else if (fo >= 0 && r.floor.top[k] >= 0) { const t = col(fo); c = [t[0] * 0.3, t[1] * 0.3, t[2] * 0.3]; }
+					d.set([c[0], c[1], c[2], 255], o);
+				}
+		}
+
+		// Per tile cell: border in the colour of the piece the engine reads that cell as; red fill = conflict (another piece paints
+		// there), yellow dashes = floating (art with no anchored cell below); a diamond marks a piece's anchor cell.
+		_pieceOverlay(ctx, pm, s) {
+			const T = pm.T * s;
+			ctx.save();
+			ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = 1;
+			for (let cy = 0; cy <= pm.gh; cy++) { ctx.beginPath(); ctx.moveTo(this.ox, this.oy + cy * T + 0.5); ctx.lineTo(this.ox + pm.gw * T, this.oy + cy * T + 0.5); ctx.stroke(); }
+			for (let cx = 0; cx <= pm.gw; cx++) { ctx.beginPath(); ctx.moveTo(this.ox + cx * T + 0.5, this.oy); ctx.lineTo(this.ox + cx * T + 0.5, this.oy + pm.gh * T); ctx.stroke(); }
+			const rgb = (id, a) => { const c = Output.pieceColour(id); return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; };
+			for (const c of pm.cells) {
+				const x = this.ox + c.cx * T, y = this.oy + c.cy * T;
+				if (c.status === 2) {
+					ctx.fillStyle = "rgba(255,40,40,0.30)"; ctx.fillRect(x, y, T, T);
+					ctx.fillStyle = "rgba(255,40,40,0.55)";
+					for (let k = -T; k < T; k += 8) { ctx.beginPath(); ctx.moveTo(x + k, y + T); ctx.lineTo(x + k + 3, y + T); ctx.lineTo(x + k + T + 3, y); ctx.lineTo(x + k + T, y); ctx.fill(); }
+				}
+				if (c.engine.length) {
+					ctx.strokeStyle = c.status === 2 ? "#ff4040" : rgb(c.engine[0], 0.95); ctx.lineWidth = c.status === 2 ? 3 : 2;
+					ctx.strokeRect(x + 1.5, y + 1.5, T - 3, T - 3);
+				}
+				if (c.status === 1) { ctx.strokeStyle = "#ffd24d"; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.strokeRect(x + 1.5, y + 1.5, T - 3, T - 3); ctx.setLineDash([]); }
+				c.anchored.forEach((id, k) => {
+					const mx = x + T / 2 + (k - (c.anchored.length - 1) / 2) * 12, my = y + T - 8;
+					ctx.fillStyle = rgb(id, 1); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+					ctx.beginPath(); ctx.moveTo(mx, my - 6); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 6); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill(); ctx.stroke();
+				});
+			}
+			ctx.restore();
 		}
 
 		_pixels(img) {

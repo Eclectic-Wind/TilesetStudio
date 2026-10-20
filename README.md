@@ -5,6 +5,10 @@ over the drawing, in the tileset's own projection, and the studio renders height
 
 **Upload tileset → model over the art → Process → check → Export.**
 
+## The interface
+
+The top bar holds **File** (open tileset / project, save), **Add**, and on the right **Process** and **Export**, then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
+
 ## The view
 
 The model view shows the tileset exactly as drawn, with the tile grid (32 px). The three axes have names and colours
@@ -125,7 +129,7 @@ drawn silhouette, then turn the facing to where the surface was meant to face. T
 ## Processing and the output view
 
 **Process** (automatic after every change unless "auto" is off) renders each canvas pixel's surface: the highest point of any
-model along that pixel's line of sight. The output view tests the result before you export:
+model along that pixel's line of sight. The output view tests the result before you export. Its tabs are **Lit**, **Maps ▾** (Height / Normals / Rough / Metal), **Holes** and **Plan ▾** (Floor / Collision / Pieces); a ▾ tab opens a short list and shows the view you picked:
 
 - **Lit**: the art lit by a light you drag around (Shift+wheel or slider = its height, "reach" = its radius), shaded with the
   normals, roughness and metallic, with shadows traced through the floor heightfield the same way the engine does.
@@ -143,6 +147,13 @@ pans, and ⛶ fits it again.
   yellow = its exported collision polygons, orange = strip models' strips (as the importer will build them), grey = open
   (under or over the body). A **24x12 feet box** follows the pointer: green where the feet can stand, red where they can't, and
   the readout names what blocks it.
+
+- **Pieces**: how the engine will group the art into "tiles". Models whose footprints come within 2 px are one **piece**; the
+  view tints the art by piece (one colour each, legend under the view) and draws the 32 px cells. A cell's **border** is the piece
+  the engine reads that cell as; a **diamond** marks a piece's anchor cell (its lowest row in that tile column). **Red hatched** =
+  conflict: another piece's art or floor sits in a cell the engine reads as a different piece. **Yellow dashed** = floating: art
+  with no anchored cell below it in its column, so the engine treats it as flat art. Hover a cell for who paints it, what the
+  engine reads, and why. The legend line counts conflicts, so "No conflicts" is the goal.
 
 The stats line gives covered / hole / filled pixel counts. Aim for no magenta: **next hole ›** centres both views on the next
 uncovered spot (switching to Holes). Hover the output to read the pixel under the pointer (height, normal, roughness, metallic,
@@ -167,7 +178,7 @@ light) and the folded panels are remembered per browser.
 
 **Godot bundle** (Export ▾ → Godot bundle, one file): `<name>.export.json` holds everything: the art, the three maps (PNG
 data) and the footprints / collision:
-`{"format": "tileset-studio-export", "version": 1, "name", "tile", "canvas", "images": {"atlas", "height", "normal", "pbr"}, "footprints": {...}}`.
+(Schema of version 3: docs/export-schema.md.) `{"format": "tileset-studio-export", "version": 1, "name", "tile", "canvas", "images": {"atlas", "height", "normal", "pbr"}, "footprints": {...}}`.
 Copy it anywhere under the Godot project. With the **Studio Import** plugin on (`addons/studio_import`, enabled in this
 project) the editor unpacks it beside itself, `<name>.png`, `<name>_height.png`, `<name>_normal.png`, `<name>_pbr.png` and
 `<name>_footprints.json`, imports them and builds `<name>_tileset.tres` (Output panel: `[StudioImport] ...`). Export again
@@ -211,3 +222,12 @@ Plain ES2020 in classic scripts (so it runs from `file://`), WebGL2, no librarie
 - `js/app.js`: state, undo, tools, input, panels, files (`window.TS.api` for scripting and tests)
 
 `serve.ps1` is a small static server for opening project art by URL.
+
+
+## Learn, box select, multi-edit
+
+- **Learn** (top bar, or L): seven short animated lessons in a centred window over a dimmed Studio. Each is a self-playing loop that draws the real BasicSample scene in isometric 3D (its own boxes, textured with its own art): the big idea, height decides where it stands, light and shadows, walk over or blocked, kinds, one tile one thing, and a first-five-minutes checklist. Nothing to adjust: watch, read the caption, Next (arrows go back / next, Space pauses, Esc closes). "See it in the Studio" buttons close the window and switch the real output view.
+- **Box tool** (B, or the ▭ button): drag a rectangle to select every model it touches, in the tileset view and in 3D (Shift adds; Alt-drag or middle-drag orbits). Ctrl-drag still box-selects in 3D. Outliner: Shift+click selects a range, Ctrl+click toggles.
+- With several models selected the Properties panel edits all of them: collision, kind, tags, smoothing, material (a differing field shows "mixed"). Name and placement stay per model.
+- **References** (left panel, ＋ Add reference…): lay another tileset over yours as a translucent ghost: its picture and its models. Accepts a `.studio.json` (exact models) or a Godot `.export.json` (models show as footprint prisms). Dropping a bundle onto the window does the same. Move it with the ✥ Move button and drag in the view; it only slides across the floor (X, Y) and its height is locked. References are saved in the project. `samples/BasicSample.*` is the scene the Learn lessons use.
+- **Snapping** (top bar): defaults to 1 px (one texel). 2 to 32 snap to coarser steps; **off** moves, scales and places freely (rotation is free too, and a typed number is always exact). `[` / `]` step through the list. The choice is saved with the project.
