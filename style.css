@@ -331,3 +331,5 @@ section.output[data-mode]:not([data-mode="lit"]) .lightbar { display: none; }
 .learn .track:hover #tl_thumb, .learn .track:focus-visible #tl_thumb { transform: scale(1.2); }
 .learn .track:focus-visible { outline: 2px solid #4aa8d8; outline-offset: 1px; border-radius: 4px; }
 .learn #tl_time { min-width: 76px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.learn .kindnote { margin: 8px 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
+.learn .kindnote b { color: var(--text); }
