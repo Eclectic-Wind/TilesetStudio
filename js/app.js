@@ -12,6 +12,7 @@
 		settings: defaultSettings(),
 		autoProcess: true, result: null,
 		bundleId: newUUID(),
+		anim: TS.Rig.newAnim(), // bones, clips and the Aseprite sheet (see rig.js)
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
 	function defaultSettings() { return { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 }; }
@@ -36,11 +37,11 @@
 	const selectedObjs = () => S.objects.filter((o) => S.selected.has(o.id));
 
 	function snapshot() {
-		return JSON.stringify({ objects: S.objects, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel] });
+		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel] });
 	}
 	function restore(json) {
 		const s = JSON.parse(json);
-		S.objects = s.objects; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit; S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
+		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit; S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
 		hover = null; loopHover = null; cycle = null;
 		changed();
@@ -59,6 +60,7 @@
 	function changed() {
 		dirty = true;
 		panels();
+		if (TS.AnimUI) TS.AnimUI.changed();
 		if (S.autoProcess && S.art) { clearTimeout(processTimer); processTimer = setTimeout(processNow, 250); }
 	}
 	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
@@ -228,7 +230,7 @@
 
 	function projectJSON() {
 		return JSON.stringify({ format: "tileset-studio", version: 1, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
-			settings: S.settings, objects: S.objects, references: S.refs }, null, 1);
+			settings: S.settings, objects: S.objects, anim: S.anim, references: S.refs }, null, 1);
 	}
 
 	async function openProject(text) {
@@ -250,6 +252,7 @@
 		S.objects = p.objects || [];
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
 		S.result = null;
+		S.anim = Object.assign(TS.Rig.newAnim(), p.anim || {}); TS.Rig.bumpIds(S.anim);
 		Mesh.bumpIds(S.objects);
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
@@ -899,6 +902,8 @@
 
 	// Hidden models (H) aren't drawn or picked, but still process and export.
 	const visibleObjs = () => S.objects.filter((o) => !o.hidden);
+	// What the model view draws: at the current animation frame while animating (and not editing), else the rest pose.
+	const shownObjs = () => (TS.AnimUI && !S.edit && !modal ? TS.AnimUI.posed(visibleObjs()) : visibleObjs());
 	function pickObject(px, py) { return renderer.pick(visibleObjs(), px, py); }
 
 	function nearestEdge(obj, px, py, maxPx) {
@@ -1359,7 +1364,7 @@
 		const tris = [], lines = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
 		const sel = [1.0, 0.55, 0.15];
 		const hv = hover && hover.obj.id === S.active && S.edit && hover.mode === S.elemMode ? hover : null;
-		for (const obj of visibleObjs()) {
+		for (const obj of shownObjs()) {
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id), editing = S.edit && isActive;
 			const corners = Mesh.shadingNormals(obj);
 			obj.faces.forEach((f, fi) => {
@@ -2257,7 +2262,7 @@
 	function drawNow() {
 		dirty = false;
 		renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
-		drawAxes(); drawPencil(); if (exchange) exchange.drawPreview();
+		drawAxes(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {
 		if (anim) anim();
@@ -2511,6 +2516,7 @@
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		redraw: drawNow, // for scripted captures
+		snapshot, pushUndo, markUnsaved, panels, setTileset, status, get dirty_() { return dirty; }, redrawSoon: () => { dirty = true; },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode, toast, guardUnsaved,
 	};
 

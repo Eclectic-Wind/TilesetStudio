@@ -30,6 +30,7 @@
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
 		</div>
 	</div>
+	<button id="b_animate" class="ghost" title="Animation mode: rig the models with bones, pose them on a timeline, and send the frames to Aseprite as a normal-map spritesheet">Animate</button>
 	<span id="tileinfo" class="dim">no tileset</span>
 	<span class="grow"></span>
 	<div class="actions">
@@ -89,6 +90,10 @@
 				<summary>Properties</summary>
 				<div id="props"></div>
 			</details>
+			<details class="sec animonly" id="sec_anim" open>
+				<summary>Rig &amp; animation</summary>
+				<div id="an_body" class="animbody"></div>
+			</details>
 			<details class="sec" id="sec_refs">
 				<summary>References</summary>
 				<div id="refs"></div>
@@ -120,6 +125,7 @@
 			</div>
 			<div class="viewport">
 			<canvas id="view" tabindex="0"></canvas>
+			<svg id="bone_overlay" class="penciloverlay boneoverlay" aria-hidden="true"></svg>
 			<svg id="pencil_overlay" class="penciloverlay" aria-hidden="true"></svg>
 			<canvas id="stamp_overlay" class="penciloverlay" aria-hidden="true"></canvas>
 			<div id="empty" class="empty">
@@ -203,6 +209,7 @@
 			<button id="mb_cancel" title="Cancel (Esc)">✕</button>
 		</div>
 		</div>
+		<div id="timeline" class="timeline animonly"></div>
 	</section>
 	<section class="output">
 		<div id="outmodes" class="tabs">
@@ -301,6 +308,8 @@
 <script src="js/mesh.js"></script>
 <script src="js/render.js"></script>
 <script src="js/process.js"></script>
+<script src="js/rig.js"></script>
+<script src="js/aseprite.js"></script>
 <script src="js/prism.js"></script>
 <script src="js/output.js"></script>
 <script src="js/transfer.js"></script>
@@ -308,6 +317,7 @@
 <script src="js/sample_basic.js"></script>
 <script src="js/learn.js"></script>
 <script src="js/app.js"></script>
+<script src="js/anim-ui.js"></script>
 <script src="js/ui.js"></script>
 </body>
 </html>

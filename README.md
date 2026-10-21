@@ -16,6 +16,10 @@ copy it anywhere to hand it out.
 Try the sample: open `samples/ward_bedroom2.studio.json` (Open project), a 128x128 crop of the Ward's Bedroom 2 with the bed,
 wheelchair, bucket and cart modelled.
 
+## Animation (v0.9)
+
+**Animate** adds rigid bones, a timeline and clips, renders every frame's normal map into a power-of-two spritesheet, and can link live to Aseprite through a shared folder (an Aseprite extension is in `tools/aseprite/`). See [docs/animation-aseprite.md](docs/animation-aseprite.md).
+
 ## The view
 
 The model view shows the tileset exactly as drawn, with the tile grid (32 px). The three axes have names and colours
