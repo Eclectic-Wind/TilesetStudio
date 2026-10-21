@@ -238,9 +238,12 @@
 		if (p.format !== "tileset-studio") { toast("That file is not a Tileset Studio project (.studio.json).", "bad"); return; }
 		if (!(await guardUnsaved(`Opening ${p.name || "another project"}`))) return;
 		leaveDrawTools();
-		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
+		// Clear the old project first, so setTileset's redraw never sees the old models against the new art.
 		S.objects = p.objects || [];
+		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
+		S.result = null;
 		Mesh.bumpIds(S.objects);
+		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
 		Object.assign(S.settings, defaultSettings(), p.settings || {});
