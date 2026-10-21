@@ -235,7 +235,11 @@ pans, and ⛶ fits it again.
   the engine reads that cell as; a **diamond** marks a piece's anchor cell (its lowest row in that tile column). **Red hatched** =
   conflict: another piece's art or floor sits in a cell the engine reads as a different piece. **Yellow dashed** = floating: art
   with no anchored cell below it in its column, so the engine treats it as flat art. Hover a cell for who paints it, what the
-  engine reads, and why. The legend line counts conflicts, so "No conflicts" is the goal.
+  engine reads, and why. A piece made only of **floor** or **deco** models is flat art (no height, shadow or outline), so it has no
+  anchor and is never judged; set a model's Kind to solid to make it count. The legend line counts conflicts, so "No conflicts" is the goal. To define pieces yourself, type a
+  **Piece** name in the Properties panel (select several models to name them together): models with the same name are one piece
+  however far apart, and a named model never joins another by footprint, so a model with its own name is split off. Empty = automatic.
+  The name is exported as `piece` per model (see `docs/export-schema.md`).
 
 The stats line gives covered / hole / filled pixel counts. Aim for no magenta: **next hole ›** centres both views on the next
 uncovered spot (switching to Holes). Hover the output to read the pixel under the pointer (height, normal, roughness, metallic,

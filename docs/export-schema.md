@@ -39,6 +39,7 @@ Coordinates: floor-plan px (X east, Y south, Z up). Model indices below are posi
 | `collision.mode` | `"strip"｜"footprint"｜"none"` | - | resolved |
 | `collision.requested` | `"auto"｜"strip"｜"footprint"｜"none"` | `"auto"` | what the artist chose |
 | `tags` | string | `""` | free text, nothing in the Studio reads it |
+| `piece` | string | `""` | piece name set by the artist. Same non-empty name = one piece however far apart; a named model never joins another by footprint. `""`: group automatically (footprints within 2 px). The importer must honour it for the Studio's Pieces view to match |
 | `cells` | `[[x, y], ...]` | - | atlas cells it occupies |
 
 `polygons` still appears in `collision` only when `mode` is `footprint`.

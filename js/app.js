@@ -2137,6 +2137,7 @@
 				<select id="p_kind">${kindValue === undefined ? mixedOpt : ""}<option value="" ${kindValue === "" ? "selected" : ""}>default: ${role && !multi ? role.kindInferred + " (inferred)" : "inferred per model"}</option>${TS.Process.KINDS.map((k) =>
 					`<option value="${k}" ${kindValue === k ? "selected" : ""}>${k}</option>`).join("")}</select></label>
 			${role && !multi ? `<p class="dim">height ${role.heightMin}-${role.heightMax} px above the floor${role.flat ? " · flat (walkable)" : ""}</p>` : ""}
+			<label title="Define a piece yourself. Models with the same piece name are one piece however far apart they are, and a named model never joins another by footprint (give a model its own name to split it off). Empty: automatic, models whose footprints come within 2 px are one piece. The Pieces view shows the result.">Piece <input id="p_piece" list="piecenames" value="${esc(common((t) => t.piece || "") ?? "")}" placeholder="${common((t) => t.piece || "") === undefined ? "(mixed: typing replaces all)" : "automatic"}"><datalist id="piecenames">${[...new Set(S.objects.map((t) => (t.piece || "").trim()).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join("")}</datalist></label>
 			<label title="Free-form text for the importer (an escape hatch; nothing in the Studio reads it)">Tags <input id="p_tags" value="${esc(common((t) => t.tags || "") ?? "")}" ${common((t) => t.tags || "") === undefined ? 'placeholder="(mixed: typing replaces all)"' : ""}></label>
 			<label>Smooth shading up to <input id="p_smooth" type="number" min="0" max="180" step="5" value="${common((t) => t.smooth) ?? o.smooth}">°</label>
 			${multi ? "" : `<fieldset><legend>Placement (bottom centre / size, px)</legend>
@@ -2166,7 +2167,8 @@
 			changed();
 		};
 		$("p_kind").onchange = () => { const k = $("p_kind").value; if (k === "__mixed") return; pushUndo(); for (const t of targets) { if (k) t.kind = k; else delete t.kind; } changed(); };
-		$("p_tags").onchange = () => { pushUndo(); const v = $("p_tags").value.trim(); for (const t of targets) { if (v) t.tags = v; else delete t.tags; } changed(); };
+		$("p_piece").onchange = () => { pushUndo(); const v = $("p_piece").value.trim(); for (const t of targets) { if (v) t.piece = v; else delete t.piece; } changed(); };
+		$("p_tags").onchange =() => { pushUndo(); const v = $("p_tags").value.trim(); for (const t of targets) { if (v) t.tags = v; else delete t.tags; } changed(); };
 		$("p_smooth").onchange = () => { const v = num("p_smooth"); if (isNaN(v)) return panels(); pushUndo(); for (const t of targets) t.smooth = v; changed(); };
 		for (const id of multi ? [] : ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"])
 			$(id).onchange = () => {

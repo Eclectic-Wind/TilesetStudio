@@ -541,7 +541,7 @@
 	// Version 2 adds each model's `collision` ({mode, polygons}) and the rule it was made with; the version 1 fields stay, so an
 	// older importer still reads it (as strips). Pass the processed result to reuse its collision (else it is computed here).
 	//
-	// Bundle version 3 adds, per model (all additive): kind, kindInferred, heightMin, heightMax, flat, tags, cells, and
+	// Bundle version 3 adds, per model (all additive): kind, kindInferred, heightMin, heightMax, flat, tags, piece, cells, and
 	// collision.requested (collision.mode is now the RESOLVED mode); plus walkOverHeight, cellOwners and clashes at this level. The
 	// shape of version 2 (name, solid, z, footprint, roughness, metallic, collision.mode / polygons) is unchanged. The index of a
 	// model in `objects` below is what cells / cellOwners / clashes refer to.
@@ -574,6 +574,7 @@
 					kind: role.kind, kindInferred: !role.kindOverridden,
 					heightMin: role.heightMin, heightMax: role.heightMax, flat: role.flat,
 					tags: typeof o.tags === "string" ? o.tags : "",
+					piece: typeof o.piece === "string" ? o.piece.trim() : "",
 					cells: own.cells[oi],
 				};
 			}),
@@ -648,17 +649,26 @@
 			items.push({ oi, o, hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])), z0: b.min[2], z1: b.max[2] });
 		});
 		const root = items.map((_, i) => i), find = (k) => { while (root[k] !== k) k = root[k]; return k; };
+		// A model with a `piece` name is placed by you: it joins every model with the same name (however far apart) and never
+		// joins by footprint; unnamed models join each other by footprint as before.
+		const label = (it) => (typeof it.o.piece === "string" ? it.o.piece.trim() : "");
+		const firstNamed = new Map();
+		items.forEach((it, i) => { it.label = label(it); if (it.label) { if (firstNamed.has(it.label)) root[find(i)] = find(firstNamed.get(it.label)); else firstNamed.set(it.label, i); } });
 		for (let a = 0; a < items.length; a++)
-			for (let b = a + 1; b < items.length; b++) if (polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
+			for (let b = a + 1; b < items.length; b++) if (!items[a].label && !items[b].label && polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
 		const groups = new Map();
 		items.forEach((it, i) => { const k = find(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); });
 		const pieceOf = new Int32Array(objects.length).fill(-1);
 		const pieces = [...groups.values()].map((its, id) => {
-			const cols = new Map(), names = [...new Set(its.map((it) => it.o.name))];
+			const cols = new Map(), names = its[0].label ? [its[0].label] : [...new Set(its.map((it) => it.o.name))];
+			// Flat art: every model is kind floor (walked over) or deco (art only), so the piece has no height, shadow or outline to
+			// anchor. It has no anchor cells and its art / floor is never judged: it can't be misread, only drawn.
+			const flat = !!r.roles && its.every((it) => r.roles[it.oi] && (r.roles[it.oi].kind === "floor" || r.roles[it.oi].kind === "deco"));
 			let top = Infinity; // highest drawn row of the piece's art (its tops), for the column-clash check
 			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
 			for (const it of its) {
 				pieceOf[it.oi] = id;
+				if (flat) continue;
 				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
 				for (let cx = Math.floor(x0 / T); cx * T < x1; cx++) {
 					const y = maxYIn(it.hull, Math.max(x0, cx * T), Math.min(x1, cx * T + T)) - it.z0;
@@ -666,15 +676,19 @@
 					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, Math.floor((y - 0.01) / T)));
 				}
 			}
-			return { id, names, objs: its.map((it) => it.oi), cols, top: Math.floor(top / T) };
+			return { id, names, objs: its.map((it) => it.oi), cols, top: Math.floor(top / T), flat };
 		});
 		const artPiece = new Int16Array(W * H).fill(-1), floorPiece = new Int16Array(W * rows).fill(-1);
 		for (let i = 0; i < W * H; i++) if (r.alpha[i] > cut && r.owner[i] >= 0) artPiece[i] = pieceOf[r.owner[i]];
 		for (let k = 0; k < W * rows; k++) if (r.floor.top[k] >= 0 && r.floor.owner[k] >= 0) floorPiece[k] = pieceOf[r.floor.owner[k]];
 		const gw = Math.ceil(W / T), gh = Math.ceil(rows / T), grid = new Array(gw * gh);
-		const put = (x, y, p) => { const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(p); };
+		const put = (x, y, p) => { if (pieces[p].flat) return; const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(p); };
 		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (artPiece[y * W + x] >= 0) put(x, y, artPiece[y * W + x]);
-		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) if (floorPiece[y * W + x] >= 0) put(x, y, floorPiece[y * W + x]);
+		// Floor points count only for a model standing on the floor (its underside no higher than the step). A raised one (a
+		// tabletop, a rail) is drawn Y - height above its footprint, so its footprint lies a row below its art and anchor and would
+		// read as another piece's cell; its collision is judged separately, not here.
+		const grounded = (oi) => !r.roles || !r.roles[oi] || r.roles[oi].heightMin <= P.bodyRule(settings).step;
+		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) if (floorPiece[y * W + x] >= 0 && grounded(r.floor.owner[y * W + x])) put(x, y, floorPiece[y * W + x]);
 		// Per column: the anchors, sorted by row.
 		const anchors = [];
 		for (let cx = 0; cx < gw; cx++) {

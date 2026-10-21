@@ -250,7 +250,9 @@
 				if (c.status === 2) {
 					ctx.fillStyle = "rgba(255,40,40,0.30)"; ctx.fillRect(x, y, T, T);
 					ctx.fillStyle = "rgba(255,40,40,0.55)";
+					ctx.save(); ctx.beginPath(); ctx.rect(x, y, T, T); ctx.clip(); // the stripes run past the cell; keep them inside it
 					for (let k = -T; k < T; k += 8) { ctx.beginPath(); ctx.moveTo(x + k, y + T); ctx.lineTo(x + k + 3, y + T); ctx.lineTo(x + k + T + 3, y); ctx.lineTo(x + k + T, y); ctx.fill(); }
+					ctx.restore();
 				}
 				if (c.engine.length) {
 					ctx.strokeStyle = c.status === 2 ? "#ff4040" : rgb(c.engine[0], 0.95); ctx.lineWidth = c.status === 2 ? 3 : 2;
