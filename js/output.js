@@ -22,6 +22,8 @@
 			this.mode = "lit";
 			this.light = { x: 0, y: 0, z: 36, radius: 220, on: false };
 			this.shadows = true;
+			this.usePrisms = true;   // shadow test: prisms decide where to look, the floor spans decide the shadow
+			this.showPrisms = false; // V: draw the prism boxes
 			this.ambient = 0.18;
 			this.result = null;
 			this.settings = null;
@@ -33,6 +35,7 @@
 		set(result, settings) {
 			this.result = result;
 			this.settings = settings;
+			this._prisms = null;
 			if (result && !this.light.on) { this.light.x = result.w * 0.25; this.light.y = result.h * 0.9; this.light.on = true; }
 			this.render();
 		}
@@ -151,6 +154,7 @@
 				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(fx, hy, 5, 0, Math.PI * 2); ctx.fill();
 			}
 			if (this.mode === "pieces" && r.pieceMap) this._pieceOverlay(ctx, r.pieceMap, s);
+			if (this.showPrisms && (this.mode === "lit" || this.floorPlan())) this._prismOverlay(ctx, s);
 			if (this.mode === "collision") {
 				// The exported polygons, then the feet box under the pointer (green: the feet can stand here, red: blocked).
 				ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 1;
@@ -268,8 +272,35 @@
 			ctx.restore();
 		}
 
+		// The prisms (cached per result); the light's-eye table is rebuilt for the light's floor point on every render.
+		prisms() { return this.result ? this._prisms || (this._prisms = TS.Prism.build(this.result)) : []; }
+
+		// V: each prism as a coloured box (piece colour). Lit view: the footprint at its bottom and top (drawn at Y - Z) joined by
+		// its edges. Plan views: the footprint with its height range. The Floor view shows the real shape inside the boxes.
+		_prismOverlay(ctx, s) {
+			ctx.save();
+			ctx.lineWidth = 1.5;
+			const lit = this.mode === "lit", pt = (q, z) => [this.ox + q[0] * s, this.oy + (q[1] - (lit ? z : 0)) * s];
+			const path = (h, z) => { h.forEach((q, k) => { const [x, y] = pt(q, z); ctx[k ? "lineTo" : "moveTo"](x, y); }); ctx.closePath(); };
+			for (const pr of this.prisms()) {
+				const c = Output.pieceColour(pr.id), rgb = `${c[0] | 0},${c[1] | 0},${c[2] | 0}`;
+				ctx.strokeStyle = `rgb(${rgb})`; ctx.fillStyle = `rgba(${rgb},0.16)`;
+				if (lit) {
+					ctx.beginPath(); path(pr.hull, pr.z0); ctx.stroke();
+					for (const q of pr.hull) { const a = pt(q, pr.z0), b = pt(q, pr.z1); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
+					ctx.beginPath(); path(pr.hull, pr.z1); ctx.fill(); ctx.stroke();
+				} else {
+					ctx.beginPath(); path(pr.hull, 0); ctx.fill(); ctx.stroke();
+					const [x, y] = pt(pr.hull[0], 0);
+					ctx.fillStyle = `rgb(${rgb})`; ctx.font = "10px sans-serif"; ctx.fillText(`${pr.z0.toFixed(0)}-${pr.z1.toFixed(0)}`, x + 3, y - 3);
+				}
+			}
+			ctx.restore();
+		}
+
 		_pixels(img) {
 			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut;
+			this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
 			for (let y = 0; y < r.h; y++)
 				for (let x = 0; x < r.w; x++) {
 					const i = y * r.w + x, o = i * 4;
@@ -337,7 +368,9 @@
 
 		// March from the surface point toward the light over the floor heightfield: blocked where a model spans that height.
 		_shadowed(r, p, toL) {
-			const f = r.floor, W = r.w, steps = Math.ceil(Math.hypot(toL[0], toL[1]));
+			const f = r.floor, W = r.w;
+			if (this._ptab) return TS.Prism.shadowed(this._ptab, f, W, p, toL);
+			const steps = Math.ceil(Math.hypot(toL[0], toL[1]));
 			if (steps < 1) return false;
 			for (let s = 2; s <= steps; s++) {
 				const t = s / steps, x = Math.floor(p[0] + toL[0] * t), y = Math.floor(p[1] + toL[1] * t), z = p[2] + toL[2] * t;

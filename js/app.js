@@ -2013,6 +2013,11 @@
 		if (ctrl && e.shiftKey && k === "e") { exportMaps("bundle"); e.preventDefault(); return; }
 		if (ctrl && k === "c") { copySelection(); e.preventDefault(); return; }
 		if (ctrl && k === "v") { paste(); e.preventDefault(); return; }
+		if (!ctrl && !e.altKey && k === "v") {
+			output.showPrisms = !output.showPrisms; output.draw();
+			status(output.showPrisms ? "Prisms shown (V): the coarse boxes the shadow test looks inside. Floor view shows the real shape." : "Prisms hidden.");
+			e.preventDefault(); return;
+		}
 		if (ctrl && k === "i") { invertSelection(); e.preventDefault(); return; }
 		if (ctrl && k === "m") { if (S.edit || !S.selected.size) mirrorSelection("x"); else { mirrorPending = true; status("Mirror: press X (across), Y (depth) or Z (height); any other key cancels."); } e.preventDefault(); return; }
 		if (ctrl && k.startsWith("arrow")) {
