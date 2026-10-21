@@ -234,7 +234,15 @@
 	async function openProject(text) {
 		const p = JSON.parse(text);
 		// A Godot bundle is not a project to edit: it is added as a reference ghost (drop one in, or Add reference).
-		if (p.format === "tileset-studio-export") { addReference(text).catch((err) => toast(err.message, "bad")); return; }
+		if (p.format === "tileset-studio-export") {
+			// With nothing open, the bundle's art becomes the tileset (so the start card goes away); its footprints stay as a ghost reference.
+			(async () => {
+				const hadArt = !!S.art;
+				const ref = await addReference(text);
+				if (!hadArt && p.images && p.images.atlas) { await setTileset(p.images.atlas, (p.name || "export") + ".png"); ref.showArt = false; markUnsaved(); }
+			})().catch((err) => toast(err.message, "bad"));
+			return;
+		}
 		if (p.format !== "tileset-studio") { toast("That file is not a Tileset Studio project (.studio.json).", "bad"); return; }
 		if (!(await guardUnsaved(`Opening ${p.name || "another project"}`))) return;
 		leaveDrawTools();
