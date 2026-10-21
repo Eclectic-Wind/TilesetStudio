@@ -189,9 +189,9 @@ them their own material (and turn); "Use the object's material" clears that.
 
 **Collision** says how the model blocks the player in the game (the player's box is 24 px wide and 12 px deep above the feet):
 
-- **strip** (the default, as before): only a 4 px strip along the south edge of the model's convex footprint blocks, so you walk
+- **strip** (the old default, now opt-in): only a 4 px strip along the south edge of the model's convex footprint blocks, so you walk
   into its drawn top and are drawn behind it. Only models whose bottom is below 30 px count.
-- **footprint** (walk-behind): the floor the model really covers blocks wherever one of its parts reaches between the **step
+- **footprint** (walk-behind, the default, also what "auto" means): the floor the model really covers blocks wherever one of its parts reaches between the **step
   height** and the **player body height** (Processing panel, default 4 and 40 px). A shelf hung at 60 px, a lamp shade over the
   head, a rug or paper under the step don't block; a table top at 30 px blocks all the floor under it. The blocked floor is pulled
   in for the feet box (sides 3 px, south edges 8 px north: the feet stop 4 px in front of the base and can stand right at its

@@ -202,7 +202,7 @@
 
 	// --- collision ---
 	// Per model, collision mode (o.collision: strip | footprint | none; unset = "auto", resolved in P.roles; solid: false = "none"):
-	//   auto       (default) flat models (heightMax <= walk-over height) and models lower than the step get none, the rest strip.
+	//   auto       (default) footprint. A flat or low model (nothing reaches the step) simply blocks no floor, so it produces no polygon.
 	//   strip      today's rule, built by Godot (addons/studio_import/footprints.gd foot_strips): a 4 px strip along the south edge of the convex
 	//              footprint, for solid models whose bottom is below SOLID_BELOW. You walk into the drawn top.
 	//   footprint  walk-behind: the floor the model really blocks stops the player, so they walk round it and can stand behind it.
@@ -229,17 +229,17 @@
 
 	// Per model index: {heightMin, heightMax (floor-space px above the floor; 0/0 when it has no surface on the plan), flat,
 	// kindInferred, kind, kindOverridden, requested, mode (resolved collision), hull (floor plan convex hull)}.
-	// auto -> "none" for flat models and for any model lower than the step (heightMax < step: it can't block a player who
-	// steps over it), else "strip". An explicit strip / footprint is always honoured.
+	// auto -> "footprint" (a model nothing of which reaches the step blocks no floor, so it yields no polygon). An explicit
+	// strip / footprint / none is always honoured.
 	P.roles = (objects, floor, settings) => {
-		const walk = P.walkOver(settings), step = P.bodyRule(settings).step;
+		const walk = P.walkOver(settings);
 		return objects.map((o, oi) => {
 			const h = floor.heights[oi], heightMin = h ? round2(h.min) : 0, heightMax = h ? round2(h.max) : 0;
 			const flat = !!h && heightMax <= walk;
 			const kindInferred = flat ? "floor" : "solid";
 			const kindOverridden = P.KINDS.includes(o.kind);
 			const requested = P.collisionRequested(o);
-			const mode = requested !== "auto" ? requested : flat || heightMax < step ? "none" : "strip";
+			const mode = requested !== "auto" ? requested : "footprint";
 			const vi = o.faces.length ? Mesh.faceVerts(o) : [];
 			return { heightMin, heightMax, flat, kindInferred, kind: kindOverridden ? o.kind : kindInferred, kindOverridden, requested, mode,
 				hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])) };

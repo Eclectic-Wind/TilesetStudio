@@ -50,7 +50,7 @@ Inferred: `flat` -> `floor`, else `solid`. `deco`, `wall` and `side` are never i
 
 ### Collision
 
-`auto` resolves to `none` when the model is flat **or** `heightMax < collision.step`, else `strip`. An explicit `strip` / `footprint` / `none` is honoured as chosen. So a model lower than the step produces no strip or polygon unless the artist picked strip or footprint explicitly. Kind does not affect collision.
+`auto` resolves to `footprint`. An explicit `strip` / `footprint` / `none` is honoured as chosen. A model nothing of which reaches into `[collision.step, collision.body]` blocks no floor, so it yields an empty `polygons` list. Kind does not affect collision.
 
 ### Cells
 
