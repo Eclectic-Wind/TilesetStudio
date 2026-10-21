@@ -1490,7 +1490,7 @@
 	// Pan the 3D view: move the orbit centre across the floor, the way the drag goes.
 	function panFree(dx, dy) {
 		const f = renderer.free, z = renderer.cam.zoom;
-		const right = [Math.cos(f.yaw), -Math.sin(f.yaw)], fwd = [-Math.sin(f.yaw), -Math.cos(f.yaw)], k = 1 / Math.max(0.3, Math.sin(f.pitch));
+		const right = [Math.cos(f.yaw), -Math.sin(f.yaw)], fwd = [-Math.sin(f.yaw), -Math.cos(f.yaw)], k = 1 / Math.max(0.3, Math.abs(Math.sin(f.pitch)));
 		f.target = [f.target[0] - (right[0] * dx - fwd[0] * dy * k) / z, f.target[1] - (right[1] * dx - fwd[1] * dy * k) / z, f.target[2]];
 		dirty = true;
 	}
@@ -1828,7 +1828,7 @@
 			}
 			if (press && press.kind === "look") {
 				renderer.free.yaw -= (mouse[0] - press.last[0]) * 0.008;
-				renderer.free.pitch = TS.clamp(renderer.free.pitch + (mouse[1] - press.last[1]) * 0.008, 0.05, 1.5);
+				renderer.free.pitch = TS.clamp(renderer.free.pitch + (mouse[1] - press.last[1]) * 0.008, -1.5, 1.5);
 				press.last = mouse.slice(); dirty = true;
 			} else if (press && press.kind === "pan") {
 				if (renderer.free.blend > 0) panFree(mouse[0] - press.last[0], mouse[1] - press.last[1]);
