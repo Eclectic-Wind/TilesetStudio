@@ -206,6 +206,7 @@
 			let best = null;
 			for (const obj of objects) {
 				if (skip && skip(obj)) continue;
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 					if (hit !== null && (!best || hit < best.t)) best = { obj, face: t.face, t: hit, point: v3.add(r.o, v3.scale(r.d, hit)) };
@@ -219,6 +220,7 @@
 			const r = this.ray(px, py), out = [];
 			for (const obj of objects) {
 				let best = null;
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 					if (hit !== null && (!best || hit < best.t)) best = { obj, face: t.face, t: hit, point: v3.add(r.o, v3.scale(r.d, hit)) };
@@ -231,6 +233,7 @@
 		// Every face of one object under a screen point, nearest first: [{face, t}] (each face once).
 		pickFaces(obj, px, py) {
 			const r = this.ray(px, py), best = new Map();
+			if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) return [];
 			for (const t of TS.Mesh.triangles(obj)) {
 				const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 				if (hit !== null && (!best.has(t.face) || hit < best.get(t.face))) best.set(t.face, hit);
@@ -244,12 +247,14 @@
 			const s = this.toScreen(p);
 			if (!s) return false;
 			const r = this.ray(s[0], s[1]), tp = v3.dot(v3.sub(p, r.o), r.d), limit = tp - (eps === undefined ? 0.75 : eps);
-			for (const obj of objects)
+			for (const obj of objects) {
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), limit)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					// Triangles slightly widened: a point exactly behind a corner (common in this projection) counts as hidden.
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c], 1e-4);
 					if (hit !== null && hit < limit) return false;
 				}
+			}
 			return true;
 		}
 
@@ -259,6 +264,21 @@
 			if (Math.abs(r.d[2]) < 1e-9) return null;
 			const t = ((z || 0) - r.o[2]) / r.d[2];
 			return t > 0 ? v3.add(r.o, v3.scale(r.d, t)) : null;
+		}
+
+		// Does the ray enter the box before distance tmax? (slab test)
+		static rayBox(o, d, box, tmax) {
+			let t0 = 0, t1 = tmax;
+			for (let k = 0; k < 3; k++) {
+				if (Math.abs(d[k]) < 1e-12) { if (o[k] < box.min[k] - 0.05 || o[k] > box.max[k] + 0.05) return false; continue; }
+				const inv = 1 / d[k];
+				let a = (box.min[k] - 0.05 - o[k]) * inv, b = (box.max[k] + 0.05 - o[k]) * inv;
+				if (a > b) { const x = a; a = b; b = x; }
+				if (a > t0) t0 = a;
+				if (b < t1) t1 = b;
+				if (t0 > t1) return false;
+			}
+			return true;
 		}
 
 		static rayTri(o, d, a, b, c, grow) {

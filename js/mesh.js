@@ -164,11 +164,34 @@
 		return TS.Shape.triangulate(face.v.map((i) => axes.map((k) => obj.verts[i][k])));
 	};
 	// [{a, b, c, face}] (vertex indices).
+	// Fingerprint of an object's shape (vertices, face winding, smoothing). Models are edited in place, so caches compare this
+	// instead of a version number.
+	M.shapeKey = (obj) => {
+		let h = obj.smooth || 0;
+		for (const p of obj.verts) h = (h * 31 + p[0] * 7.31 + p[1] * 3.17 + p[2] * 1.93) % 1e9;
+		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; }
+		return h + ":" + obj.verts.length + ":" + obj.faces.length;
+	};
+	// Axis-aligned box round an object: {min, max}. Cached like the triangles.
+	const boundsCache = new WeakMap();
+	M.bounds = (obj) => {
+		const key = M.shapeKey(obj), hit = boundsCache.get(obj);
+		if (hit && hit.key === key) return hit.box;
+		const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+		for (const p of obj.verts) for (let k = 0; k < 3; k++) { if (p[k] < min[k]) min[k] = p[k]; if (p[k] > max[k]) max[k] = p[k]; }
+		const box = { min, max };
+		boundsCache.set(obj, { key, box });
+		return box;
+	};
+	const triCache = new WeakMap();
 	M.triangles = (obj) => {
+		const key = M.shapeKey(obj), hit = triCache.get(obj);
+		if (hit && hit.key === key) return hit.tris;
 		const tris = [];
 		obj.faces.forEach((f, fi) => {
 			for (const [a, b, c] of M.faceTriangles(obj, f)) tris.push({ a: f.v[a], b: f.v[b], c: f.v[c], face: fi });
 		});
+		triCache.set(obj, { key, tris });
 		return tris;
 	};
 

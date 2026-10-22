@@ -1477,15 +1477,29 @@
 
 	const vtx = (out, p, n, c) => out.push(p[0], p[1], p[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3]);
 
+	// Per-object face and wire vertices, reused while the object's shape and look are unchanged (models are edited in place,
+	// so the shape is fingerprinted rather than versioned).
+	const geomCache = new WeakMap();
+	const concatF32 = (parts) => {
+		let n = 0;
+		for (const q of parts) n += q.length;
+		const out = new Float32Array(n);
+		let o = 0;
+		for (const q of parts) { out.set(q, o); o += q.length; }
+		return out;
+	};
 	function buildGeometry() {
-		const tris = [], lines = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
+		const triParts = [], lineParts = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
 		const sel = [1.0, 0.55, 0.15];
 		const hv = hover && hover.obj.id === S.active && S.edit && hover.mode === S.elemMode ? hover : null;
 		for (const obj of shownObjs()) {
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id), editing = S.edit && isActive;
-			const corners = Mesh.shadingNormals(obj);
 			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
 			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
+			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel && !S.edit ? "s" : "n") : null, hit = cacheable && geomCache.get(obj);
+			if (hit && hit.key === key) { triParts.push(hit.tris); lineParts.push(hit.lines); continue; }
+			const tris = [], lines = [];
+			const corners = Mesh.shadingNormals(obj);
 			if (heat) obj.verts.forEach((p, i) => vtx(points, p, [0, 0, 1], [0.05, 0.05, 0.08, 1]));
 			obj.faces.forEach((f, fi) => {
 				const faceMode = editing && S.elemMode === "face", picked = faceMode && S.elemSel.has(fi);
@@ -1502,6 +1516,9 @@
 			}
 			if (editing && S.elemMode === "vert")
 				obj.verts.forEach((p, i) => vtx(points, p, [0, 0, 1], S.elemSel.has(i) ? [1, 0.6, 0.1, 1] : [0.1, 0.1, 0.12, 1]));
+			const ft = new Float32Array(tris), fl = new Float32Array(lines);
+			triParts.push(ft); lineParts.push(fl);
+			if (cacheable) geomCache.set(obj, { key, tris: ft, lines: fl });
 		}
 		if (hv) {
 			// What a click would pick: outlined in white over everything.
@@ -1565,7 +1582,7 @@
 				}
 			}
 		}
-		return { tris: new Float32Array(tris), lines: new Float32Array(lines), points: new Float32Array(points), dots: new Float32Array(dots), grid: new Float32Array(grid),
+		return { tris: concatF32(triParts), lines: concatF32(lineParts), points: new Float32Array(points), dots: new Float32Array(dots), grid: new Float32Array(grid),
 			ghosts: ghosts.map((g) => Object.assign(g, { tris: new Float32Array(g.tris) })), ghostLines: new Float32Array(ghostLines), overlay: new Float32Array(overlay), hover: { lines: new Float32Array(hov.lines), points: new Float32Array(hov.points) } };
 	}
 
