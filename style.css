@@ -233,6 +233,9 @@ input.ax-x { border-left-color: var(--ax-x); } input.ax-y { border-left-color: v
 @keyframes lfade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes lpop { from { transform: translateY(14px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 .learn .lh { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 16px; }
+.learn .secs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.learn .sec { padding: 3px 12px; border-radius: 14px; font-size: 13px; color: var(--dim); }
+.learn .sec.on { border-color: var(--accent); color: var(--text); background: #3b2a16; }
 .learn .dots { display: flex; gap: 5px; }
 .learn .dot { width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 11px; color: var(--dim); }
 .learn .dot.seen { color: var(--text); border-color: #5a5a6a; }

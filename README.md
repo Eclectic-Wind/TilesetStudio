@@ -26,7 +26,7 @@ Tileset Studio is a standalone web app. No install, no build, no internet.
 
 Prefer a local server? Run `serve.ps1` and visit `http://127.0.0.1:8765/`. Files can then be opened by URL with `?tileset=/art/x.png` or `?project=/samples/ward_bedroom2.studio.json`.
 
-The whole tool is this folder, so you can copy it anywhere to hand it out. New here? Press **L** for the animated **Learn** lessons.
+The whole tool is this folder, so you can copy it anywhere to hand it out. New here? Press **L** for the animated **Learn** lessons (modelling, and animating with Aseprite).
 
 ## How it works
 

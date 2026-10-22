@@ -505,6 +505,213 @@
 		},
 	});
 
+	const SECTIONS = [{ id: "basics", name: "Modelling" }, { id: "aseprite", name: "Animation & Aseprite" }];
+	// --- section 2: Animation & Aseprite ------------------------------------------------------------------------------
+	// A window frame for the two programs, and the shared bits the four lessons use.
+	function win(g, x, y, w, h, title, col) {
+		g.save();
+		g.fillStyle = "#14161d"; g.strokeStyle = col; g.lineWidth = 2;
+		g.beginPath(); g.roundRect(x, y, w, h, 8); g.fill(); g.stroke();
+		g.fillStyle = col; g.beginPath(); g.roundRect(x, y, w, 22, [8, 8, 0, 0]); g.fill();
+		g.restore();
+		text(g, title, x + 12, y + 11, "#e6e8ee", 12, "left");
+	}
+	const clipTo = (g, x, y, w, h) => { g.beginPath(); g.rect(x, y, w, h); g.clip(); };
+	const NORMAL = { rgb: [130, 130, 255], a: 0.9 };
+	const pulse = (t, a, b) => (t < a || t > b ? 0 : 0.35 + 0.65 * Math.abs(Math.sin((t - a) * 3)));
+	const diamond = (g, x, y, r, col) => { g.save(); g.fillStyle = col; g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); g.fill(); g.restore(); };
+
+	// A1 -------------------------------------------------------------------------------------------------------------
+	L.push({
+		section: "aseprite", title: "Studio and Aseprite, side by side", dur: 22,
+		caps: [
+			{ t: 0, say: "Two programs, one picture.", sub: "Studio knows the shape and the pose. Aseprite is where you paint the pixels." },
+			{ t: 3, say: "Studio sends a normal map.", sub: "It appears in Aseprite as a locked layer called Normal (Studio): your guide for where the shading goes." },
+			{ t: 7.4, say: "You paint the colour in Aseprite.", sub: "Draw inside a group called Albedo. Every edit is flattened and sent back." },
+			{ t: 12, say: "Studio lights your art with the normals.", sub: "Your painting lands on the models at once, lit by the lamp." },
+			{ t: 16.5, say: "Change the pose and the guide follows.", sub: "Turn a bone in Studio and the Normal (Studio) layer updates; paint over the new pose." },
+		],
+		make() {
+			const models = sampleModels();
+			return (g, t) => {
+				bg(g);
+				const S = [20, 44, 300, 290], A = [400, 44, 300, 290];
+				const sent = seg(t, 3, 4.6), painted = seg(t, 7.4, 11.4), back = seg(t, 12, 13.4), wob = t > 16.5 ? Math.sin((t - 16.5) * 1.5) : 0;
+				win(g, ...S, "Tileset Studio", "#5a4630"); win(g, ...A, "Aseprite", "#2f4a63");
+				const view = { yaw: rad(40) + wob * rad(16), el: ISO.el, sigma: 1 };
+				// Studio: grey boxes until the painting arrives, then the art on them
+				g.save(); clipTo(g, S[0] + 2, S[1] + 24, S[2] - 4, S[3] - 26);
+				const cs = camAt(view, 1.2, S[0] + S[2] / 2, S[1] + 175);
+				ground(g, cs, 1);
+				drawWorld(g, cs, models, () => ({ flatLook: true }));
+				if (back > 0) { g.globalAlpha = back; drawWorld(g, cs, models); }
+				g.restore();
+				// Aseprite: the canvas (checker), the locked normal layer, then the painted art sweeping in
+				const CB = [A[0] + 10, A[1] + 34, 190, 244];
+				g.save(); clipTo(g, ...CB);
+				for (let y = 0; y < CB[3]; y += 12) for (let x = 0; x < CB[2]; x += 12) { g.fillStyle = (x + y) / 12 % 2 ? "#23252e" : "#1b1d25"; g.fillRect(CB[0] + x, CB[1] + y, 12, 12); }
+				const ca = camAt(view, 0.98, CB[0] + CB[2] / 2, CB[1] + 150);
+				if (sent > 0) drawWorld(g, ca, models, () => ({ flatLook: true, tint: NORMAL, alpha: sent * 0.85 }));
+				if (painted > 0) { g.save(); clipTo(g, CB[0], CB[1], CB[2] * painted, CB[3]); drawWorld(g, ca, models); g.restore(); }
+				if (painted > 0 && painted < 1) { const bx = CB[0] + CB[2] * painted; g.fillStyle = C.amber; g.fillRect(bx - 3, CB[1] + 120 + Math.sin(t * 9) * 40, 6, 6); }
+				g.restore();
+				// the layers panel
+				const lx = A[0] + 210, ly = A[1] + 34;
+				g.fillStyle = "#1b1d25"; g.fillRect(lx, ly, 80, 244);
+				g.fillStyle = painted > 0 && painted < 1 ? "#3a3326" : "#23252e"; g.fillRect(lx + 3, ly + 6, 74, 34);
+				text(g, "▾ Albedo", lx + 8, ly + 18, C.amber, 11, "left"); text(g, "group", lx + 8, ly + 31, C.dim, 10, "left");
+				if (sent > 0) { g.globalAlpha = sent; g.fillStyle = "#23252e"; g.fillRect(lx + 3, ly + 44, 74, 34); text(g, "Normal", lx + 8, ly + 56, "#a9a9ff", 11, "left"); text(g, "(Studio) 🔒", lx + 8, ly + 69, C.dim, 10, "left"); g.globalAlpha = 1; }
+				// the traffic between them
+				const down = pulse(t, 3, 5.6) + pulse(t, 16.5, 22), up = pulse(t, 11.2, 13.8);
+				arrow(g, [328, 138], [392, 138], "#8c8cff", 0.25 + 0.75 * Math.min(1, down), 4);
+				arrow(g, [392, 236], [328, 236], C.amber, 0.25 + 0.75 * Math.min(1, up), 4);
+				pill(g, 360, 112, "normal map", "#8c8cff", 0.55 + 0.45 * Math.min(1, down), 12);
+				pill(g, 360, 262, "your painting", C.amber, 0.55 + 0.45 * Math.min(1, up), 12);
+			};
+		},
+	});
+
+	// A2 -------------------------------------------------------------------------------------------------------------
+	L.push({
+		section: "aseprite", title: "Set it up once", dur: 20,
+		caps: [
+			{ t: 0, say: "Four steps, once.", sub: "After that Studio and Aseprite find each other again on their own." },
+			{ t: 3, say: "1. Install the extension.", sub: "Aseprite ▾ in Studio's top bar has the download. Double-click the file (Aseprite 1.3 or newer)." },
+			{ t: 7, say: "2. Link: get a room code.", sub: "Aseprite ▾ ▸ Link online works in any browser; Link Aseprite folder is Chrome and Edge. Copy the room code." },
+			{ t: 11.5, say: "3. One tile, in Aseprite.", sub: "New sprite exactly the size of your tileset (a power of two, RGB). File ▸ Scripts ▸ Tileset Studio Link (online)…, paste the code." },
+			{ t: 16, say: "4. Paint in a group called Albedo.", sub: "The locked Normal (Studio) layer shows up by itself. The dot by the Aseprite menu turns green." },
+		],
+		extra: `<ol class="todo">
+			<li style="--d:0s"><span>1</span><div><b>Install the extension.</b><br><small>Studio → Aseprite ▾ → Download the Aseprite extension, then double-click it.</small></div></li>
+			<li style="--d:.12s"><span>2</span><div><b>Link online, copy the room code.</b><br><small>Studio → Aseprite ▾ → Link online (any browser) → Copy. Chrome / Edge can use a shared folder instead.</small></div></li>
+			<li style="--d:.24s"><span>3</span><div><b>A sprite one tile big, then the script.</b><br><small>Same size as your tileset, RGB, a power of two (64, 128, 256…). File → Scripts → Tileset Studio Link (online)… and paste the code.</small></div></li>
+			<li style="--d:.36s"><span>4</span><div><b>Paint inside the group named Albedo.</b><br><small>Each edit is sent to Studio. Locked layer Normal (Studio) is your guide.</small></div></li>
+		</ol>
+		<p><small><b>Privacy:</b> the room code is the only secret, so treat it like a password. Press <b>New code</b> in the Aseprite menu any time to swap it for a fresh one; the old code stops working at once.</small></p>
+		<div class="row"><button id="l_animate" class="primary">Open the sample and start Animate</button></div>`,
+		make() {
+			const stations = [["⬇", "Extension", 90], ["🔗", "Link", 270], ["▣", "One tile", 450], ["✎", "Albedo", 630]], CODE = "k3j9q7mx2c5v8b4n6d";
+			return (g, t) => {
+				bg(g);
+				const on = (i) => seg(t, 3 + i * 4.2, 3.8 + i * 4.2);
+				stations.forEach(([glyph, name, x], i) => {
+					const a = i === 0 ? Math.max(on(0), t < 3 ? 0.35 : 0) : on(i), live = Math.max(0.25, a);
+					if (i) arrow(g, [stations[i - 1][2] + 44, 130], [x - 44, 130], C.amber, 0.2 + 0.8 * on(i), 3);
+					g.save(); g.globalAlpha = live; g.beginPath(); g.arc(x, 130, 38, 0, 7); g.fillStyle = "#1d2029"; g.fill(); g.lineWidth = 3; g.strokeStyle = a > 0.5 ? C.amber : "#3a3f4d"; g.stroke(); g.restore();
+					text(g, glyph, x, 132, a > 0.5 ? C.ink : C.dim, 30, "center", live);
+					pill(g, x, 196, name, a > 0.5 ? C.amber : C.dim, live, 14);
+				});
+				// the room code typing itself in after step 2
+				const n = Math.floor(seg(t, 8, 10.5) * CODE.length);
+				if (n > 0) { pill(g, 360, 262, "room code  " + CODE.slice(0, n) + (n < CODE.length ? "▌" : ""), "#8c8cff", 1, 15); }
+				if (t > 17.6) pill(g, 360, 310, "● linked", C.ok, seg(t, 17.6, 18.4), 15);
+			};
+		},
+	});
+
+	// A3 -------------------------------------------------------------------------------------------------------------
+	L.push({
+		section: "aseprite", title: "Bones, frames and keys", dur: 26,
+		caps: [
+			{ t: 0, say: "Bones move the models.", sub: "＋ Bone, then Bind: a model follows its bone, and bends with the other bones of its skeleton." },
+			{ t: 5, say: "Pick a frame, turn a bone: that frame gets a key ◆.", sub: "Drag the green ring or the bone's tip. Or just press G / R on a model: it gets a bone of its own." },
+			{ t: 12.5, say: "Frames between keys blend by themselves.", sub: "Here frames 1, 4 and 8 are keyed; 2, 3, 5, 6 and 7 are worked out for you." },
+			{ t: 18.5, say: "Space plays the clip. , and . step frames.", sub: "Up / Down jump between keys. Every frame becomes one cell of the spritesheet." },
+		],
+		make() {
+			const part = (x0, y0, z0, x1, y1, z1, color, order) => boxModel("p", x0, y0, z0, x1, y1, z1, color, order);
+			const body = part(22, 138, 24, 50, 162, 104, "#59606e", 1), upper = part(50, 144, 60, 62, 156, 96, "#d9a066", 2), fore = part(51, 145, 24, 61, 155, 60, "#e8b980", 3);
+			const SH = [56, 150, 96], EL = [56, 150, 60], TIP = [56, 150, 24];
+			const rotY = (p, c, a) => { const dx = p[0] - c[0], dz = p[2] - c[2], s = Math.sin(a), k = Math.cos(a); return [c[0] + dx * k + dz * s, p[1], c[2] - dx * s + dz * k]; };
+			const KEYS = { up: [[0, 0], [3, 55], [7, -20]], fo: [[0, 0], [3, 80], [7, 10]] };
+			const blend = (ks, f) => { let i = 0; while (i + 1 < ks.length && ks[i + 1][0] <= f) i++; if (i + 1 >= ks.length) return ks[i][1]; const [f0, v0] = ks[i], [f1, v1] = ks[i + 1]; return lerp(v0, v1, (f - f0) / (f1 - f0)); };
+			const moved = (m, f) => Object.assign({}, m, { verts: m.verts.map(f) });
+			const boneShape = (g, h, t, col, fillA) => {
+				const dx = t[0] - h[0], dy = t[1] - h[1], len = Math.hypot(dx, dy) || 1, nx = (-dy / len) * 6, ny = (dx / len) * 6, mid = [h[0] + dx * 0.15, h[1] + dy * 0.15];
+				g.save(); g.beginPath(); g.moveTo(h[0], h[1]); g.lineTo(mid[0] + nx, mid[1] + ny); g.lineTo(t[0], t[1]); g.lineTo(mid[0] - nx, mid[1] - ny); g.closePath();
+				g.fillStyle = col + "55"; g.globalAlpha = fillA; g.fill(); g.strokeStyle = col; g.lineWidth = 1.5; g.stroke();
+				g.beginPath(); g.arc(t[0], t[1], 6, 0, 7); g.fillStyle = "#14161899"; g.fill(); g.stroke(); g.restore();
+			};
+			return (g, t) => {
+				bg(g);
+				const play = t >= 5, fr = play ? ((t - 5) * 1.4) % 8 : 0, a1 = rad(blend(KEYS.up, fr)), a2 = rad(blend(KEYS.fo, fr));
+				const cam = camAt({ yaw: rad(40), el: ISO.el, sigma: 1 }, 1.65, 350, 215);
+				ground(g, cam, 1);
+				const upperP = moved(upper, (v) => rotY(v, SH, a1)), foreP = moved(fore, (v) => rotY(rotY(v, EL, a2), SH, a1));
+				drawWorld(g, cam, [body, upperP, foreP]);
+				// the bones, over the models
+				const elbow = rotY(EL, SH, a1), tip = rotY(rotY(TIP, EL, a2), SH, a1), P = (p) => project(p, cam), ba = seg(t, 0.4, 2);
+				const sel = t < 12.5 ? 0 : 1;
+				boneShape(g, P(SH), P(elbow), sel === 0 ? "#ffcf4a" : "#5ad1ff", ba); boneShape(g, P(elbow), P(tip), sel === 1 ? "#ffcf4a" : "#5ad1ff", ba);
+				// the turn ring (green = Y) at the selected bone's head while keying
+				const ringA = seg(t, 5, 5.8) * (1 - seg(t, 17.6, 18.4)) * ba;
+				if (ringA > 0.02) {
+					const c = sel === 0 ? SH : elbow;
+					g.save(); g.globalAlpha = ringA; g.strokeStyle = C.y; g.lineWidth = 2; g.beginPath();
+					for (let i = 0; i <= 40; i++) { const q = P([c[0] + Math.cos((i / 40) * 6.283) * 24, c[1], c[2] + Math.sin((i / 40) * 6.283) * 24]); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }
+					g.stroke(); g.restore();
+				}
+				// the timeline: 8 frames, keys at 1, 4 and 8, the playhead running
+				const x0 = 130, y0 = 336, cw = 54;
+				for (let i = 0; i < 8; i++) {
+					const on = play && Math.floor(fr) === i;
+					g.fillStyle = on ? C.amber : "#23252e"; g.strokeStyle = on ? C.amber : "#3a3f4d"; g.lineWidth = 1.5; g.beginPath(); g.roundRect(x0 + i * cw, y0, cw - 4, 26, 5); g.fill(); g.stroke();
+					text(g, String(i + 1), x0 + i * cw + cw / 2 - 2, y0 + 14, on ? "#1a1208" : C.dim, 13);
+					if ([0, 3, 7].includes(i) && t > 5.6 + i * 0.35) diamond(g, x0 + i * cw + cw / 2 - 2, y0 - 8, 6, "#ffcf4a");
+				}
+				pill(g, 70, y0 + 13, "Clip 1", C.amber, 1, 12);
+			};
+		},
+	});
+
+	// A4 -------------------------------------------------------------------------------------------------------------
+	L.push({
+		section: "aseprite", title: "Frames, sheets and sizes", dur: 24,
+		caps: [
+			{ t: 0, say: "Every frame is one cell of a sheet.", sub: "Studio renders each frame's normal map into one picture, in cells the size of your tileset." },
+			{ t: 5.6, say: "The grid is always a power of two.", sub: "8 frames of 128 × 128 make 4 × 2 cells: a 512 × 256 sheet. A power-of-two tileset always gives one." },
+			{ t: 10.5, say: "In Aseprite each frame is a real frame.", sub: "Insert or delete one there and the clip in Studio follows; keys move with their frames." },
+			{ t: 17, say: "Wrong canvas size? Nothing is lost.", sub: "The sprite must be exactly one tile. If not, Studio keeps the last good page and both sides show a warning." },
+		],
+		make() {
+			return (g, t) => {
+				bg(g);
+				const grown = seg(t, 12.5, 13.5), n = grown > 0.5 ? 9 : 8, cols = 4, rows = n > 8 ? 4 : 2, cell = 46, gx = 56, gy = 70;
+				// the sheet, filled cell by cell
+				text(g, "Studio's sheet", gx + cell * 2, 46, C.dim, 13);
+				for (let i = 0; i < rows * cols; i++) {
+					const x = gx + (i % cols) * cell, y = gy + Math.floor(i / cols) * cell, appear = seg(t, i * 0.32, i * 0.32 + 0.4), used = i < n;
+					g.fillStyle = used ? "#1d2029" : "#14161d"; g.strokeStyle = used ? "#4a4f60" : "#2a2d38"; g.lineWidth = 1.5; g.beginPath(); g.rect(x, y, cell - 2, cell - 2); g.fill(); g.stroke();
+					if (!used || appear <= 0) continue;
+					g.save(); g.globalAlpha = appear; clipTo(g, x, y, cell - 2, cell - 2);
+					const a = Math.sin((i / 8) * 6.283) * 0.9, cx = x + (cell - 2) / 2, cy = y + 8;
+					g.strokeStyle = "#9a9aff"; g.lineWidth = 8; g.lineCap = "round"; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.sin(a) * 26, cy + Math.cos(a) * 26); g.stroke();
+					g.restore();
+				}
+				const cw = 128, w = cols * cw, h = rows * cw;
+				text(g, `${n} frames · ${cols}×${rows} cells · ${w} × ${h} sheet (128 px tiles)`, gx + cell * 2, gy + rows * cell + 22, Math.abs(Math.log2(w)) % 1 === 0 ? C.ok : C.bad, 12);
+				// Aseprite's timeline: insert a frame and the keys shift
+				const tx = 330, ty = 150, bw = 38, frames = n;
+				win(g, tx - 10, ty - 46, 380, 130, "Aseprite timeline", "#2f4a63");
+				for (let i = 0; i < frames; i++) {
+					const x = tx + i * bw, isNew = i === 4 && frames > 8, a = isNew ? seg(t, 12.5, 13.5) : 1;
+					g.save(); g.globalAlpha = a; g.fillStyle = isNew ? "#3a3326" : "#23252e"; g.strokeStyle = isNew ? C.amber : "#3a3f4d"; g.lineWidth = 1.5; g.beginPath(); g.roundRect(x, ty, bw - 4, 30, 4); g.fill(); g.stroke();
+					text(g, String(i + 1), x + (bw - 4) / 2, ty + 16, isNew ? C.amber : C.dim, 12); g.restore();
+				}
+				const keys = frames > 8 ? [0, 5, 8] : [0, 3, 7]; // an inserted frame pushes the later keys down by one
+				keys.forEach((k) => diamond(g, tx + k * bw + (bw - 4) / 2, ty - 12, 6, "#ffcf4a"));
+				text(g, frames > 8 ? "inserted frame 5 · later keys moved down" : "frames 1 – 8", tx + 170, ty + 58, frames > 8 ? C.amber : C.dim, 12);
+				// the size rule
+				const bad = seg(t, 17, 18.5);
+				if (bad > 0) {
+					g.save(); g.globalAlpha = bad; g.strokeStyle = C.bad; g.lineWidth = 2.5; g.setLineDash([6, 4]); g.beginPath(); g.roundRect(tx + 70, ty + 78, 240, 78, 8); g.stroke(); g.restore();
+					pill(g, tx + 190, ty + 100, "canvas 100 × 100", C.bad, bad, 13);
+					text(g, "not one tile (128 × 128): kept the last good page", tx + 190, ty + 136, C.bad, 12, "center", bad);
+				}
+			};
+		},
+	});
+
 	// The BasicSample scene (js/sample_basic.js), opened as the project.
 	async function loadSample(quiet) {
 		const p = JSON.parse(JSON.stringify(B()));
@@ -599,14 +806,20 @@
 		$("learn_tl").style.display = lesson.steps ? "none" : "";
 		$("tl_marks").innerHTML = capTimes().map((t) => `<i style="left:${(t / lesson.dur) * 100}%"></i>`).join("");
 		$("learn_title").textContent = lesson.title;
-		$("learn_dots").innerHTML = L.map((l, i) => `<button class="dot${i === cur ? " on" : i < cur ? " seen" : ""}" data-i="${i}" title="${l.title}">${i + 1}</button>`).join("");
+		// Sections: a tab each, and the dots number the current section's lessons.
+		const secOf = (l) => l.section || "basics", sec = secOf(lesson), mine = L.map((l, i) => i).filter((i) => secOf(L[i]) === sec);
+		$("learn_secs").innerHTML = SECTIONS.map((s) => `<button class="sec${s.id === sec ? " on" : ""}" data-sec="${s.id}" title="${L.filter((l) => secOf(l) === s.id).length} lessons">${s.name}</button>`).join("");
+		$("learn_secs").querySelectorAll(".sec").forEach((b) => { b.onclick = () => openSection(b.dataset.sec); });
+		$("learn_dots").innerHTML = mine.map((i, j) => `<button class="dot${i === cur ? " on" : i < cur ? " seen" : ""}" data-i="${i}" title="${L[i].title}">${j + 1}</button>`).join("");
 		$("learn_dots").querySelectorAll(".dot").forEach((d) => { d.onclick = () => { cur = parseInt(d.dataset.i); render(); }; });
 		$("learn_prev").style.visibility = cur === 0 ? "hidden" : "visible";
-		$("learn_next").textContent = cur === L.length - 1 ? "Done ✓" : "Next →";
+		const nextSec = cur < L.length - 1 && secOf(L[cur + 1]) !== sec ? SECTIONS.find((s) => s.id === secOf(L[cur + 1])) : null;
+		$("learn_next").textContent = cur === L.length - 1 ? "Done ✓" : nextSec ? `Next: ${nextSec.name} →` : "Next →";
 		const ex = $("learn_extra");
 		ex.innerHTML = (lesson.extra || "") + (lesson.show && lesson.show.length ? `<div class="row seeit"><span class="dim">See it in the Studio:</span>${lesson.show.map(([m, t]) => `<button class="try" data-show="${m}">👁 ${t}</button>`).join("")}</div>` : "");
 		ex.querySelectorAll("[data-show]").forEach((b) => { b.onclick = () => showInStudio(b.dataset.show, b.textContent.replace("👁 ", "").replace(/ \(.*\)$/, "")); });
 		ex.querySelectorAll(".todo li").forEach((li) => { li.onclick = () => li.classList.toggle("done"); });
+		if ($("l_animate")) $("l_animate").onclick = async () => { if (!(await loadSample(true))) return; close(); if (!TS.AnimUI.on) $("b_animate").click(); TS.api.toast("Animation mode is on: add a bone, or press G on a model on a frame. Press L for the lessons.", "ok"); };
 		if ($("l_sample")) $("l_sample").onclick = () => loadSample();
 		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => TS.api.toast(e.message, "bad")); };
 		setPlayLabel();
@@ -618,6 +831,7 @@
 		back.id = "learn_back"; back.className = "lback";
 		back.innerHTML = `<div id="learn" class="learn" role="dialog" aria-label="Lessons">
 			<div class="lh"><b id="learn_title"></b><span class="grow"></span><div id="learn_dots" class="dots"></div><button id="learn_x" title="Close (Esc)">✕</button></div>
+			<div id="learn_secs" class="secs"></div>
 			<canvas id="learn_cv" class="stage" width="${W}" height="${H}"></canvas>
 			<div id="learn_tl" class="tl">
 				<button id="tl_prev" title="Previous step (,)">⏮</button><button id="learn_pause" title="Pause (Space)">⏸</button><button id="tl_next" title="Next step (.)">⏭</button>
@@ -644,12 +858,14 @@
 		$("learn_back").classList.add("open");
 		render();
 	}
+	// Open at the first lesson of a section ("basics" | "aseprite").
+	function openSection(id) { const i = L.findIndex((l) => (l.section || "basics") === id); if (i >= 0) open(i); }
 	function close() { const el = $("learn_back"); if (el) el.classList.remove("open"); }
 	const isOpen = () => !!$("learn_back") && $("learn_back").classList.contains("open");
 	function toggle() { if (isOpen()) close(); else open(); }
 
-	TS.Learn = { open, close, toggle, lessons: L, seek: (t) => { seek(t); paused = true; setPlayLabel(); } }; // seek: for scripted checks
-	document.addEventListener("DOMContentLoaded", () => { const b = $("b_learn"); if (b) b.onclick = toggle; });
+	TS.Learn = { open, openSection, close, toggle, lessons: L, seek: (t) => { seek(t); paused = true; setPlayLabel(); } }; // seek: for scripted checks
+	document.addEventListener("DOMContentLoaded", () => { const b = $("b_learn"); if (b) b.onclick = toggle; const a = $("as_learn"); if (a) a.onclick = () => openSection("aseprite"); });
 	document.addEventListener("keydown", (e) => {
 		if (isOpen()) {
 			if (e.key === "Escape") { close(); e.preventDefault(); e.stopPropagation(); }
