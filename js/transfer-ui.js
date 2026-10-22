@@ -8,7 +8,7 @@
 			$("b_import3d").onclick = () => this.showSource();
 			$("stamp_choose").onclick = () => this.showSource();
 			$("source_load").onclick = () => $("f_source").click();
-			$("f_source").onchange = async e => { const file = e.target.files[0]; e.target.value = ""; if (file) { try { if (file.size > 40 * 1024 * 1024) throw new Error("Use a source file smaller than 40 MB."); await this.loadSource(await api.readFile(file, true), file.name); } catch (err) { this.message(err.message, true); } } };
+			$("f_source").onchange = async e => { const file = e.target.files[0]; e.target.value = ""; if (file) { try { if (file.size > 40 * 1024 * 1024) throw new Error("Use a source file smaller than 40 MB."); await this.loadSource(TS.Gltf.looksLikeGltf(file.name) ? await file.arrayBuffer() : await api.readFile(file, true), file.name); } catch (err) { this.message(err.message, true); } } };
 			$("source_close").onclick = () => this.closeSource();
 			$("source_dialog").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") this.closeSource(); });
 			$("source_filter").oninput = () => this.list();
@@ -19,7 +19,7 @@
 			$("source_stamp").onclick = () => { if (!this.hasSelection()) return; this.closeSource(); this.api.setTool("stamp"); };
 			$("source_add").onclick = () => this.addAtCursor();
 			$("source_keep").onclick = () => this.addInPlace();
-			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (this.source?.kind === "obj") this.loadSource(this.source.raw, this.source.name).catch(err => this.message(err.message, true)); };
+			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (this.source?.kind === "obj" || this.source?.kind === "gltf") this.loadSource(this.source.raw, this.source.name).catch(err => this.message(err.message, true)); };
 			for (const id of ["stamp_scale", "stamp_base", "stamp_x", "stamp_y"]) $(id).oninput = () => this.controls();
 			$("stamp_snap").onchange = () => this.api.changed();
 			$("stamp_place").onclick = () => this.place();
@@ -28,10 +28,19 @@
 			$("b_export3d").onclick = () => { $("obj_selected").checked = api.state.selected.size > 0; $("obj_export").classList.add("open"); $("obj_export_error").textContent = ""; };
 			$("obj_close").onclick = () => $("obj_export").classList.remove("open");
 			$("obj_export").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") $("obj_export").classList.remove("open"); });
+			const format = () => { const glb = $("obj_format").value === "glb"; $("obj_up_row").hidden = glb; $("obj_rig_row").hidden = !glb; };
+			$("obj_format").onchange = format; format();
 			$("obj_download").onclick = () => {
-				try { const objects = api.state.objects.filter(o => !$("obj_selected").checked || api.state.selected.has(o.id));
-					const text = T.writeOBJ(objects, { scale: Number($("obj_units").value), up: $("obj_up").value });
-					api.download((api.state.name || "models") + ".obj", text, "text/plain"); $("obj_export").classList.remove("open"); api.status(`Exported ${objects.length} model(s) as OBJ.`);
+				try { const objects = api.state.objects.filter(o => !$("obj_selected").checked || api.state.selected.has(o.id)), scale = Number($("obj_units").value), base = api.state.name || "models";
+					if ($("obj_format").value === "glb") {
+						const rig = $("obj_rig").checked && api.state.anim.bones.length > 0, buf = TS.Gltf.write(objects, api.state.anim, { scale, rig, allBones: !$("obj_selected").checked });
+						api.download(base + ".glb", new Blob([buf], { type: "model/gltf-binary" }), "model/gltf-binary");
+						api.status(`Exported ${objects.length} model(s) as glTF${rig ? ` with ${api.state.anim.bones.length} bone(s) and ${api.state.anim.clips.length} clip(s)` : ""}.`);
+					} else {
+						const text = T.writeOBJ(objects, { scale, up: $("obj_up").value });
+						api.download(base + ".obj", text, "text/plain"); api.status(`Exported ${objects.length} model(s) as OBJ.`);
+					}
+					$("obj_export").classList.remove("open");
 				} catch (err) { $("obj_export_error").textContent = err.message; }
 			};
 			this.bindSource();
@@ -39,22 +48,24 @@
 		}
 		message(text, error = false) { $("source_message").textContent = text; $("source_message").classList.toggle("bad", error); }
 		async loadSource(raw, name) {
-			const token = ++this.generation; let objects, image = null, kind, warning = "";
-			if (/\.obj$/i.test(name)) { kind = "obj"; objects = T.readOBJ(raw, { scale: Number($("source_units").value), up: $("source_up").value }); }
+			const token = ++this.generation; let objects, image = null, kind, warning = "", rig = null;
+			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value) }); objects = T.validate(res.objects); rig = res.rig; }
+			else if (/\.obj$/i.test(name)) { kind = "obj"; objects = T.readOBJ(raw, { scale: Number($("source_units").value), up: $("source_up").value }); }
 			else {
-				const p = JSON.parse(raw); if (p.format !== "tileset-studio") throw new Error("Choose a Tileset Studio .studio.json project or a Wavefront .obj mesh.");
+				const p = JSON.parse(raw); if (p.format !== "tileset-studio") throw new Error("Choose a glTF .glb, a Tileset Studio .studio.json project or a Wavefront .obj mesh.");
 				kind = "studio"; objects = T.validate(p.objects);
 				if (typeof p.tileset === "string" && /^data:image\/(png|jpeg|webp);base64,/i.test(p.tileset)) {
 					try { image = await this.api.loadImage(p.tileset); } catch (err) { warning = " The source image could not load; wire selection is available."; }
 				}
 			}
 			if (token !== this.generation) return;
-			this.source = { name, raw, kind, objects, image }; this.selected.clear();
-			if (kind === "obj") objects.forEach((o, i) => this.selected.add(i));
+			this.source = { name, raw, kind, objects, image, rig }; this.selected.clear();
+			if (kind === "obj" || kind === "gltf") objects.forEach((o, i) => this.selected.add(i));
 			this.end(); this.api.setTool("select");
 			$("source_filter").value = ""; $("source_name").textContent = name;
-			$("source_obj_options").hidden = kind !== "obj";
-			this.message(`${objects.length} model(s). ${kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
+			$("source_obj_options").hidden = kind !== "obj" && kind !== "gltf"; $("source_up_wrap").hidden = kind === "gltf";
+			const rigText = rig ? ` with ${rig.bones.length} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""}` : "";
+			this.message(`${objects.length} model(s)${rigText}. ${kind === "gltf" ? "Check the scale (pixels per unit). Bones and animation come along when you add the models at the cursor or at their original position (not as a stamp). Each model follows one bone; a mesh that bends across several bones is cut into one model per bone." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
 			this.selectionChanged(); this.fit();
 		}
 		showSource() { $("source_dialog").classList.add("open"); this.list(); this.fit(); $("source_load").focus(); }
@@ -136,10 +147,10 @@
 		addAtCursor() {
 			if (!this.hasSelection()) return;
 			const objects = this.objects(), b = T.bounds(objects), p = this.api.state.cursor;
-			const moved = T.place(objects, p[0] - (b.x1 - b.x0) / 2, p[1] - p[2] - (b.y1 - b.y0), 1, p[2]);
-			this.api.commit(moved, "Imported"); this.closeSource(); this.api.frame();
+			const x = p[0] - (b.x1 - b.x0) / 2, y = p[1] - p[2] - (b.y1 - b.y0), moved = T.place(objects, x, y, 1, p[2]);
+			this.api.commit(moved, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), T.placeMap(objects, x, y, 1, p[2]))); this.closeSource(); this.api.frame();
 		}
-		addInPlace() { if (!this.hasSelection()) return; this.api.commit(this.objects(), "Imported"); this.closeSource(); this.api.frame(); }
+		addInPlace() { if (!this.hasSelection()) return; const objects = this.objects(); this.api.commit(objects, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id))); this.closeSource(); this.api.frame(); }
 		begin() {
 			const objects = this.objects(), b = T.bounds(objects), cam = this.api.renderer().cam;
 			this.draft = { objects, x: cam.x - (b.x1 - b.x0) / 2, y: cam.y - (b.y1 - b.y0) / 2, scale: 1, base: b.z0, pinned: false, pointer: null, valid: true };

@@ -2,7 +2,7 @@
   "name": "tileset-studio-link",
   "displayName": "Tileset Studio Link",
   "description": "Live link to Tileset Studio: sends the flattened Albedo group, shows Studio's normal-map sheet as a locked reference layer.",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "author": { "name": "Tileset Studio" },
   "contributes": {
     "scripts": [ { "path": "./plugin.lua" } ]

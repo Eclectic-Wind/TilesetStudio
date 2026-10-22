@@ -113,7 +113,10 @@
 			this.off = null;
 			if (r) {
 				const rows = this.rows(), img = new ImageData(r.w, rows);
-				if (this.mode === "heightfield") this._heightfield(img);
+				// Animating: Lit and Normals show the clip's current frame (albedo x normals), so playback runs here too.
+				const anim = (this.mode === "lit" || this.mode === "normals") && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(this.mode, this.light, this.ambient, img);
+				if (anim) { /* drawn */ }
+				else if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
 				else if (this.mode === "pieces") this._pieces(img);
 				else if (this.mode === "kind") this._kinds(img);

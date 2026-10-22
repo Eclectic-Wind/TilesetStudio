@@ -385,7 +385,6 @@
 		setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 	}
 
-	const imageBlob = (img) => new Promise((ok) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d").putImageData(img, 0, 0); c.toBlob(ok, "image/png"); });
 
 	// The name exported files go by: the Export menu's Name (saved with the project), else the tileset's name. Kept to letters,
 	// digits, - and _ so it is a safe file name everywhere (Godot paths included).
@@ -415,26 +414,15 @@
 		});
 	}
 
+	// The Godot bundle (one .export.json). The loose png / height / normal / pbr / footprints files are gone: the bundle holds them all.
 	async function exportMaps(which) {
 		if (!S.art) return toast("Open a tileset first.", "bad");
 		const name = exportName(), st = () => S.result.stats;
-		if (which === "bundle") {
-			const text = bundleJSON();
-			download(`${name}.export.json`, text);
-			toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}`, st().unfilled ? "" : "ok");
-			return status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
-		}
-		processNow();
-		const imgs = TS.Process.images(S.result, S.settings);
-		const files = [];
-		if (which === "all" || which === "png") files.push([`${name}.png`, await imageBlob(new ImageData(new Uint8ClampedArray(S.art.data), S.art.w, S.art.h))]);
-		if (which === "all" || which === "height") files.push([`${name}_height.png`, await imageBlob(imgs.height)]);
-		if (which === "all" || which === "normal") files.push([`${name}_normal.png`, await imageBlob(imgs.normal)]);
-		if (which === "all" || which === "pbr") files.push([`${name}_pbr.png`, await imageBlob(imgs.pbr)]);
-		if (which === "all" || which === "footprints") files.push([`${name}_footprints.json`, JSON.stringify(TS.Process.footprints(S.objects, S.art, S.result, S.settings), null, 1)]);
-		for (const [n, b] of files) { download(n, b); await new Promise((r) => setTimeout(r, 250)); }
-		toast(`Exported ${files.length === 1 ? files[0][0] : files.length + " files"}`, "ok");
-		status(`Exported ${files.map((f) => f[0]).join(", ")}${name !== S.name ? ` (the atlas must be called ${name}.png beside them)` : ""}${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
+		if (which !== "bundle") return;
+		const text = bundleJSON();
+		download(`${name}.export.json`, text);
+		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}`, st().unfilled ? "" : "ok");
+		status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 	}
 
 	// --- processing ---
@@ -456,6 +444,91 @@
 			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
 		tileProblems();
+		asepriteSoon();
+	}
+
+	// --- Aseprite link for the plain (non-animated) tileset: normal.png out, albedo.png back in ---
+
+	let asepriteTimer = 0;
+	const asepriteOn = () => TS.Link && TS.Link.linked() && S.art && !(TS.AnimUI && TS.AnimUI.on);
+	function asepriteSoon() { if (asepriteOn()) { clearTimeout(asepriteTimer); asepriteTimer = setTimeout(asepriteSend, 400); } }
+	async function asepriteSend() {
+		if (TS.Link && TS.Link.linked() && TS.AnimUI && TS.AnimUI.on) return TS.AnimUI.resend();
+		if (!asepriteOn()) return;
+		if (!S.result) processNow();
+		const n = TS.Process.images(S.result, S.settings).normal, w = S.art.w, h = S.art.h;
+		TS.Link.expected = { w, h };
+		try {
+			await TS.Link.push(n, { w, h, cw: w, ch: h, cols: 1, rows: 1, frames: 1 });
+			asepriteState("ok", `Sent normal.png (${w}x${h}) at ${new Date().toLocaleTimeString()}.`);
+		} catch (e) { asepriteState("warn", "Could not write to the folder: " + e.message); }
+	}
+	function asepriteState(state, text) {
+		$("as_state").textContent = text; $("as_state").className = "linkstate " + state; $("as_dot").className = "dot " + state;
+		const linked = TS.Link.linked();
+		$("as_link").textContent = linked ? "Re-link folder…" : "Link Aseprite folder…";
+		$("as_send").hidden = $("as_unlink").hidden = !linked;
+	}
+	function firstTile(img) {
+		if (!S.art || (img.width === S.art.w && img.height === S.art.h) || img.width < S.art.w || img.height < S.art.h) return img;
+		const c = document.createElement("canvas");
+		c.width = img.width; c.height = img.height;
+		const g = c.getContext("2d");
+		g.putImageData(img, 0, 0);
+		return g.getImageData(0, 0, S.art.w, S.art.h);
+	}
+	// Aseprite saved albedo.png: swap the tileset art for it, keeping the models, view and cursor.
+	async function asepriteAlbedo(img) {
+		img = firstTile(img); // not animating: only frame 1 (the top-left tile) counts, even if Aseprite still sends a whole animation sheet
+		if (!S.art) { // nothing open yet: Aseprite's art becomes the tileset (nothing to overwrite)
+			await setTileset(imageDataURL(img), "aseprite");
+			status("Opened Aseprite's art as the tileset.");
+			return asepriteState("ok", `Live: Aseprite's art is now the tileset (${img.width}x${img.height}).`);
+		}
+		if (!$("as_take").checked) return asepriteState("wait", "Received albedo.png from Aseprite (tick “Take Aseprite's albedo.png” to use it as the art).");
+		const url = imageDataURL(img), pic = await loadImage(url);
+		S.art = { w: img.width, h: img.height, data: new Uint8ClampedArray(img.data), alpha: Uint8Array.from({ length: img.width * img.height }, (_, i) => img.data[i * 4 + 3]) };
+		S.artURL = url;
+		renderer.setArt(pic, img.width, img.height);
+		markUnsaved();
+		changed();
+		asepriteState("ok", `Live: tileset art replaced from Aseprite at ${new Date().toLocaleTimeString()}.`);
+	}
+	function asepriteInit() {
+		const Link = TS.Link, animAlbedo = Link.onAlbedo, animStatus = Link.onStatus;
+		Link.onAlbedo = (img) => (TS.AnimUI && TS.AnimUI.on ? animAlbedo(img) : asepriteAlbedo(img));
+		Link.onStatus = (state, text) => { if (animStatus) animStatus(state, text); asepriteState(state, text); };
+		$("as_link").onclick = async () => {
+			try { await Link.connect(); asepriteSend(); } catch (e) { if (e.name !== "AbortError") toast(e.message, "bad"); }
+		};
+		$("as_unlink").onclick = () => { Link.disconnect(); $("as_roomrow").hidden = true; };
+		// Online: the room code is kept in this browser so Aseprite's saved code keeps working.
+		Link.onRelayOpen = asepriteSend;
+		$("as_online").onclick = () => {
+			let room = "";
+			try { room = localStorage.getItem("tsLinkRoom") || ""; } catch (e) { /* storage blocked: a new code each time */ }
+			if (!room) { room = Link.newRoom(); try { localStorage.setItem("tsLinkRoom", room); } catch (e) { /* ignore */ } }
+			try { Link.connectRelay(room); } catch (e) { return toast(e.message, "bad"); }
+			$("as_room").value = room; $("as_roomrow").hidden = false;
+		};
+		// A fresh code: whoever holds the old one (Aseprite included) is cut off until they are given the new one.
+		$("as_newroom").onclick = (e) => {
+			e.preventDefault();
+			const room = Link.newRoom();
+			try { localStorage.setItem("tsLinkRoom", room); } catch (err) { /* storage blocked: the code lasts this visit */ }
+			try { Link.connectRelay(room); } catch (err) { return toast(err.message, "bad"); }
+			$("as_room").value = room;
+			toast("New room code. The old one no longer reaches you; copy this one into Aseprite to link again.", "ok");
+		};
+		$("as_copy").onclick = (e) => { e.preventDefault(); navigator.clipboard.writeText($("as_room").value).then(() => toast("Room code copied. Paste it in Aseprite.", "ok"), () => $("as_room").select()); };
+		if (!Link.supported) $("as_link").hidden = true;
+		const help = (open) => $("as_help").classList.toggle("open", open);
+		$("as_help_btn").onclick = (e) => { e.stopPropagation(); $("b_aseprite").nextElementSibling.classList.remove("open"); help(true); $("as_help_close").focus(); };
+		$("as_help_close").onclick = () => help(false);
+		$("as_help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") help(false); });
+		$("as_help").addEventListener("click", (e) => { if (e.target === $("as_help")) help(false); });
+		$("as_send").onclick = asepriteSend;
+		if (!Link.supported) asepriteState("off", "Not linked. This browser can't watch a folder, so use “Link online”.");
 	}
 
 	// One warning for everything that makes the importer misread the tile cells: the Pieces view's conflicts and floating art,
@@ -613,7 +686,7 @@
 	function duplicate() {
 		if (S.edit || !S.selected.size) return;
 		pushUndo();
-		const copies = selectedObjs().map((o) => { const c = Mesh.cloneNew(o); c.name = o.name + " copy"; return c; });
+		const copies = selectedObjs().map((o) => { const c = Mesh.cloneNew(o); c.name = o.name + " copy"; if (S.anim) TS.Rig.inherit(S.anim, o.id, c.id); return c; });
 		S.objects.push(...copies);
 		S.selected = new Set(copies.map((c) => c.id)); S.active = copies[copies.length - 1].id;
 		changed();
@@ -1127,20 +1200,33 @@
 	function grabDelta(m) {
 		const p = m.data.pivot;
 		if (!m.axis) {
-			const a = renderer.floorPoint(m.start[0], m.start[1], p[2]), b = renderer.floorPoint(mouse[0], mouse[1], p[2]);
+			// Plane lock (a preset view): the plane through the pivot facing that view, the depth axis frozen.
+			const lk = S.viewLock ? S.viewLock.k : 2;
+			const a = lk === 2 ? renderer.floorPoint(m.start[0], m.start[1], p[2]) : planePoint(m.start, p, lk), b = lk === 2 ? renderer.floorPoint(mouse[0], mouse[1], p[2]) : planePoint(mouse, p, lk);
 			if (!a || !b) return [0, 0, 0];
 			// Near the horizon the plane runs away from the eye: cap the move.
-			const d = [b[0] - a[0], b[1] - a[1], 0], l = Math.hypot(d[0], d[1]), cap = 4096;
+			const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(d[0], d[1], d[2]), cap = 4096;
+			d[lk] = 0;
 			return l > cap ? v3.scale(d, cap / l) : d;
 		}
 		const u = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[m.axis];
-		const s0 = axisParam(p, u, m.start), s1 = axisParam(p, u, mouse);
-		if (s0 === null || s1 === null) {
+		const moved = axisDelta(p, u, m.start, mouse);
+		if (moved === null) {
 			// Looking straight along the axis: fall back to the screen drag.
 			const z = renderer.cam.zoom;
 			return v3.scale(u, m.axis === "x" ? (mouse[0] - m.start[0]) / z : (m.start[1] - mouse[1]) / z);
 		}
-		return v3.scale(u, TS.clamp(s1 - s0, -4096, 4096));
+		return v3.scale(u, TS.clamp(moved, -4096, 4096));
+	}
+	// How far the pointer has moved along an axis as it is drawn on screen, in world units at the pivot's own depth (the way Blender
+	// reads a locked-axis drag): the model keeps pace with the pointer's travel along the axis, wherever the pointer is. Null when the
+	// axis points at the viewer and has no screen direction to follow.
+	function axisDelta(P, u, from, to) {
+		const a = renderer.toScreen(P), b = renderer.toScreen(v3.add(P, v3.scale(u, 10)));
+		if (!a || !b) return null;
+		const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+		if (l2 < 0.25) return null;
+		return (10 * ((to[0] - from[0]) * dx + (to[1] - from[1]) * dy)) / l2;
 	}
 	function axisParam(P, u, at) {
 		const r = renderer.ray(at[0], at[1]), b = v3.dot(u, r.d), den = 1 - b * b;
@@ -1170,24 +1256,27 @@
 		if (m.type === "grab" && m.axis && m.local) {
 			// Along a local axis: the distance snaps (each model along its own axis in object mode).
 			let shown = 0;
+			m.data.xf = [];
 			for (const [o, base] of m.base) {
-				const u = axisVec(m, base), s0 = axisParam(m.data.pivot, u, m.start), s1 = axisParam(m.data.pivot, u, mouse);
-				let s = num !== null ? num : s0 === null || s1 === null ? (m.start[1] - mouse[1]) / z : TS.clamp(s1 - s0, -4096, 4096);
+				const u = axisVec(m, base), moved = axisDelta(m.data.pivot, u, m.start, mouse);
+				let s = num !== null ? num : moved === null ? (m.start[1] - mouse[1]) / z : TS.clamp(moved, -4096, 4096);
 				if (num === null) s = TS.snap(s, step);
 				Mesh.translate(o, selVerts(o), v3.scale(u, s));
+				m.data.xf.push({ id: o.id, d: v3.scale(u, s) });
 				shown = s;
 			}
 			info = `Move ${+shown.toFixed(2)} px along ${axisName(m)}`;
 		} else if (m.type === "grab") {
+			m.data.xf = [];
 			let d = grabDelta(m);
 			if (num !== null) d = m.axis === "y" ? [0, num, 0] : m.axis === "z" ? [0, 0, num] : [num, 0, 0];
 			else {
 				// Only the axes being moved snap (a stacked piece moved over the ground keeps its height).
-				const moving = m.axis ? ["xyz".indexOf(m.axis)] : [0, 1];
+				const moving = m.axis ? ["xyz".indexOf(m.axis)] : S.viewLock ? [0, 1, 2].filter((k) => k !== S.viewLock.k) : [0, 1];
 				d = d.map((v, k) => (moving.includes(k) ? TS.snap(m.data.ref[k] + v, step) - m.data.ref[k] : 0));
 			}
-			for (const [o] of m.base) Mesh.translate(o, selVerts(o), d);
-			info = `Move ${d.map((v, k) => "XYZ"[k] + " " + +v.toFixed(2)).join(" · ")}${m.axis ? " along " + AXIS[m.axis] : " (across and in depth on the ground; Z for height)"}`;
+			for (const [o] of m.base) { Mesh.translate(o, selVerts(o), d); m.data.xf.push({ id: o.id, d }); }
+			info = `Move ${d.map((v, k) => "XYZ"[k] + " " + +v.toFixed(2)).join(" · ")}${m.axis ? " along " + AXIS[m.axis] : S.viewLock ? ` in the ${VIEWS[S.viewLock.name].label} view plane (${"XYZ"[S.viewLock.k]} frozen)` : " (across and in depth on the ground; Z for height)"}`;
 		} else if (m.type === "scale" && m.axis && m.local) {
 			// Along a local axis, about each model's middle (edit mode: the selection's): the size along it snaps.
 			const p = renderer.toScreen(m.data.pivot) || modal.start;
@@ -1228,17 +1317,20 @@
 		} else if (m.type === "rotate") {
 			const p = renderer.toScreen(m.data.pivot) || modal.start;
 			let a = Math.atan2(mouse[1] - p[1], mouse[0] - p[0]) - Math.atan2(m.start[1] - p[1], m.start[0] - p[0]);
-			let deg = num !== null ? num : (a * 180) / Math.PI;
+			if (S.viewLock && num === null) a *= turnSign(m.data.pivot, m.axis ? axisVec(m, m.base[0][1]) : [0, 1, 2].map((k) => (k === S.viewLock.k ? 1 : 0)));
+				let deg = num !== null ? num : (a * 180) / Math.PI;
 			if (num === null && S.snap > 0) deg = TS.snap(deg, (ev && ev.shiftKey) || S.fine ? 5 : 15);
 			const rad = (deg * Math.PI) / 180;
+			m.data.xf = [];
 			for (const [o, base] of m.base) {
-				const u = m.axis ? axisVec(m, base) : [0, 0, 1];
+				const u = m.axis ? axisVec(m, base) : S.viewLock ? [0, 1, 2].map((k) => (k === S.viewLock.k ? 1 : 0)) : [0, 0, 1];
 				// Local turns in object mode: each model about its own middle (individual origins); else one shared pivot.
 				const c = m.local && !S.edit ? Mesh.centre(base) : m.data.pivot;
 				Mesh.rotateAround(o, selVerts(o), c, u, rad);
+				m.data.xf.push({ id: o.id, c, u, rad });
 				if (!S.edit) o.basis = Mesh.basis(base).map((a) => Mesh.turnVec(a, u, rad));
 			}
-			info = `Turn ${+deg.toFixed(1)}° about ${m.axis ? axisName(m) : "the vertical (Z)"}${m.local && !S.edit && m.base.length > 1 ? ", each about its own middle" : ""}`;
+			info = `Turn ${+deg.toFixed(1)}° about ${m.axis ? axisName(m) : S.viewLock ? `the ${VIEWS[S.viewLock.name].label} view's depth axis (${"XYZ"[S.viewLock.k]})` : "the vertical (Z)"}${m.local && !S.edit && m.base.length > 1 ? ", each about its own middle" : ""}`;
 		} else if (m.type === "extrude") {
 			const [o] = m.base[0];
 			const faces = [...S.elemSel];
@@ -1301,9 +1393,15 @@
 
 	function confirmModal() {
 		const m = modal;
+		// Animating: a move or turn of models becomes a key on the current frame (their bone is made if they have none), and the
+		// models themselves stay at rest. Scale and edit mode still change the models.
+		const keyIt = TS.AnimUI && TS.AnimUI.on && !S.edit && !m.fromDuplicate && (m.type === "grab" || m.type === "rotate") && m.data.xf && m.data.xf.length;
+		if (keyIt) restoreBase();
 		modal = null;
 		modalBar();
 		pushUndo(m.before);
+		let keyedMsg = "";
+		if (keyIt) { const r = TS.AnimUI.keyTransform(m.data.xf); keyedMsg = (`Keyed ${m.data.xf.length} model(s) on frame ${r.frame}${r.made ? ` (made ${r.made} bone${r.made > 1 ? "s" : ""}, named after the model)` : ""}. Pick another frame and move again.`); }
 		if (m.data.extruded) Mesh.orientLoose(m.base[0][0], toViewer());
 		if (m.type === "bevel") S.elemSel.clear(); // bevel renumbers edges and faces
 		if (m.type === "loopslide") {
@@ -1313,6 +1411,7 @@
 		}
 		changed();
 		hint();
+		if (keyedMsg) status(keyedMsg);
 	}
 
 	function cancelModal() {
@@ -1483,6 +1582,7 @@
 		if (want === !!S.stay3d) return;
 		if (modal) cancelModal();
 		S.stay3d = want;
+		if (!want) { S.viewLock = null; renderer.free.ortho = false; renderer.free.up = null; syncViewButtons(); }
 		document.querySelectorAll('[data-act="stay3d"]').forEach((b) => b.classList.toggle("on", S.stay3d));
 		hover = null;
 		if (S.stay3d) {
@@ -1492,6 +1592,64 @@
 		} else endLook();
 		hint();
 	}
+	// --- Blender-style preset views (numpad 1 front, 3 right, 7 top; Ctrl for the opposite side): flat orthographic, and the
+	// view's plane becomes the move/turn plane (S.viewLock = {k: depth axis index, name}) until another view or Unlock is chosen. ---
+	const VIEWS = {
+		front: { k: 1, yaw: 0, pitch: 0, up: null, label: "Front" }, back: { k: 1, yaw: Math.PI, pitch: 0, up: null, label: "Back" },
+		right: { k: 0, yaw: Math.PI / 2, pitch: 0, up: null, label: "Right" }, left: { k: 0, yaw: -Math.PI / 2, pitch: 0, up: null, label: "Left" },
+		top: { k: 2, yaw: 0, pitch: Math.PI / 2, up: [0, -1, 0], label: "Top" }, bottom: { k: 2, yaw: 0, pitch: -Math.PI / 2, up: [0, 1, 0], label: "Bottom" },
+	};
+	function setView(name) {
+		const v = VIEWS[name];
+		if (!v || modal || pencil || knife) return;
+		const fresh = !S.stay3d;
+		if (fresh) toggleStay3d(true);
+		const f = renderer.free;
+		f.ortho = true; f.yaw = v.yaw; f.pitch = v.pitch; f.up = v.up;
+		S.viewLock = { k: v.k, name };
+		animate({ blend: 1 }, fresh ? 160 : 1);
+		syncViewButtons(); hint(); dirty = true;
+		status(`${v.label} view (orthographic). Moves and turns are locked to this plane (${"XYZ"[v.k]} frozen). Alt-drag or middle-drag orbits out of it; click another gizmo ball or Unlock to free them.`);
+	}
+	function unlockView() {
+		if (!S.viewLock) return;
+		S.viewLock = null; syncViewButtons(); hint(); dirty = true;
+		status("Plane lock cleared: moves go over the ground again.");
+	}
+	// Orbiting out of a preset view: it is no longer Front / Right / Top, so the plane lock and the flat orthographic look go too
+	// (the lock would otherwise keep moving things in a plane the view no longer shows).
+	function leavePreset() {
+		if (!S.viewLock) return;
+		const name = VIEWS[S.viewLock.name].label;
+		S.viewLock = null; renderer.free.ortho = false;
+		syncViewButtons(); hint(); dirty = true;
+		status(`Left the ${name} view: plane lock cleared (perspective). Click a ball on the axis gizmo to go back to a view.`);
+	}
+	function toggleOrtho() {
+		if (!S.stay3d) return status("Orthographic applies in the 3D view (5).");
+		renderer.free.ortho = !renderer.free.ortho; dirty = true;
+		status(renderer.free.ortho ? "Orthographic view." : "Perspective view.");
+	}
+	function syncViewButtons() {
+		document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("on", !!S.viewLock && VIEWS[S.viewLock.name].k === VIEWS[b.dataset.view].k));
+		document.querySelectorAll('[data-act="unlockview"]').forEach((b) => b.classList.toggle("on", !!S.viewLock));
+	}
+	// Pointer on the plane through p whose normal is axis k (null looking edge-on).
+	function planePoint(at, p, k) {
+		const r = renderer.ray(at[0], at[1]);
+		if (Math.abs(r.d[k]) < 0.02) return null;
+		return v3.add(r.o, v3.scale(r.d, (p[k] - r.o[k]) / r.d[k]));
+	}
+	// Which way a turn about axis u looks on screen at pivot p: +1 when positive angles follow the pointer's screen turn.
+	function turnSign(p, u) {
+		const e1 = Math.abs(u[2]) < 0.9 ? v3.norm(v3.cross(u, [0, 0, 1])) : [1, 0, 0], q = v3.add(p, v3.scale(e1, 50));
+		const rot = Mesh.turnVec(v3.scale(e1, 50), u, 0.3), q2 = v3.add(p, rot);
+		const a = renderer.toScreen(p), b = renderer.toScreen(q), c = renderer.toScreen(q2);
+		if (!a || !b || !c) return 1;
+		const cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+		return Math.abs(cr) < 1e-6 ? 1 : cr > 0 ? 1 : -1;
+	}
+
 	// Pan the 3D view: move the orbit centre across the floor, the way the drag goes.
 	function panFree(dx, dy) {
 		const f = renderer.free, z = renderer.cam.zoom;
@@ -1809,6 +1967,9 @@
 			if (S.stay3d && button === 0 && S.tool !== "zoom" && S.tool !== "cursor") {
 				press = { kind: "select", start: mouse.slice(), add: e.shiftKey, orbit: e.ctrlKey || e.metaKey ? "box" : S.tool === "box" ? (e.altKey ? "look" : "box") : e.shiftKey ? "pan" : "look",
 					onSel: !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && overSelection(mouse[0], mouse[1]) };
+				// In a preset view a plain drag on empty space box-selects instead of orbiting (as in Blender): Alt-drag or middle-drag
+				// orbits out of it, so a slip of the mouse can't throw you out of the view.
+				if (S.viewLock && press.orbit === "look" && !e.altKey) press.orbit = "box";
 				return;
 			}
 			if (button === 0 && S.tool === "zoom") { press = { kind: "zoom", start: mouse.slice(), zoom: renderer.cam.zoom }; return; }
@@ -1832,6 +1993,8 @@
 				return;
 			}
 			if (press && press.kind === "look") {
+				if (S.viewLock) leavePreset("orbit");
+				if (renderer.free.up) { renderer.free.up = null; renderer.free.pitch = TS.clamp(renderer.free.pitch, -1.5, 1.5); }
 				renderer.free.yaw -= (mouse[0] - press.last[0]) * 0.008;
 				renderer.free.pitch = TS.clamp(renderer.free.pitch + (mouse[1] - press.last[1]) * 0.008, -1.5, 1.5);
 				press.last = mouse.slice(); dirty = true;
@@ -1896,6 +2059,14 @@
 			press = null;
 		};
 		canvas.addEventListener("pointerup", release);
+		// The view gizmo's balls (drawAxes) act on press: the svg is rebuilt on every redraw, so a click event would be lost.
+		$("axes").addEventListener("pointerdown", (e) => {
+			const g = e.target.closest && e.target.closest("[data-gv]");
+			if (!g) return;
+			e.preventDefault(); e.stopPropagation();
+			const flip = { front: "back", back: "front", right: "left", left: "right", top: "bottom", bottom: "top" };
+			setView(S.viewLock && S.viewLock.name === g.dataset.gv ? flip[g.dataset.gv] : g.dataset.gv);
+		});
 		canvas.addEventListener("pointerleave", () => { if (hover) { hover = null; dirty = true; } });
 		canvas.addEventListener("pointercancel", (e) => {
 			if (exchange?.draft) exchange.draft.pointer = null;
@@ -1969,6 +2140,10 @@
 		let k = e.key.toLowerCase();
 		const ctrl = e.ctrlKey || e.metaKey;
 		if (k === "return" || e.code === "Enter" || e.code === "NumpadEnter") k = "enter";
+		// Numpad views, as in Blender: 1 front, 3 right, 7 top (Ctrl: back, left, bottom); 5 flips orthographic / perspective.
+		const npView = { Numpad1: ["front", "back"], Numpad3: ["right", "left"], Numpad7: ["top", "bottom"] }[e.code];
+		if (npView && !modal && !e.altKey) { setView(npView[ctrl ? 1 : 0]); e.preventDefault(); return; }
+		if (e.code === "Numpad5" && !modal && !ctrl) { toggleOrtho(); e.preventDefault(); return; }
 		if (S.tool === "stamp" && exchange.draft) {
 			if (k === "escape" || k === "q") { setTool("select"); e.preventDefault(); return; }
 			if (k === "enter") { if (!e.repeat) exchange.place(); e.preventDefault(); return; }
@@ -2250,11 +2425,23 @@
 		const at = (d, k = 1) => [C[0] + (d[0] / len) * R * k, C[1] + (d[1] / len) * R * k];
 		const [x, y] = [at(dirs[0]), at(dirs[1])], xy = [x[0] + y[0] - C[0], x[1] + y[1] - C[1]];
 		let html = `<polygon points="${[C, x, xy, y].map((q) => q.join(",")).join(" ")}" class="ground"/>`;
-		["X across", "Y depth", "Z height"].forEach((name, k) => {
-			const tip = at(dirs[k]), lab = at(dirs[k], 1.25), anchor = Math.abs(dirs[k][0]) < len * 0.3 ? "middle" : dirs[k][0] > 0 ? "start" : "end";
-			html += `<line x1="${C[0]}" y1="${C[1]}" x2="${tip[0]}" y2="${tip[1]}" class="ax ax-${"xyz"[k]}"/><circle cx="${tip[0]}" cy="${tip[1]}" r="3" class="ax-${"xyz"[k]}"/>` +
-				`<text x="${lab[0]}" y="${lab[1] + 4}" text-anchor="${anchor}" class="ax-${"xyz"[k]}">${name}</text>`;
-		});
+		// Blender-style view gizmo: a ball at each end of each axis; click one to look down that axis (+X Right, -X Left, -Y Front,
+		// +Y Back, +Z Top, -Z Bottom). The current preset's ball is ringed, and clicking it again flips to the opposite side.
+		// Balls are drawn far to near, so where an axis points at the viewer its near ball is the one on top (and the one you hit).
+		const NAMES = ["X across", "Y depth", "Z height"], POS = ["right", "back", "top"], NEG = ["left", "front", "bottom"];
+		const vr = $("view").getBoundingClientRect(), d = renderer.ray(vr.width / 2, vr.height / 2).d.map((v) => (isFinite(v) ? v : 0));
+		const balls = [];
+		for (let k = 0; k < 3; k++) for (const sgn of [1, -1]) balls.push({ k, sgn, depth: sgn * d[k], view: sgn > 0 ? POS[k] : NEG[k] });
+		for (let k = 0; k < 3; k++) {
+			const tip = at(dirs[k]);
+			html += `<line x1="${C[0]}" y1="${C[1]}" x2="${tip[0]}" y2="${tip[1]}" class="ax ax-${"xyz"[k]}"/>`;
+		}
+		const cur = S.viewLock && S.viewLock.name;
+		for (const b of balls.sort((p, q) => q.depth - p.depth)) {
+			const pt = at(dirs[b.k], b.sgn), c = "ax-" + "xyz"[b.k], label = `${b.sgn > 0 ? "+" : "−"}${"XYZ"[b.k]}`;
+			html += `<g data-gv="${b.view}" class="gv${cur === b.view ? " cur" : ""}"><title>${VIEWS[b.view].label} view (${label}, ${NAMES[b.k]})${cur === b.view ? ": click to flip to the opposite side" : ""}</title>` +
+				(b.sgn > 0 ? `<circle cx="${pt[0]}" cy="${pt[1]}" r="8.5" class="${c} pos"/><text x="${pt[0]}" y="${pt[1] + 4}" text-anchor="middle" class="gl">${"XYZ"[b.k]}</text>` : `<circle cx="${pt[0]}" cy="${pt[1]}" r="6" class="${c} neg"/>`) + "</g>";
+		}
 		svg.innerHTML = html;
 	}
 
@@ -2282,6 +2469,7 @@
 			zoomin: () => zoomStep(...viewCentre(), 1), zoomout: () => zoomStep(...viewCentre(), -1),
 			pixel: () => zoomAt(...viewCentre(), Math.max(1, Math.round(renderer.cam.zoom))), frame: frameSelection,
 			stay3d: () => toggleStay3d(),
+			"view-front": (e) => setView(e && e.ctrlKey ? "back" : "front"), "view-right": (e) => setView(e && e.ctrlKey ? "left" : "right"), "view-top": (e) => setView(e && e.ctrlKey ? "bottom" : "top"), unlockview: unlockView, ortho: toggleOrtho,
 			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};
 		acts.extrudeman = () => { if (S.edit && S.elemMode === "face") { S.armed = "extrude"; S.armedOpts = { manifold: true }; modalBar(); status("Press on the view, drag, and let go to extrude (manifold)."); } else status("Extrude manifold works on faces (3)."); };
@@ -2345,6 +2533,7 @@
 		$("b_tileset").onclick = () => $("f_tileset").click();
 		$("b_project").onclick = () => $("f_project").click();
 		$("b_save").onclick = saveProject;
+		asepriteInit();
 		$("b_add").onclick = () => toggleAddMenu(!$("addmenu").classList.contains("open"));
 		for (const b of document.querySelectorAll("#addmenu button")) b.onclick = () => { toggleAddMenu(false); addPrimitive(b.dataset.kind); };
 		$("snap").onchange = () => { S.snap = parseFloat($("snap").value); status(`Snapping: ${snapText()} ([ / ] step it)`); };
@@ -2497,24 +2686,40 @@
 		if (q.get("project")) fetch(q.get("project")).then((r) => r.text()).then(openProject).catch((err) => status("Could not open project: " + err));
 	}
 
-	function commitModels(models, verb) {
+	// Bones, binding and clips that came with imported models (see TS.Transfer.rigFor): added to the project's own, models matched by position.
+	function mergeRig(rig, models, copies) {
+		const a = S.anim, R = TS.Rig, boneMap = {};
+		for (const b of R.ordered({ bones: rig.bones })) {
+			const nb = R.newBone(b.name, b.head.slice(), b.tail.slice(), b.parent ? boneMap[b.parent] : null);
+			a.bones.push(nb); boneMap[b.id] = nb.id;
+		}
+		models.forEach((m, i) => { const old = rig.bind[m.id]; if (old && boneMap[old]) a.bind[copies[i].id] = boneMap[old]; });
+		for (const c of rig.clips) {
+			const nc = R.newClip(c.name, c.frames, c.fps);
+			for (const id of Object.keys(c.tracks)) nc.tracks[boneMap[id]] = JSON.parse(JSON.stringify(c.tracks[id]));
+			a.clips.push(nc);
+			if (!a.clip) a.clip = nc.id;
+		}
+	}
+	function commitModels(models, verb, rig) {
 		if (!models.length) return;
 		if (modal) cancelModal();
 		pushUndo(); Mesh.bumpIds(S.objects);
 		const copies = models.map(o => { const copy = Mesh.cloneNew(o); copy.hidden = false; return copy; });
 		S.objects.push(...copies); S.selected = new Set(copies.map(o => o.id)); S.active = copies[copies.length - 1].id;
+		if (rig) mergeRig(rig, models, copies);
 		S.edit = false; S.elemSel.clear(); hover = null; cycle = null;
-		changed(); status(verb + " " + copies.length + " model(s). Ctrl+Z undoes the whole placement.");
+		changed(); status(verb + " " + copies.length + " model(s)" + (rig ? ` with ${rig.bones.length} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""} (Animate shows them)` : "") + ". Ctrl+Z undoes the whole placement.");
 	}
 
 	// For scripted use and tests (window.TS.api).
 	TS.api = {
 		state: S, get renderer() { return renderer; }, get output() { return output; },
 		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
-		addPrimitive, processNow, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
+		addPrimitive, processNow, asepriteSend, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
 		select: (id) => { S.selected = new Set([id]); S.active = id; selChanged(); },
 		// Internals, for scripted checks.
-		get modal() { return modal; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
+		get modal() { return modal; }, get viewLock() { return S.viewLock; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		redraw: drawNow, // for scripted captures
 		snapshot, pushUndo, markUnsaved, panels, setTileset, status, get dirty_() { return dirty; }, redrawSoon: () => { dirty = true; },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode, toast, guardUnsaved,

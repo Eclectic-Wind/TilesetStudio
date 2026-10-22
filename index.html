@@ -19,7 +19,7 @@
 			<hr>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
 			<hr>
-			<button id="b_import3d" title="Import 3D / stamp: pick models from a Wavefront OBJ or another Studio project, then add them or stamp them over your art">Import 3D / stamp…</button>
+			<button id="b_import3d" title="Import 3D / stamp: pick models from a glTF (.glb, with bones and animation), a Wavefront OBJ or another Studio project, then add them or stamp them over your art">Import 3D / stamp…</button>
 		</div>
 	</div>
 	<div class="menuwrap">
@@ -28,6 +28,20 @@
 			<button data-kind="box">Box</button><button data-kind="cylinder">Cylinder</button><button data-kind="wedge">Wedge</button>
 			<button data-kind="plane">Plane</button><button data-kind="sphere">Sphere</button>
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
+		</div>
+	</div>
+	<div class="menuwrap" data-click>
+		<button id="b_aseprite" class="ghost" title="Link a folder shared with the Aseprite extension: Studio writes normal.png there, and can take albedo.png back as the tileset art"><span id="as_dot" class="dot"></span> Aseprite ▾</button>
+		<div class="menu aseprite-menu">
+			<div class="asrow"><button id="as_online" title="Works in any browser, Firefox and Zen included: Studio and the Aseprite extension both connect to a small relay and share a room code">Link online (any browser)</button><button id="as_help_btn" class="round" title="How to link, and is it private?">?</button></div>
+			<label id="as_roomrow" class="aschk" hidden>Room code <input id="as_room" readonly spellcheck="false" title="Paste this into Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…"> <button id="as_copy">Copy</button> <button id="as_newroom" title="Make a fresh random code and switch to it. Anyone holding the old code (Aseprite included) is cut off; paste the new one into Aseprite to link again.">New code</button></label>
+			<button id="as_link" title="Pick the folder the Aseprite extension saves into (Chrome and Edge only)">Link Aseprite folder…</button>
+			<button id="as_send" title="Write normal.png to the linked folder now" hidden>Send normal map now</button>
+			<button id="as_unlink" hidden>Unlink</button>
+			<hr>
+			<label class="aschk" title="When Aseprite saves albedo.png (same size as the tileset), replace the tileset art with it. Models stay where they are."><input id="as_take" type="checkbox"> Take Aseprite's albedo.png as the tileset art</label>
+			<p id="as_state" class="linkstate">Not linked.</p>
+			<p class="linkstate"><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the Aseprite extension</a> · needs Aseprite 1.3 or newer (Steam, itch or built from source)</p>
 		</div>
 	</div>
 	<button id="b_animate" class="ghost" title="Animation mode: rig the models with bones, pose them on a timeline, and send the frames to Aseprite as a normal-map spritesheet">Animate</button>
@@ -42,12 +56,7 @@
 				<label class="exportname" title="What the exported files are called (saved with the project). Letters, digits, - and _; empty = the tileset's name. In Godot the bundle unpacks to name.png, name_height.png ... and name_tileset.tres.">Name <input id="exportname" spellcheck="false" autocomplete="off"></label>
 				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★ <kbd>Ctrl+Shift+E</kbd></button>
 				<hr>
-				<button data-export="all">Separate files (png, height, normal, pbr, footprints)</button>
-				<button data-export="png" title="The tileset art itself, as a plain PNG">Raw PNG (art)</button>
-				<button data-export="height">Height map</button><button data-export="normal">Normal map</button>
-				<button data-export="pbr">Roughness / metallic</button><button data-export="footprints">Footprints (JSON)</button>
-				<hr>
-				<button id="b_export3d" title="3D models: mesh geometry of the scene or the selection as Wavefront OBJ, for Blender and other 3D tools">3D models (OBJ)…</button>
+				<button id="b_export3d" title="3D models: the scene or the selection as glTF (with bones and animation) or Wavefront OBJ, for Blender and other 3D tools">3D models (glTF / OBJ)…</button>
 			</div>
 		</div>
 	</div>
@@ -191,6 +200,11 @@
 			<button data-tool="zoom" title="Zoom: drag up/down on the view (or wheel, pinch)">🔍</button>
 			<button data-tool="look" title="Look round: drag on the view; it eases back when you let go (or Alt/middle-drag)">👁</button>
 			<button data-act="stay3d" title="Stay in 3D (5): the look-round holds until you press this again. Drag orbits, Shift/Space-drag pans, wheel zooms, click selects.">3D</button>
+			<button data-act="view-front" data-view="front" title="Front view, orthographic (Numpad 1; Ctrl: back). Locks moves and turns to this plane.">Fr</button>
+			<button data-act="view-right" data-view="right" title="Right view, orthographic (Numpad 3; Ctrl: left). Locks moves and turns to this plane.">Rt</button>
+			<button data-act="view-top" data-view="top" title="Top view, orthographic (Numpad 7; Ctrl: bottom). Locks moves and turns to this plane.">Tp</button>
+			<button data-act="ortho" title="Orthographic / perspective (Numpad 5)">⊞</button>
+			<button data-act="unlockview" title="Clear the view-plane lock (moves go over the ground again)">🔓</button>
 			<span class="gap"></span>
 			<button data-act="zoomin" title="Zoom in (+)">＋</button>
 			<span id="zoomlabel" class="zoomlabel">100%</span>
@@ -242,27 +256,49 @@
 <input type="file" id="f_tileset" accept="image/png" hidden>
 <input type="file" id="f_ref" accept=".json,application/json" multiple hidden>
 <input type="file" id="f_project" accept=".json,application/json" hidden>
-<input type="file" id="f_source" accept=".obj,.json" hidden>
+<input type="file" id="f_source" accept=".obj,.json,.glb,.gltf" hidden>
 <div id="source_dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="source_title">
 	<div class="card sourcecard">
 		<div class="sourcebar"><h2 id="source_title">Import 3D &amp; model stamps</h2><span class="grow"></span><button id="source_close">Close</button></div>
 		<div class="sourcebar"><button id="source_load" class="primary">Load source (.obj / .studio.json)</button><span id="source_name" class="dim">No source loaded</span></div>
-		<div id="source_obj_options" class="sourcebar" hidden><label>Pixels per OBJ unit <input id="source_units" type="number" min="0.0001" max="100000" step="1" value="1"></label><label>File up axis <select id="source_up"><option value="z">Z up</option><option value="y">Y up</option></select></label></div>
+		<div id="source_obj_options" class="sourcebar" hidden><label>Pixels per unit <input id="source_units" type="number" min="0.0001" max="100000" step="1" value="1"></label><label id="source_up_wrap">File up axis <select id="source_up"><option value="z">Z up</option><option value="y">Y up</option></select></label></div>
 		<p id="source_message" aria-live="polite">Load an existing model file. Your open image and models stay in place.</p>
 		<div class="sourcebody"><div class="sourcecanvas"><canvas id="source_view"></canvas><p class="dim">Drag a box around complete parts. Shift adds / toggles. Wheel zooms; right-drag pans.</p></div><div class="sourcelist"><input id="source_filter" type="search" placeholder="Filter source models"><div id="source_list"></div></div></div>
 		<div class="sourcebar"><button id="source_all">Select all</button><button id="source_none">Clear</button><button id="source_fit">Fit sheet</button><button id="source_frame" disabled>Frame selected</button><span id="source_count" class="dim">0 part(s) selected</span></div>
 		<div class="sourcebar"><button id="source_add" disabled title="Add the selected models at the 3D cursor, with their lowest point at cursor height">Add at cursor</button><button id="source_keep" disabled title="Add the selected models with their existing coordinates">Add at original position</button><span class="grow"></span><button id="source_stamp" class="primary" disabled>Use as stamp</button></div>
 	</div>
 </div>
+<div id="as_help" class="modal" role="dialog" aria-modal="true" aria-labelledby="as_help_title"><div class="card askcard ashelp">
+	<h2 id="as_help_title">Link Aseprite online</h2>
+	<ol>
+		<li><b>Install once.</b> Download the extension from the Aseprite menu and double-click it. Aseprite adds it.</li>
+		<li><b>Get a code.</b> In the Aseprite menu click <b>Link online</b>, then <b>Copy</b>.</li>
+		<li><b>Open Aseprite.</b> Make a new sprite the same size as your tileset, in RGB colour.</li>
+		<li><b>Paste the code.</b> In Aseprite go to <b>File ▸ Scripts ▸ Tileset Studio Link (online)</b>, paste the code and press <b>Link</b>.</li>
+	</ol>
+	<p>Now Studio's normal map shows up in Aseprite as a locked layer. Draw inside a group called <b>Albedo</b> and your art goes back to Studio. The dot by the Aseprite menu turns green when it works.</p>
+	<h3>Is it private?</h3>
+	<ul>
+		<li><b>Only you can see it.</b> Your code is random and made just for your browser. Nobody can see your pictures without it, and nobody can guess it.</li>
+		<li><b>Nothing is saved.</b> Your pictures pass through and are never written to a disk, a database or a log.</li>
+		<li><b>If you join late:</b> say you open Aseprite after Studio. The relay holds the newest picture for a short while so Aseprite can still get it. It forgets it once everyone has left and it goes quiet.</li>
+		<li><b>The catch.</b> Your pictures travel through Cloudflare's servers, like any online service, and anyone you give the code to can see them.</li>
+		<li><b>Change it any time.</b> Your code stays the same between visits so Aseprite remembers it. If you shared it, showed it on a stream or just want a clean start, press <b>New code</b>: the old one stops reaching you at once. Paste the new code into Aseprite to link again.</li>
+		<li><b>Aseprite's side is not locked.</b> Studio talks to the relay over a secure connection, but Aseprite cannot, so its half travels as plain text. Someone on your own network (shared Wi-Fi, say) could in theory read the code and the pictures. Fine at home, not great on a public network. For art that must stay private, use the folder link in Chrome or Edge.</li>
+	</ul>
+	<div class="sourcebar"><button id="as_help_close" class="primary">Close</button></div>
+</div></div>
 <div id="obj_export" class="modal" role="dialog" aria-modal="true" aria-labelledby="obj_title"><div class="card objcard">
-	<h2 id="obj_title">Export 3D &middot; Wavefront OBJ</h2>
-	<p>Export mesh geometry and object names. Keep a Studio project for the image, materials, and collision settings.</p>
+	<h2 id="obj_title">Export 3D models</h2>
+	<p>Send models to Blender or other 3D tools, and bring a refined version back with <b>File ▸ Import 3D</b>.</p>
+	<label>Format <select id="obj_format"><option value="glb">glTF (.glb): models, bones and animation</option><option value="obj">Wavefront OBJ: models only</option></select></label>
 	<label><input id="obj_selected" type="checkbox"> Selected models only</label>
-	<label>Pixels per OBJ unit <input id="obj_units" type="number" min="0.0001" max="100000" step="1" value="1"></label>
-	<label>File up axis <select id="obj_up"><option value="z">Z up</option><option value="y">Y up</option></select></label>
-	<p class="dim">Use matching units and up axis when importing again. OBJ exchange includes faces and loose edges; it does not transfer textures, UVs, rigging, or animations.</p>
+	<label id="obj_rig_row"><input id="obj_rig" type="checkbox" checked> Include bones and animation clips</label>
+	<label>Pixels per unit <input id="obj_units" type="number" min="0.0001" max="100000" step="1" value="1"></label>
+	<label id="obj_up_row" hidden>File up axis <select id="obj_up"><option value="z">Z up</option><option value="y">Y up</option></select></label>
+	<p id="obj_note" class="dim">glTF is Y-up like Blender, and Studio's axes read the same as Blender's. Use the same pixels-per-unit when you import again. Each model follows one bone rigidly; a face is sent as triangles (a Studio-made model comes back with its quads). Textures and UVs are not transferred.</p>
 	<p id="obj_export_error" class="bad" aria-live="polite"></p>
-	<div class="sourcebar"><button id="obj_download" class="primary">Download OBJ</button><button id="obj_close">Cancel</button></div>
+	<div class="sourcebar"><button id="obj_download" class="primary">Download</button><button id="obj_close">Cancel</button></div>
 </div></div>
 <div id="help" class="modal">
 	<div class="card">
@@ -296,11 +332,9 @@
 			<tr><td>Ctrl+arrows, PageUp/Down</td><td>nudge one snap step (Shift: half)</td><td>[ / ]</td><td>snap step down / up</td></tr>
 			<tr><td>Alt+Z</td><td>X-ray</td><td>outliner</td><td>double-click renames, the dot hides, the box filters</td></tr>
 		</table>
-		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Pencil (P)</b> draws a custom-shaped object, on a model's face or in empty space. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models (OBJ)</b> writes mesh geometry for other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
+		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Pencil (P)</b> draws a custom-shaped object, on a model's face or in empty space. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
 		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
 		<p><b>Into Godot:</b> set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p>
-		<p class="dim">Separate files: name_height.png (R height px/255; G/B highlights if packed), name_normal.png (OpenGL: R east, G up, B toward the viewer),
-		name_pbr.png (R roughness, G metallic), name_footprints.json (per model: floor footprint, height range, collision).</p>
 	</div>
 </div>
 <script src="js/math.js"></script>
@@ -312,6 +346,7 @@
 <script src="js/aseprite.js"></script>
 <script src="js/prism.js"></script>
 <script src="js/output.js"></script>
+<script src="js/gltf.js"></script>
 <script src="js/transfer.js"></script>
 <script src="js/transfer-ui.js"></script>
 <script src="js/sample_basic.js"></script>

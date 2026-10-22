@@ -71,7 +71,7 @@
 			// Oblique camera: canvas point at the view centre, screen px per art px.
 			this.cam = { x: 128, y: 128, zoom: 3 };
 			// Free view: yaw (0 = looking north from the south), pitch, distance factor; blend 0 = oblique, 1 = free.
-			this.free = { yaw: 0, pitch: Math.PI / 4, blend: 0, target: [128, 128, 0] };
+			this.free = { yaw: 0, pitch: Math.PI / 4, blend: 0, ortho: false, up: null, target: [128, 128, 0] };
 		}
 
 		_program(vs, fs) {
@@ -142,18 +142,20 @@
 
 		freeEye() {
 			const { h } = this.size(), f = this.free;
-			const dist = h / (2 * this.cam.zoom * Math.tan(FREE_FOV / 2));
+			const dist = f.ortho ? 3000 : h / (2 * this.cam.zoom * Math.tan(FREE_FOV / 2));
 			const d = [Math.sin(f.yaw) * Math.cos(f.pitch), Math.cos(f.yaw) * Math.cos(f.pitch), Math.sin(f.pitch)];
 			return v3.add(f.target, v3.scale(d, dist));
 		}
 
 		freeMatrix() {
 			const { w, h } = this.size();
-			const proj = m4.perspective(FREE_FOV, w / h, 4, 20000);
+			// Orthographic (preset views): no perspective, one screen px per art px at the zoom, like Blender's numpad views.
+			const ortho = this.free.ortho, z = this.cam.zoom;
+			const proj = ortho ? new Float32Array([(2 * z) / w, 0, 0, 0, 0, (2 * z) / h, 0, 0, 0, 0, -2 / 19999, 0, 0, 0, -20001 / 19999, 1]) : m4.perspective(FREE_FOV, w / h, 4, 20000);
 			// Y runs south, so these axes are mirror-handed for an ordinary camera: flip screen x so east stays on the right,
 			// as in the tileset view.
 			const flip = new Float32Array([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-			return m4.mul(proj, m4.mul(flip, m4.lookAt(this.freeEye(), this.free.target, [0, 0, 1])));
+			return m4.mul(proj, m4.mul(flip, m4.lookAt(this.freeEye(), this.free.target, this.free.up || [0, 0, 1])));
 		}
 
 		viewProj() {

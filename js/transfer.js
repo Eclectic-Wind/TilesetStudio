@@ -39,6 +39,30 @@
 			return o;
 		});
 	};
+	// The move place() gives every point, as p' = s * p + c, so bones and key offsets can follow their models.
+	T.placeMap = function (objects, x, y, scale, base) {
+		const b = T.bounds(objects);
+		return { s: scale, c: [x - b.x0 * scale, y - (b.y0 + b.z0) * scale + base, base - b.z0 * scale] };
+	};
+	// A rig (bones, bind, clips from TS.Gltf.read) carried along with models: only what the given models need (their bones and the
+	// bones above them), optionally moved by a placeMap. Returns null when none of the models follows a bone.
+	T.rigFor = function (rig, ids, map) {
+		if (!rig) return null;
+		const byId = new Map(rig.bones.map((b) => [b.id, b])), need = new Set();
+		for (const id of ids) for (let b = byId.get(rig.bind[id]), n = 0; b && n < 1000; n++, b = b.parent && byId.get(b.parent)) need.add(b.id);
+		if (!need.size) return null;
+		const at = (p) => (map ? p.map((v, i) => v * map.s + map.c[i]) : p.slice());
+		const bones = rig.bones.filter((b) => need.has(b.id)).map((b) => Object.assign(clone(b), { head: at(b.head), tail: at(b.tail) }));
+		const bind = {};
+		for (const id of ids) if (need.has(rig.bind[id])) bind[id] = rig.bind[id];
+		const clips = [];
+		for (const c of rig.clips) {
+			const tracks = {};
+			for (const id of Object.keys(c.tracks)) if (need.has(id)) tracks[id] = c.tracks[id].map((k) => ({ f: k.f, rot: k.rot.slice(), pos: map ? k.pos.map((v) => v * map.s) : k.pos.slice() }));
+			if (Object.keys(tracks).length) clips.push({ name: c.name, fps: c.fps, frames: c.frames, tracks });
+		}
+		return { bones, bind, clips };
+	};
 	T.readOBJ = function (text, options = {}) {
 		const scale = options.scale === undefined ? 1 : options.scale, up = options.up || "z";
 		if (!Number.isFinite(scale) || scale <= 0 || scale > 100000) throw new Error("Pixels per OBJ unit must be above 0 and at most 100,000.");
