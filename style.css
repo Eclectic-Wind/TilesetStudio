@@ -346,10 +346,13 @@ section.output[data-mode]:not([data-mode="lit"]) .lightbar { display: none; }
 
 /* --- Animation mode (anim-ui.js) --- */
 .animonly { display: none; }
+/* Animate mode only poses the rig: the modelling tools are dimmed (a click says why). */
+body.animating :is([data-act="add"], [data-act="scale"], [data-act="extrude"], [data-act="extrudeman"], [data-act="inset"], [data-act="bevel"], [data-act="edit"], [data-act="vert"], [data-act="edge"], [data-act="face"], [data-act="loopcut"], [data-act="knife"], [data-act="fill"], [data-act="bridge"], [data-act="join"], [data-act="mirror"], [data-act="duplicate"], [data-act="delete"], [data-tool="pencil"], [data-tool="stamp"]) { opacity: 0.3; }
 body.animating details.animonly { display: block; }
 body.animating .timeline.animonly { display: flex; }
 #b_animate.on { border-color: var(--accent); background: #3b2a16; }
 .boneoverlay .bonetip, .boneoverlay [data-part="body"], .boneoverlay [data-gizmo] { pointer-events: all; }
+.boneoverlay.painting * { pointer-events: none !important; } /* weight painting: the view underneath takes the brush */
 .animbody h4 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
 .animbody .arow { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 .animbody .arow label { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }

@@ -10,7 +10,10 @@
 	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4];
 	const S = () => TS.state, A = () => TS.state.anim, api = () => TS.api;
 	const clip = () => Rig.clipOf(A());
-	const cell = () => (S().art ? { w: S().art.w, h: S().art.h } : { w: 64, h: 64 });
+	// Weight painting: with a bone selected, drag over the models to give it more (or less) of each vertex under the brush.
+	let paintMode = false, stroke = null, brushAt = null;
+	const brush = { mode: "mix", weight: 1, strength: 0.5, radius: 36, through: false };
+	const cell =() => (S().art ? { w: S().art.w, h: S().art.h } : { w: 64, h: 64 });
 
 	// An undoable change to the animation data.
 	function edit(fn) {
@@ -306,6 +309,7 @@
 				<div class="arow"><button id="an_keydel" title="Remove this frame's key"${key ? "" : " disabled"}>Remove key</button><button id="an_keyrest" title="Back to the rest pose on this frame (keeps a key)">Rest here</button></div>
 				<p class="dim">Changing a value keys it on this frame. Or drag the bone's tip in the view (turns about the depth axis).</p></div>`;
 		}
+		h += weightsPanel(a, bone);
 		h += `<h4>Spritesheet &amp; Aseprite</h4><div class="arow"><label title="What the preview below shows. The big Lit / Normals tab on the right plays the same frames.">Preview <select id="an_pmode"><option value="lit"${previewMode === "lit" ? " selected" : ""}>Lit</option><option value="normal"${previewMode === "normal" ? " selected" : ""}>Normal</option><option value="albedo"${previewMode === "albedo" ? " selected" : ""}>Albedo</option></select></label></div><canvas id="an_prev" class="prev" title="This frame, lit by the normal map and your Albedo. Move the pointer over it to move the light."></canvas>
 			<p id="an_sheetinfo" class="dim">${sheetText()}</p>
 			<div class="arow"><button id="an_link" title="Pick the folder the Aseprite extension saves into. Studio writes normal.png there and reads albedo.png from it.">${Link.linked() ? "Re-link folder…" : "Link Aseprite folder…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
@@ -318,8 +322,110 @@
 		timeline();
 	}
 
+	// --- weight painting ---
+
+	// Models that deform and whose skeleton holds the active bone: the ones its weights can be painted on.
+	function paintTargets() {
+		const a = A();
+		return S().objects.filter((o) => { if (o.hidden) return false; const w = Rig.skinWeights(a, o); return w && w.list.some((b) => b.id === boneSel); });
+	}
+	// Blue (none) through green to red (all of it): the weight of the active bone, as a vertex tint.
+	const HEAT = [[0, [0.1, 0.2, 0.85]], [0.25, [0.1, 0.75, 0.95]], [0.5, [0.2, 0.85, 0.25]], [0.75, [0.98, 0.9, 0.15]], [1, [0.95, 0.15, 0.1]]];
+	function heatColor(w) {
+		w = TS.clamp(w, 0, 1);
+		let i = 0;
+		while (i < HEAT.length - 2 && w > HEAT[i + 1][0]) i++;
+		const [w0, c0] = HEAT[i], [w1, c1] = HEAT[i + 1], t = (w - w0) / (w1 - w0);
+		return [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t, c0[2] + (c1[2] - c0[2]) * t, 0.92];
+	}
+	function weightsPanel(a, bone) {
+		const total = S().objects.reduce((n, o) => n + Rig.paintCount(a, o), 0), stale = S().objects.filter((o) => Rig.paintStale(a, o)).map((o) => esc(o.name));
+		let h = `<h4>Weights</h4><div class="arow"><button id="an_paint" class="${paintMode ? "on" : ""}"${bone || paintMode ? "" : " disabled"} title="Paint the selected bone's weights straight onto the models: red = the vertex follows this bone fully, blue = not at all. Select a bone first.">${paintMode ? "Done (Esc)" : "Weight paint"}</button><button id="an_wreset" title="Throw away the painting on the selected models (all models if none is selected) and go back to automatic weights"${total ? "" : " disabled"}>Reset to auto</button></div>`;
+		if (stale.length) h += `<p class="warnline">⚠ ${stale.join(", ")} changed shape since it was painted, so its painted weights are ignored. Reset to auto to clear them.</p>`;
+		if (!paintMode) return h + `<p class="dim">${total ? `${total} painted vertices; the rest follow the bones' distance.` : "Weights are automatic (by distance to the bones). Paint to fix a joint by hand."}</p>`;
+		const opt = (v, t) => `<option value="${v}"${brush.mode === v ? " selected" : ""}>${t}</option>`, targets = bone ? paintTargets().length : 0;
+		return h + `<div class="arow"><label title="Mix: paint toward the Weight below. Add / Subtract: give or take weight on this bone (Ctrl flips them). Smooth: blend each vertex with its neighbours.">Brush <select id="an_bmode">${opt("mix", "Mix")}${opt("add", "Add")}${opt("sub", "Subtract")}${opt("smooth", "Smooth")}</select></label></div>
+			<div class="arow"><label title="The weight Mix paints toward">Weight <input id="an_bw" type="range" min="0" max="1" step="0.05" value="${brush.weight}"><span id="an_bwv" class="dim">${brush.weight}</span></label></div>
+			<div class="arow"><label title="How much each dab changes (hold still to keep painting)">Strength <input id="an_bs" type="range" min="0.05" max="1" step="0.05" value="${brush.strength}"><span id="an_bsv" class="dim">${brush.strength}</span></label></div>
+			<div class="arow"><label title="Brush size in screen pixels ( [ and ] change it )">Radius <input id="an_br" type="range" min="6" max="160" step="2" value="${brush.radius}"><span id="an_brv" class="dim">${brush.radius}</span></label></div>
+			<label class="chk" title="Also paint vertices hidden behind the front of a model"><input id="an_bthru" type="checkbox"${brush.through ? " checked" : ""}> Paint through the model</label>
+			<p class="dim">${bone ? (targets ? `Painting <b>${esc(bone.name)}</b> on ${targets} model${targets > 1 ? "s" : ""}. Drag in the view; Ctrl flips Add / Subtract; pick another bone in the list to paint it. Every vertex always adds up to 100% across the bones. Pose the bones to check the bend.` : `<span class="warn">${esc(bone.name)} is not part of a deforming model's skeleton. Bind a model to it (and keep it on Deform), or pick another bone.</span>`) : "Select a bone in the list to paint its weights."}</p>`;
+	}
+	function togglePaint(v) {
+		const want = v === undefined ? !paintMode : v;
+		if (want && !boneSel) return api().toast("Select a bone first: you paint that bone's weights.", "bad");
+		if (want && restMode) toggleRest(false);
+		if (want && playing) togglePlay();
+		paintMode = want;
+		if (!want) { stroke = null; brushAt = null; }
+		api().redrawSoon(); draw(); render();
+		api().status(paintMode ? "Weight painting: drag over the models to paint the selected bone's weights (Esc to finish)." : "Back to posing.");
+	}
+	function paintStart(e) {
+		const a = A(), r = api().renderer, targets = paintTargets();
+		if (!boneSel || !targets.length) return api().status("Nothing to paint: select a bone that a deforming model is bound to.");
+		const posed = Rig.posedObjects(targets, a, clip(), a.frame);
+		const hid = S().objects.filter((o) => !o.hidden);
+		stroke = { before: api().snapshot(), targets, sp: posed.map((o) => o.verts.map((p) => r.toScreen(p))), occl: brush.through ? null : Rig.posedObjects(hid, a, clip(), a.frame), posed, changed: false, ctrl: e.ctrlKey || e.metaKey, last: null };
+		window.addEventListener("pointermove", paintMove);
+		window.addEventListener("pointerup", paintEnd);
+		stroke.timer = setInterval(() => stroke && stroke.last && paintDab(), 70); // holding still keeps painting
+		paintMove(e);
+	}
+	function paintMove(e) {
+		stroke.ctrl = e.ctrlKey || e.metaKey;
+		const rect = $("view").getBoundingClientRect();
+		stroke.last = [e.clientX - rect.left, e.clientY - rect.top];
+		brushAt = stroke.last;
+		paintDab();
+		moveBrush();
+	}
+	function paintDab() {
+		const a = A(), r = api().renderer, [px, py] = stroke.last, R2 = brush.radius;
+		const hits = [];
+		stroke.targets.forEach((o, k) => stroke.sp[k].forEach((s, i) => {
+			if (!s) return;
+			const d = Math.hypot(s[0] - px, s[1] - py);
+			if (d > R2) return;
+			if (stroke.occl && !r.visible(stroke.occl, stroke.posed[k].verts[i], 1.5)) return;
+			hits.push({ model: o, i, f: 0.5 * (1 + Math.cos(Math.PI * (d / R2))) });
+		}));
+		if (!hits.length) return;
+		const flip = stroke.ctrl, mode = flip ? (brush.mode === "add" ? "sub" : brush.mode === "sub" ? "add" : brush.mode) : brush.mode;
+		if (Rig.paintDab(a, boneSel, hits, mode, brush.strength, flip && mode === "mix" ? 0 : brush.weight)) {
+			stroke.changed = true;
+			api().redrawSoon(); scheduleSheet();
+		}
+	}
+	function paintEnd() {
+		window.removeEventListener("pointermove", paintMove);
+		window.removeEventListener("pointerup", paintEnd);
+		clearInterval(stroke.timer);
+		const s = stroke;
+		stroke = null;
+		if (s.changed) { api().pushUndo(s.before); api().markUnsaved(); render(); }
+	}
+	// The brush ring follows the pointer over the view.
+	function moveBrush() {
+		const svg = $("bone_overlay"), ring = svg && svg.querySelector(".brushring");
+		if (!ring) return api().redrawSoon();
+		if (!brushAt) return ring.setAttribute("r", 0);
+		ring.setAttribute("cx", brushAt[0]); ring.setAttribute("cy", brushAt[1]); ring.setAttribute("r", brush.radius);
+	}
+
 	function wire() {
 		const q = (id) => $(id), a = A(), c = clip(), bone = boneSel && Rig.bone(a, boneSel);
+		q("an_paint").onclick = () => togglePaint();
+		q("an_wreset").onclick = () => {
+			const ids = S().selected.size ? [...S().selected] : S().objects.map((o) => o.id);
+			edit(() => { for (const o of S().objects) if (ids.includes(o.id)) Rig.clearPaint(a, o); });
+		};
+		if (paintMode) {
+			q("an_bmode").onchange = () => { brush.mode = q("an_bmode").value; };
+			for (const [id, key, out] of [["an_bw", "weight", "an_bwv"], ["an_bs", "strength", "an_bsv"], ["an_br", "radius", "an_brv"]])
+				q(id).oninput = () => { brush[key] = parseFloat(q(id).value); q(out).textContent = brush[key]; moveBrush(); };
+			q("an_bthru").onchange = () => { brush.through = q("an_bthru").checked; };
+		}
 		q("an_clip").onchange = () => { a.clip = q("an_clip").value; a.frame = 0; touched(); restartPlay(); };
 		q("an_clipnew").onclick = () => edit(() => { const n = Rig.newClip("Clip " + (a.clips.length + 1), c.frames, c.fps); a.clips.push(n); a.clip = n.id; a.frame = 0; });
 		q("an_clipdel").onclick = () => edit(() => { a.clips = a.clips.filter((x) => x !== c); a.clip = a.clips[0].id; a.frame = 0; });
@@ -484,7 +590,7 @@
 	}
 	function drawGizmos(add, a, mats, r) {
 		const bone = boneSel && Rig.bone(a, boneSel);
-		if (!showGizmos || !bone || drag) return;
+		if (!showGizmos || !bone || drag || paintMode) return;
 		const M = mats.get(bone.id), H = Rig.apply(M, bone.head), T = Rig.apply(M, bone.tail), d = viewDir();
 		const len = Math.hypot(T[0] - H[0], T[1] - H[1], T[2] - H[2]), R3 = TS.clamp(len * 0.45, 8, 40), L = TS.clamp(len * 0.6, 12, 48);
 		const lk = S().viewLock ? S().viewLock.k : 1, joint = bone.connected && bone.parent;
@@ -537,6 +643,7 @@
 		const svg = $("bone_overlay");
 		if (!svg) return;
 		svg.replaceChildren();
+		svg.classList.toggle("painting", on && paintMode);
 		if (!on) return;
 		const a = A(), r = api().renderer, mats = Rig.matrices(a, restMode ? null : clip(), a.frame);
 		const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
@@ -564,6 +671,7 @@
 			const tip = add("circle", { cx: t[0], cy: t[1], r: 7, fill: sel ? col : "#14141899", stroke: col, "stroke-width": 1.5, class: "bonetip", "data-bone": b.id });
 			tip.dataset.part = "tip"; tip.style.cursor = "grab";
 		}
+		if (paintMode) add("circle", { class: "brushring", cx: brushAt ? brushAt[0] : 0, cy: brushAt ? brushAt[1] : 0, r: brushAt ? brush.radius : 0, fill: "#ffffff14", stroke: "#fff", "stroke-width": 1.2, "pointer-events": "none" });
 	}
 	let drag = null, restMode = false;
 	// Rest-pose editing (Tab, or the Edit rest pose button): the models and bones show at rest; dragging a bone's head moves the
@@ -571,6 +679,7 @@
 	// the rest head, so set the rest first, then animate.
 	function toggleRest(v) {
 		restMode = v === undefined ? !restMode : v;
+		if (restMode) paintMode = false;
 		api().redrawSoon(); draw(); render();
 		api().status(restMode ? "Editing the rest pose: drag a bone's head, tip or body (X / Y / Z narrows it, a preset view picks the plane). Tab to finish." : "Back to posing.");
 	}
@@ -746,6 +855,10 @@
 	function boneKeys(e) {
 		if (!on || !e.key || (e.target.closest && e.target.closest("input, select, textarea"))) return;
 		const k = e.key.toLowerCase(), stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+		if (paintMode && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			if (k === "escape") { togglePaint(false); stop(); return; }
+			if (k === "[" || k === "]") { brush.radius = TS.clamp(brush.radius + (k === "]" ? 4 : -4), 6, 160); const r = $("an_br"); if (r) { r.value = brush.radius; $("an_brv").textContent = brush.radius; } moveBrush(); stop(); return; }
+		}
 		if (drag && drag.modal) { // a G / R in progress
 			if (k === "escape") { cancelKeyDrag(); stop(); } else if (k === "enter") { confirmKeyDrag(); stop(); }
 			return;
@@ -792,7 +905,13 @@
 
 	function setMode(v) {
 		on = v;
-		if (!on) restMode = false;
+		if (!on) restMode = paintMode = false;
+		// Animating poses the rig as it was modelled: leave edit mode and the drawing tools so the models and bones stay in step.
+		if (on) {
+			if (S().edit) { S().edit = false; S().elemSel.clear(); }
+			if (["pencil", "stamp"].includes(S().tool)) api().setTool("select");
+			api().panels();
+		}
 		document.body.classList.toggle("animating", on);
 		$("b_animate").classList.toggle("on", on);
 		if (!on && playing) togglePlay();
@@ -805,6 +924,13 @@
 
 	TS.AnimUI = {
 		get on() { return on; },
+		get painting() { return on && paintMode; },
+		// Per-vertex heat tints of a model for the view while painting (its weight on the active bone), else null.
+		weightHeat(obj) {
+			if (!on || !paintMode || !boneSel || restMode) return null;
+			const o = S().objects.find((m) => m.id === obj.id), w = o && Rig.skinWeights(A(), o), t = w ? w.list.findIndex((b) => b.id === boneSel) : -1;
+			return t < 0 || w.weights.length !== obj.verts.length ? null : w.weights.map((row) => heatColor(row[t]));
+		},
 		// Moving or turning models in the view while animating keys them: each unbound model gets its own bone (named after it,
 		// visible in the Bones list), then the move / turn becomes a key on the current frame. xfs: [{id, d} | {id, c, u, rad}].
 		keyTransform(xfs) {
@@ -881,6 +1007,18 @@
 			ensureClip();
 		});
 		window.addEventListener("pointermove", (e) => { lastPtr = [e.clientX, e.clientY]; }, true);
+		// While painting, a left drag on the view is the brush (the other buttons still orbit and pan).
+		window.addEventListener("pointerdown", (e) => {
+			if (!on || !paintMode || stroke || e.button !== 0 || e.target !== $("view") || drag || parentPick) return;
+			e.preventDefault(); e.stopPropagation();
+			paintStart(e);
+		}, true);
+		window.addEventListener("pointermove", (e) => {
+			if (!on || !paintMode || stroke) return;
+			const rect = $("view").getBoundingClientRect(), inside = e.target === $("view");
+			brushAt = inside ? [e.clientX - rect.left, e.clientY - rect.top] : null;
+			moveBrush();
+		}, true);
 		window.addEventListener("keydown", boneKeys, true);
 		// During a bone drag, X / Y / Z narrows it to that axis (again: off), like G then X on a model.
 		window.addEventListener("keydown", (e) => {

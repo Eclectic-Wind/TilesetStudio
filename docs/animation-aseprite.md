@@ -8,6 +8,12 @@
    that share its bone's top parent), weighted by distance; `Stiffness` sets how sharply, and `Rigid` makes it follow its bone as one
    solid piece. A bone alone in its skeleton (as `Bone per model` and G / R make them) always moves its model rigidly, so separate
    models never tug at each other. Unbound models stand still.
+   **Weight paint.** The automatic weights are a starting point: select a bone and press `Weight paint` (Weights section) to fix a joint
+   by hand. The models turn into a heat map of that bone's weight (red = fully on it, blue = not at all). Drag in the view: `Mix`
+   paints toward the chosen Weight, `Add` / `Subtract` give or take weight (Ctrl flips them), `Smooth` blends with neighbouring
+   vertices. Strength, Radius (`[` / `]`) and "Paint through the model" are beside it; pick another bone in the list to paint that one.
+   Every painted vertex always adds up to 100% across the bones, and posing the bones while you paint shows the bend. A stroke is one
+   undo step; `Reset to auto` clears the painting. Painting belongs to a vertex, so a model whose vertex count changes loses it.
 3. **Pose.** Pick a frame on the timeline (`,` and `.` step). Change a bone's Turn X/Y/Z or Move values and that frame gets a key
    (◆). Or drag a bone's tip in the view: it turns the bone about the depth axis (Y), which is the side-view swing. Frames between
    keys blend linearly; before the first key a bone eases in from rest at frame 0; after the last key it holds.
@@ -91,5 +97,5 @@ Aseprite's `albedo.png` back as the tileset art.
 **No link at all:** use *Download normal sheet* and *Load albedo sheet…* (same size checks).
 
 Not covered yet: the extension can't be tested headless, so it follows the documented Aseprite 1.3 API; report any API differences.
-glTF export skins each model 100% to its bound bone, so a model that bends in Studio exports rigid. The Albedo preview is the whole
+glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex). The Albedo preview is the whole
 sheet cell, not re-skinned onto the pose.

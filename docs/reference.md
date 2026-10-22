@@ -102,7 +102,7 @@ Use **Save project** to retain the artwork, Studio materials, collision settings
 **Export ▸ 3D models ▸ glTF (.glb)** sends the models, the bones and the animation clips; **File ▸ Import 3D** reads them back, so you can
 build the basic model in Studio, refine it in Blender (Import ▸ glTF 2.0) and bring it back.
 
-- **Bones.** Studio's bones are rigid: a model follows exactly one bone. Each bound model exports as a mesh skinned 100% to its bone,
+- **Bones.** A bound model exports as a mesh skinned with its deform weights (automatic or painted; a Rigid model is 100% on its bone),
   and a bone's turn and move become the joint's rotation and translation (exact, frame by frame). Bones with no keys keep their rest pose.
 - **Clips.** Every frame of a clip is sampled for every animated bone. Coming back, each Blender action becomes a clip (12 fps, at most 64
   frames; a clip Studio wrote keeps its own fps and frame count). Studio's own rigs round-trip exactly; redundant keys are dropped.

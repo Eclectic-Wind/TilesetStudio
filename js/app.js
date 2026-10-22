@@ -41,7 +41,7 @@
 	}
 	function restore(json) {
 		const s = JSON.parse(json);
-		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit; S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
+		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
 		hover = null; loopHover = null; cycle = null;
 		changed();
@@ -637,7 +637,15 @@
 
 	// --- adding / deleting ---
 
+	// Animate mode poses the rig: the models' shapes are fixed. Moving / turning a model keys its bone; everything else that builds or
+	// reshapes models waits for Modelling. True (with a hint) when the action must not run.
+	function noModelling(what) {
+		if (!(TS.AnimUI && TS.AnimUI.on)) return false;
+		status(`Animate mode only poses the rig (G / R keys a model). Switch back to Modelling to ${what}.`);
+		return true;
+	}
 	function addPrimitive(kind) {
+		if (noModelling("add models")) return;
 		if (!S.art) return toast("Open a tileset first.", "bad");
 		leaveDrawTools();
 		pushUndo();
@@ -665,6 +673,7 @@
 	}
 
 	function deleteSelection() {
+		if (noModelling("delete models")) return;
 		if (S.edit) {
 			const obj = activeObj();
 			if (!obj || !S.elemSel.size) return status("Select vertices, edges or faces to delete.");
@@ -684,6 +693,7 @@
 	}
 
 	function duplicate() {
+		if (noModelling("duplicate models")) return;
 		if (S.edit || !S.selected.size) return;
 		pushUndo();
 		const copies = selectedObjs().map((o) => { const c = Mesh.cloneNew(o); c.name = o.name + " copy"; if (S.anim) TS.Rig.inherit(S.anim, o.id, c.id); return c; });
@@ -715,6 +725,7 @@
 
 	// F: join the selected vertices (or the edges' ends) with a line (two) or a face (three or more).
 	function fillSelection() {
+		if (noModelling("fill")) return;
 		const o = activeObj();
 		if (!S.edit || !o) return frameSelection();
 		const idx = Mesh.selectionVerts(o, S.elemMode, S.elemSel);
@@ -729,6 +740,7 @@
 	// Ctrl+E: bridge two faces (they're removed, their rims joined by a band: a tunnel, or a neck between two pieces after Ctrl+J)
 	// or two edge loops / strips (hole rims, drawn outlines).
 	function bridgeSelection() {
+		if (noModelling("bridge")) return;
 		const o = activeObj();
 		if (!S.edit || !o) return status("Bridge works in edit mode: select two faces (3) or two edge loops (2).");
 		const before = snapshot();
@@ -755,6 +767,7 @@
 
 	// Ctrl+J: join the selected models into the active one (to bridge between them, or edit them as one).
 	function joinSelection() {
+		if (noModelling("join models")) return;
 		if (S.edit) return status("Join works on models: Tab out of edit mode first.");
 		const into = activeObj(), others = selectedObjs().filter((o) => o !== into);
 		if (!into || !others.length) return status("Select two or more models to join (the last clicked one keeps its name).");
@@ -793,6 +806,7 @@
 	// runs through what's in sight; with X-ray it cuts right through the model (back faces too).
 	let knife = null;
 	function startKnife() {
+		if (noModelling("cut")) return;
 		if (!S.edit || !activeObj()) return status("Knife works in edit mode: Tab into a model first.");
 		if (modal) return;
 		S.loopCut = false; loopHover = null;
@@ -921,6 +935,7 @@
 		status(`Copied ${S.selected.size} model(s). Ctrl+V pastes them in place.`);
 	}
 	function paste() {
+		if (noModelling("paste models")) return;
 		let text = null;
 		try { text = localStorage.getItem("ts.clipboard"); } catch (err) { /* storage blocked */ }
 		text = text || clipboard;
@@ -939,6 +954,7 @@
 	let mirrorPending = false;
 	function mirrorSelection(axis) {
 		mirrorPending = false;
+		if (noModelling("mirror")) return;
 		if (S.edit) return status("Mirror works on whole models: Tab out of edit mode first.");
 		const objs = selectedObjs();
 		if (!objs.length) return status("Select models to mirror.");
@@ -952,6 +968,7 @@
 
 	// Ctrl+arrows: nudge the selection a snap step across / in depth; PageUp / PageDown: up / down. Shift: half a step.
 	function nudge(d, e) {
+		if (noModelling("nudge models")) return true;
 		const step = stepFor(e), objs = editTargets();
 		if (!objs.length) return false;
 		if (S.edit && !S.elemSel.size) return false;
@@ -1129,6 +1146,7 @@
 	}
 
 	function beginModal(type, fromDuplicate, opts) {
+		if (!["grab", "rotate"].includes(type) && noModelling(type === "scale" ? "scale" : "extrude, inset or bevel")) return;
 		// Tools work in the tileset view and the held 3D view, not while the view is still turning.
 		if (renderer.free.blend > 0 && !(S.stay3d && renderer.free.blend >= 1 && !anim)) return status(S.stay3d ? "Wait for the 3D view to settle." : "Let go of the look-round first (or press 5 to stay in 3D and model there).");
 		const objs = editTargets();
@@ -1466,13 +1484,16 @@
 		for (const obj of shownObjs()) {
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id), editing = S.edit && isActive;
 			const corners = Mesh.shadingNormals(obj);
+			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
+			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
+			if (heat) obj.verts.forEach((p, i) => vtx(points, p, [0, 0, 1], [0.05, 0.05, 0.08, 1]));
 			obj.faces.forEach((f, fi) => {
 				const faceMode = editing && S.elemMode === "face", picked = faceMode && S.elemSel.has(fi);
 				const tint = picked ? [...sel, 0.55] : faceMode && hv && hv.key === fi ? [1, 1, 1, 0.3] : isSel && !S.edit ? [...sel, 0.18] : [0, 0, 0, 0];
 				// Face dots (centres) to aim at in face mode; X-ray shows the ones behind too.
 				if (faceMode) vtx(dots, Mesh.faceCentre(obj, f), [0, 0, 1], picked ? [1, 0.6, 0.1, 1] : [0.08, 0.08, 0.1, 1]);
 				for (const triangle of Mesh.faceTriangles(obj, f))
-					for (const k of triangle) vtx(tris, obj.verts[f.v[k]], corners[fi][k], tint);
+					for (const k of triangle) vtx(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint);
 			});
 			const edgeCol = editing ? [0.95, 0.95, 1, 0.9] : isSel ? [1, 0.65, 0.3, 0.95] : [0.85, 0.9, 1, 0.35];
 			for (const [k, e] of Mesh.edges(obj)) {
@@ -1796,6 +1817,7 @@
 	let press = null, pinch = null;
 
 	function setTool(tool) {
+		if ((tool === "pencil" || tool === "stamp") && noModelling(tool === "pencil" ? "draw models" : "stamp")) return;
 		if (tool === "stamp" && exchange && !exchange.hasSelection()) { exchange.showSource(); return; }
 		if (tool === "pencil" || tool === "stamp") {
 			if (!S.art && tool === "pencil") return status("Open a tileset or project first, then choose Pencil (P).");
@@ -2111,12 +2133,14 @@
 	}
 
 	function startTool(type, armed) {
+		if (!["grab", "rotate"].includes(type) && noModelling(type === "scale" ? "scale" : "extrude, inset or bevel")) return;
 		leaveDrawTools();
 		if (armed) { S.armed = type; modalBar(); status("Press on the view where to start, drag, and let go to apply. Esc or the ✕ cancels."); return; }
 		beginModal(type);
 	}
 
 	function toggleEdit() {
+		if (noModelling("edit a model's vertices")) return;
 		leaveDrawTools();
 		if (!S.edit && !activeObj()) return status("Select an object, then Tab to edit it.");
 		S.edit = !S.edit; S.elemSel.clear();
@@ -2129,6 +2153,7 @@
 		S.elemMode = mode; S.elemSel.clear(); dirty = true; panels(); hint();
 	}
 	function startLoopCut() {
+		if (noModelling("loop cut")) return;
 		if (!S.edit) return status("Tab into edit mode on an object to loop cut.");
 		S.loopCut = true;
 		status("Loop cut: hover (or press) an edge to see the ring, tap/click to cut, right-click/Esc to stop");
@@ -2368,6 +2393,7 @@
 		$("p_smooth").onchange = () => { const v = num("p_smooth"); if (isNaN(v)) return panels(); pushUndo(); for (const t of targets) t.smooth = v; changed(); };
 		for (const id of multi ? [] : ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"])
 			$(id).onchange = () => {
+				if (noModelling("place or resize models")) return panels();
 				const bad = ["p_x", "p_y", "p_z", "p_w", "p_d", "p_h"].find((f) => isNaN(num(f)));
 				if (bad) { status(`"${$(bad).value}" isn't a number (plain numbers or + − * / ( ) work).`); panels(); return; }
 				pushUndo();
@@ -2448,7 +2474,7 @@
 	// Draw the model view now (frame() calls it when something changed; a hidden tab gets no animation frames).
 	function drawNow() {
 		dirty = false;
-		renderer.draw(buildGeometry(), { backdrop: true, opacity: S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
+		renderer.draw(buildGeometry(), { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
 		drawAxes(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {

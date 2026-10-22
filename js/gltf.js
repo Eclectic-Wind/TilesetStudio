@@ -5,7 +5,7 @@
 //
 // Rig: a Studio bone turns about its head and moves by `pos`; its children ride along (see rig.js). That is exactly a glTF joint whose
 // local translation is (head - parent head) + pos and whose local rotation is the bone's turn, with the inverse bind matrix a plain
-// translation by -head. A model follows one bone rigidly, so each bound model exports as a mesh skinned 100% to its bone.
+// translation by -head. A bound model exports as a mesh skinned with its deform weights (automatic or painted; 100% to its bone if rigid).
 // Reading goes the other way and accepts any rig: each skinned mesh is cut into one model per bone (by the bone with most weight on
 // each face), because Studio bones do not bend a model.
 "use strict";
@@ -119,7 +119,14 @@
 			const bone = useRig && Rig.bone(anim, anim.bind[o.id]);
 			if (bone && boneIdx.has(bone.id)) {
 				const j = new Uint16Array(o.verts.length * 4), w = new Float32Array(o.verts.length * 4);
-				for (let i = 0; i < o.verts.length; i++) { j[i * 4] = boneIdx.get(bone.id); w[i * 4] = 1; }
+				// A deforming model exports its skin weights (the automatic ones and anything painted): each vertex's four strongest bones.
+				const sk = Rig.skinWeights(anim, o);
+				for (let i = 0; i < o.verts.length; i++) {
+					const top = sk ? sk.weights[i].map((x, k) => [x, k]).filter(([x, k]) => x > 0 && boneIdx.has(sk.list[k].id)).sort((p, q) => q[0] - p[0]).slice(0, 4) : [];
+					const sum = top.reduce((s, [x]) => s + x, 0);
+					if (!top.length || sum <= 0) { j[i * 4] = boneIdx.get(bone.id); w[i * 4] = 1; continue; }
+					top.forEach(([x, k], n) => { j[i * 4 + n] = boneIdx.get(sk.list[k].id); w[i * 4 + n] = x / sum; });
+				}
 				attributes.JOINTS_0 = addAcc(j, "VEC4", U16, o.verts.length, 34962);
 				attributes.WEIGHTS_0 = addAcc(w, "VEC4", F, o.verts.length, 34962);
 			}

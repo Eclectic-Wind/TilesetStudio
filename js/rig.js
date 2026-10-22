@@ -2,6 +2,7 @@
 //
 // anim = { bones: [{id, name, parent|null, head: [x,y,z], tail: [x,y,z]}]   rest pose, world space (art px)
 //          bind:  {modelId: boneId}                                          a model follows its bone rigidly
+//          paint: {modelId: {n, rev, v: {vertex: {boneId: weight}}}}                 hand-painted skin weights (see R.painted)
 //          clips: [{id, name, fps, frames, tracks: {boneId: [{f, rot: [rx,ry,rz], pos: [x,y,z]}]}}]
 //          clip: active clip id, frame: current frame, albedo: dataURL of the artist's sheet (or null)}
 // A bone turns about its head (rot = degrees, applied Z·Y·X) and then moves by pos; its children ride along. A key holds a bone's
@@ -165,7 +166,7 @@
 		const top = rootOf(anim, main), list = anim.bones.filter((b) => rootOf(anim, b) === top);
 		if (list.length < 2) return null;
 		const stiff = TS.clamp((anim.skin && anim.skin[o.id] && anim.skin[o.id].stiff) || 3, 0.5, 12);
-		const sig = main.id + "|" + stiff + "|" + list.map((b) => b.id + ":" + b.head + ":" + b.tail).join(";");
+		const pt = R.painted(anim, o), sig = main.id + "|" + stiff + "|" + (pt ? pt.rev : 0) + "|" + list.map((b) => b.id + ":" + b.head + ":" + b.tail).join(";");
 		const hit = weightCache.get(o);
 		if (hit && hit.sig === sig && sameVerts(hit.verts, o.verts)) return hit.w;
 		const weights = o.verts.map((p) => {
@@ -173,9 +174,82 @@
 			raw = raw.map((x) => (x / sum < 0.02 ? 0 : x)); sum = raw.reduce((x, y) => x + y, 0); // far bones don't tug at all
 			return raw.map((x) => x / sum);
 		});
+		// Painted vertices keep the weights the artist gave them; a bone since deleted just drops out of the row.
+		if (pt) for (const i of Object.keys(pt.v)) {
+			const row = list.map((b) => pt.v[i][b.id] || 0), s = row.reduce((x, y) => x + y, 0);
+			if (s > 1e-6 && weights[i]) weights[i] = row.map((x) => x / s);
+		}
 		const w = { list, weights };
 		weightCache.set(o, { sig, w, verts: Float64Array.from(o.verts.flat()) });
 		return w;
+	};
+	// Weight painting. anim.paint[modelId] = {n: vertex count, rev, v: {vertexIndex: {boneId: weight}}}: those vertices use the painted
+	// row (normalised to 1) instead of the automatic one. rev bumps on every change so the cached weights are rebuilt. Painting is
+	// dropped if the model's vertex count has changed since (the indices would no longer mean the same vertices).
+	R.painted = (anim, o) => {
+		const pt = anim.paint && anim.paint[o.id];
+		return pt && pt.n === o.verts.length && Object.keys(pt.v).length ? pt : null;
+	};
+	R.paintCount = (anim, o) => { const pt = R.painted(anim, o); return pt ? Object.keys(pt.v).length : 0; };
+	R.paintStale = (anim, o) => { const pt = anim.paint && anim.paint[o.id]; return !!pt && pt.n !== o.verts.length && Object.keys(pt.v).length > 0; };
+	R.clearPaint = (anim, o) => { if (anim.paint) delete anim.paint[o.id]; };
+	// Neighbouring vertices (sharing an edge), for Smooth.
+	const nbrCache = new WeakMap();
+	const neighbours = (o) => {
+		let hit = nbrCache.get(o.faces);
+		if (hit && hit.n === o.verts.length) return hit.nb;
+		const nb = o.verts.map(() => new Set());
+		for (const f of o.faces) for (let i = 0; i < f.v.length; i++) { const a = f.v[i], b = f.v[(i + 1) % f.v.length]; if (nb[a] && nb[b]) { nb[a].add(b); nb[b].add(a); } }
+		nbrCache.set(o.faces, { n: o.verts.length, nb });
+		return nb;
+	};
+	// Move `row` (weights per bone of `list`, summing to 1) so bone t holds `to`, the others sharing the rest in proportion; when t is
+	// the only bone holding weight and is being lowered, the rest goes to its parent (else the first other bone).
+	const setShare = (row, t, to, list, anim) => {
+		to = TS.clamp(to, 0, 1);
+		const others = row.reduce((s, x, i) => (i === t ? s : s + x), 0), out = row.slice();
+		out[t] = to;
+		if (others > 1e-6) { for (let i = 0; i < row.length; i++) if (i !== t) out[i] = (row[i] * (1 - to)) / others; return out; }
+		if (list.length < 2) return out.map((_, i) => (i === t ? 1 : 0));
+		let sink = list.findIndex((b) => b.id === list[t].parent);
+		if (sink < 0 || sink === t) sink = t === 0 ? 1 : 0;
+		out[sink] = 1 - to;
+		return out;
+	};
+	// Brush dab. hits: [{model, i, f}] (f = 0..1 falloff). mode: mix (toward `value`), add, sub, smooth. Returns how many vertices changed.
+	R.paintDab = (anim, boneId, hits, mode, strength, value) => {
+		let changed = 0;
+		const byModel = new Map();
+		for (const h of hits) { if (!byModel.has(h.model)) byModel.set(h.model, []); byModel.get(h.model).push(h); }
+		for (const [o, list] of byModel) {
+			const w = R.skinWeights(anim, o), t = w && w.list.findIndex((b) => b.id === boneId);
+			if (!w || t < 0) continue;
+			const pt = (anim.paint = anim.paint || {})[o.id] && anim.paint[o.id].n === o.verts.length ? anim.paint[o.id] : (anim.paint[o.id] = { n: o.verts.length, rev: 0, v: {} });
+			const nb = mode === "smooth" ? neighbours(o) : null, next = new Map();
+			for (const { i, f } of list) {
+				const row = w.weights[i], s = strength * f;
+				let out;
+				if (mode === "add") out = setShare(row, t, row[t] + s, w.list, anim);
+				else if (mode === "sub") out = setShare(row, t, row[t] - s, w.list, anim);
+				else if (mode === "mix") out = setShare(row, t, row[t] + (value - row[t]) * Math.min(1, s), w.list, anim);
+				else {
+					const near = [...nb[i]];
+					if (!near.length) continue;
+					const avg = row.map((_, k) => near.reduce((x, j) => x + w.weights[j][k], 0) / near.length);
+					out = row.map((x, k) => x + (avg[k] - x) * Math.min(1, s));
+					const sum = out.reduce((x, y) => x + y, 0);
+					out = out.map((x) => x / sum);
+				}
+				next.set(i, out);
+			}
+			for (const [i, out] of next) {
+				const rec = {};
+				out.forEach((x, k) => { if (x > 0.002) rec[w.list[k].id] = Math.round(x * 1000) / 1000; });
+				pt.v[i] = rec; changed++;
+			}
+			pt.rev++;
+		}
+		return changed;
 	};
 	// A model edited, moved or resized outside animation mode can end up away from the bones it was rigged to; every vertex then
 	// belongs to the one nearest bone and nothing bends. True when no vertex is within `tol` of any bone of its skeleton.
@@ -194,6 +268,7 @@
 		if (anim.bind[fromId]) anim.bind[toId] = anim.bind[fromId];
 		if (anim.rigid && anim.rigid[fromId]) anim.rigid[toId] = true;
 		if (anim.skin && anim.skin[fromId]) anim.skin[toId] = Object.assign({}, anim.skin[fromId]);
+		if (anim.paint && anim.paint[fromId]) anim.paint[toId] = JSON.parse(JSON.stringify(anim.paint[fromId]));
 	};
 	const skinPoint = (list, w, mats, p) => {
 		const q = [0, 0, 0];
