@@ -40,7 +40,7 @@
 			<button id="as_send" title="Write normal.png to the linked folder now" hidden>Send normal map now</button>
 			<button id="as_unlink" hidden>Unlink</button>
 			<hr>
-			<label class="aschk" title="When Aseprite saves albedo.png (same size as the tileset), replace the tileset art with it. Models stay where they are."><input id="as_take" type="checkbox"> Take Aseprite's albedo.png as the tileset art</label>
+			<span class="linkstate" id="as_mode"></span>
 			<p id="as_state" class="linkstate">Not linked.</p>
 			<p class="linkstate"><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the Aseprite extension</a> · needs Aseprite 1.3 or newer (Steam, itch or built from source)</p>
 		</div>
@@ -269,6 +269,11 @@
 		<div class="sourcebar"><button id="source_add" disabled title="Add the selected models at the 3D cursor, with their lowest point at cursor height">Add at cursor</button><button id="source_keep" disabled title="Add the selected models with their existing coordinates">Add at original position</button><span class="grow"></span><button id="source_stamp" class="primary" disabled>Use as stamp</button></div>
 	</div>
 </div>
+<div id="as_ask" class="modal" role="dialog" aria-modal="true" aria-labelledby="as_ask_title"><div class="card askcard">
+	<h2 id="as_ask_title">Which project is the starting point?</h2>
+	<p>Studio and the Aseprite file you link have to agree on one project. The starting point overwrites the other: its tile size, frame count and art. After that they stay in sync, with Aseprite's painting flowing back into Studio live.</p>
+	<div class="sourcebar" style="flex-wrap:wrap"><button id="as_ask_take" class="primary">Start from this tileset (overwrite Aseprite)</button><button id="as_ask_keep">Start from the Aseprite file (overwrite tileset art)</button><span class="grow"></span><button id="as_ask_cancel">Cancel</button></div>
+</div></div>
 <div id="as_help" class="modal" role="dialog" aria-modal="true" aria-labelledby="as_help_title"><div class="card askcard ashelp">
 	<h2 id="as_help_title">Link Aseprite online</h2>
 	<ol>

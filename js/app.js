@@ -115,6 +115,10 @@
 		for (let i = 0; i < alpha.length; i++) alpha[i] = data[i * 4 + 3];
 		S.art = { w: img.width, h: img.height, data, alpha };
 		S.artURL = dataURL;
+		// The output still holds the previous tileset's maps, light and zoom: drop them until this one is processed.
+		S.result = null; holeCells = null;
+		output.light.on = false; output.view = { s: 0, cx: 0, cy: 0 }; output.set(null, S.settings);
+		$("stats").textContent = "Process to see the maps."; pieceInfo();
 		S.name = name.replace(/\.[^.]+$/, "").replace(/_(height|normal|pbr)$/, "");
 		renderer.setArt(img, img.width, img.height);
 		renderer.fit();
@@ -241,7 +245,10 @@
 			(async () => {
 				const hadArt = !!S.art;
 				const ref = await addReference(text);
-				if (!hadArt && p.images && p.images.atlas) { await setTileset(p.images.atlas, (p.name || "export") + ".png"); ref.showArt = false; markUnsaved(); }
+				if (!hadArt && p.images && p.images.atlas) {
+					await setTileset(p.images.atlas, (p.name || "export") + ".png"); ref.showArt = false; markUnsaved();
+					toast("That was a Godot export: it holds the art and model outlines but no editable models, so there are no maps to build. Open the .studio.json project to work on it.", "bad");
+				}
 			})().catch((err) => toast(err.message, "bad"));
 			return;
 		}
@@ -269,6 +276,7 @@
 		if (!p.bundleId) markUnsaved(); // an older project gets its id now: autosave keeps it until the project is saved
 		$("snap").value = S.snap;
 		settingsToControls();
+		if (TS.AnimUI) TS.AnimUI.projectChanged();
 		changed();
 		status(`Opened project ${p.name}`);
 		return true;
@@ -453,6 +461,7 @@
 	const asepriteOn = () => TS.Link && TS.Link.linked() && S.art && !(TS.AnimUI && TS.AnimUI.on);
 	function asepriteSoon() { if (asepriteOn()) { clearTimeout(asepriteTimer); asepriteTimer = setTimeout(asepriteSend, 400); } }
 	async function asepriteSend() {
+		if (TS.Link && TS.Link.linked() && TS.Link.adoptPending) return TS.Link.hello(); // Aseprite's file starts the project: wait for it
 		if (TS.Link && TS.Link.linked() && TS.AnimUI && TS.AnimUI.on) return TS.AnimUI.resend();
 		if (!asepriteOn()) return;
 		if (!S.result) processNow();
@@ -479,13 +488,24 @@
 	}
 	// Aseprite saved albedo.png: swap the tileset art for it, keeping the models, view and cursor.
 	async function asepriteAlbedo(img) {
+		if (TS.Link.adoptPending) { // Aseprite's file is the starting point: its tile (any size) becomes the tileset art, models stay
+			TS.Link.adoptPending = false;
+			const keep = S.art ? S.name : "aseprite";
+			await setTileset(imageDataURL(img), keep + ".png");
+			markUnsaved();
+			status("Aseprite's file is now the tileset.");
+			asepriteState("ok", `Live: started from Aseprite's file (${img.width}x${img.height}).`);
+			return asepriteSend();
+		}
 		img = firstTile(img); // not animating: only frame 1 (the top-left tile) counts, even if Aseprite still sends a whole animation sheet
 		if (!S.art) { // nothing open yet: Aseprite's art becomes the tileset (nothing to overwrite)
 			await setTileset(imageDataURL(img), "aseprite");
 			status("Opened Aseprite's art as the tileset.");
 			return asepriteState("ok", `Live: Aseprite's art is now the tileset (${img.width}x${img.height}).`);
 		}
-		if (!$("as_take").checked) return asepriteState("wait", "Received albedo.png from Aseprite (tick “Take Aseprite's albedo.png” to use it as the art).");
+		// Only a picture the tileset's size replaces it: anything else is another sprite (often the animation still open in Aseprite).
+		if (img.width !== S.art.w || img.height !== S.art.h)
+			return asepriteState("warn", `Aseprite sent a ${img.width}x${img.height} albedo.png but this tileset is ${S.art.w}x${S.art.h}, so the art was kept. Is Aseprite still on another sprite?`);
 		const url = imageDataURL(img), pic = await loadImage(url);
 		S.art = { w: img.width, h: img.height, data: new Uint8ClampedArray(img.data), alpha: Uint8Array.from({ length: img.width * img.height }, (_, i) => img.data[i * 4 + 3]) };
 		S.artURL = url;
@@ -494,17 +514,47 @@
 		changed();
 		asepriteState("ok", `Live: tileset art replaced from Aseprite at ${new Date().toLocaleTimeString()}.`);
 	}
+	// Asked on every link when a project is open: which side's project is the starting point? The other side is overwritten by it
+	// (layout, tile size, frame count and art). Resolves false when cancelled. With no project open, Aseprite's file starts it.
+	function askImport() {
+		const Link = TS.Link;
+		Link.artPending = null;
+		if (!S.art) { Link.origin = "aseprite"; Link.adoptPending = true; $("as_mode").textContent = "Starting from Aseprite's file."; return Promise.resolve(true); }
+		return new Promise((resolve) => {
+			const m = $("as_ask");
+			const done = (studio, ok) => {
+				m.classList.remove("open");
+				m.onkeydown = m.onclick = null;
+				if (ok) {
+					Link.origin = studio ? "studio" : "aseprite";
+					Link.adoptPending = !studio;
+					Link.artPending = studio ? new ImageData(new Uint8ClampedArray(S.art.data), S.art.w, S.art.h) : null;
+					$("as_mode").textContent = studio ? "Starting from this tileset: it overwrites the Aseprite file." : "Starting from the Aseprite file: it overwrites this tileset's art.";
+				}
+				resolve(ok);
+			};
+			$("as_ask_take").onclick = () => done(true, true);
+			$("as_ask_keep").onclick = () => done(false, true);
+			$("as_ask_cancel").onclick = () => done(false, false);
+			m.onclick = (e) => { if (e.target === m) done(false, false); };
+			m.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") done(false, false); };
+			m.classList.add("open");
+			$("as_ask_take").focus();
+		});
+	}
 	function asepriteInit() {
 		const Link = TS.Link, animAlbedo = Link.onAlbedo, animStatus = Link.onStatus;
-		Link.onAlbedo = (img) => (TS.AnimUI && TS.AnimUI.on ? animAlbedo(img) : asepriteAlbedo(img));
+		Link.onAlbedo = (img) => (TS.AnimUI && TS.AnimUI.on && !Link.adoptPending ? animAlbedo(img) : asepriteAlbedo(img));
 		Link.onStatus = (state, text) => { if (animStatus) animStatus(state, text); asepriteState(state, text); };
 		$("as_link").onclick = async () => {
+			if (!(await askImport())) return;
 			try { await Link.connect(); asepriteSend(); } catch (e) { if (e.name !== "AbortError") toast(e.message, "bad"); }
 		};
-		$("as_unlink").onclick = () => { Link.disconnect(); $("as_roomrow").hidden = true; };
+		$("as_unlink").onclick = () => { Link.disconnect(); $("as_roomrow").hidden = true; $("as_mode").textContent = ""; };
 		// Online: the room code is kept in this browser so Aseprite's saved code keeps working.
 		Link.onRelayOpen = asepriteSend;
-		$("as_online").onclick = () => {
+		$("as_online").onclick = async () => {
+			if (!(await askImport())) return;
 			let room = "";
 			try { room = localStorage.getItem("tsLinkRoom") || ""; } catch (e) { /* storage blocked: a new code each time */ }
 			if (!room) { room = Link.newRoom(); try { localStorage.setItem("tsLinkRoom", room); } catch (e) { /* ignore */ } }
@@ -1496,7 +1546,7 @@
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id), editing = S.edit && isActive;
 			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
 			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
-			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel && !S.edit ? "s" : "n") : null, hit = cacheable && geomCache.get(obj);
+			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel ? "s" : "n") + (S.edit ? "e" : "") : null, hit = cacheable && geomCache.get(obj);
 			if (hit && hit.key === key) { triParts.push(hit.tris); lineParts.push(hit.lines); continue; }
 			const tris = [], lines = [];
 			const corners = Mesh.shadingNormals(obj);

@@ -4,6 +4,7 @@
 //   Studio -> Aseprite   normal.png        the animation's normal-map spritesheet
 //                        studio_link.json  {rev, sheet, cell, cols, rows, frames}; written AFTER normal.png, so a changed rev means
 //                                          the png is complete
+//                        art.png           optional, once per link: the tileset's art, to start Aseprite's Albedo group with
 //   Aseprite -> Studio   albedo.png        the flattened "Albedo" group, saved by the extension on every edit
 //
 // The sheet must be a power-of-two canvas. If the Aseprite canvas changes size, Studio warns and keeps the previous page.
@@ -23,6 +24,9 @@
 	L.onAlbedo = null; // (ImageData) -> void
 	L.onFrames = null; // ({n, ops: [{op: "del" | "ins", i}]}) -> void: frames were added / deleted on Aseprite's timeline
 	L.onStatus = null; // (state, text) -> void   state: off | ok | warn | wait
+	L.artPending = null; // ImageData: the tileset's art, sent once to Aseprite as its starting Albedo layer (kind 3 / art.png)
+	L.origin = "aseprite"; // which side's project starts the link: "studio" (overwrites Aseprite's file) or "aseprite" (Studio adopts it)
+	L.adoptPending = false; // origin aseprite: the first picture from Aseprite replaces the tileset art whatever its size
 	L.expected = null; // {w, h}: the sheet size Aseprite must keep
 	L.linked = () => !!dir || !!ws;
 	L.folderLinked = () => !!dir;
@@ -98,22 +102,36 @@
 		await w.close();
 	};
 
+	const toBlob = (img) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d").putImageData(img, 0, 0); return new Promise((ok) => c.toBlob(ok, "image/png")); };
+
 	// Send the normal sheet (ImageData) and its layout to Aseprite. extra: {anim: true, fps} when an animation is being linked (then
 	// Aseprite's timeline follows the frame count; otherwise only frame 1 is linked).
 	L.push = async (sheet, layout, extra) => {
 		if (!dir && !ws) return;
+		if (L.adoptPending) return L.hello(); // Aseprite's file starts the project: no sheet goes out until Studio has taken its size
 		const c = document.createElement("canvas");
 		c.width = sheet.width; c.height = sheet.height;
 		c.getContext("2d").putImageData(sheet, 0, 0);
 		const blob = await new Promise((ok) => c.toBlob(ok, "image/png"));
-		const meta = JSON.stringify(Object.assign({ t: "meta", version: 2, rev: ++rev, sheet: [layout.w, layout.h], cell: [layout.cw, layout.ch], cols: layout.cols, rows: layout.rows, frames: layout.frames, anim: false }, extra));
-		if (dir) { await write(FILES.normal, blob); await write(FILES.meta, meta); }
+		const art = L.artPending, artBlob = art && await toBlob(art);
+		const meta = JSON.stringify(Object.assign({ t: "meta", version: 2, art: !!artBlob, origin: L.origin, rev: ++rev, sheet: [layout.w, layout.h], cell: [layout.cw, layout.ch], cols: layout.cols, rows: layout.rows, frames: layout.frames, anim: false }, extra));
+		if (dir) { if (artBlob) await write("art.png", artBlob); await write(FILES.normal, blob); await write(FILES.meta, meta); }
 		// Over the relay the meta goes first so the picture always arrives with its layout known.
-		if (L.relayOpen()) { ws.send(meta); await relaySend(1, blob); }
+		if (L.relayOpen()) { ws.send(meta); if (artBlob) await relaySend(3, artBlob); await relaySend(1, blob); }
+		if (artBlob && (dir || L.relayOpen())) L.artPending = null;
+	};
+
+	// Origin aseprite: tell Aseprite we are waiting for its file (no sheet yet; rev 0 so no normal map is imported).
+	L.hello = async () => {
+		L.expected = null;
+		const meta = JSON.stringify({ t: "meta", version: 2, rev: 0, origin: "aseprite", adopt: true });
+		if (dir) await write(FILES.meta, meta);
+		if (L.relayOpen()) ws.send(meta);
 	};
 
 	// Checks an incoming sheet against what Studio expects. Returns a problem text, or "".
 	L.check = (w, h, expected) => {
+		if (L.adoptPending) return "";
 		const strict = !TS.AnimUI || TS.AnimUI.on; // animation sheets must be 2^n; a plain tileset just has to keep its size
 		if (strict && (!TS.Rig.isPow2(w) || !TS.Rig.isPow2(h))) return `Aseprite's canvas is ${w}x${h}: it must be a power of two (16, 32, 64, 128...) each way.`;
 		if (expected && (w !== expected.w || h !== expected.h)) return `Aseprite's canvas changed to ${w}x${h}; the sheet is ${expected.w}x${expected.h}. Kept the previous page. Resize the canvas back, or re-link after changing the clip.`;

@@ -70,6 +70,9 @@ local function parseMeta(text)
     cols = tonumber(text:match('"cols"%s*:%s*(%d+)')) or 1, rows = tonumber(text:match('"rows"%s*:%s*(%d+)')) or 1,
     frames = tonumber(text:match('"frames"%s*:%s*(%d+)')) or 1, fps = tonumber(text:match('"fps"%s*:%s*(%d+)')),
     anim = text:find('"anim"%s*:%s*true') ~= nil,
+    art = text:find('"art"%s*:%s*true') ~= nil,
+    adopt = text:find('"adopt"%s*:%s*true') ~= nil,
+    origin = text:match('"origin"%s*:%s*"(%a+)"'),
   }
 end
 
@@ -86,6 +89,17 @@ local function say(text, problem)
   if not state then return end
   if problem then state.problem = text elseif state.problem then return end
   if state.dlg then state.dlg:modify{ id = "status", text = text } end
+end
+
+-- The link is bound to ONE sprite: the one active when it was started. Other open files are never read or changed. Edits made by the
+-- link switch to that sprite for a moment (Aseprite records undo steps on the active file) and then back.
+local function onSprite(fn, ...)
+  local prev = app.sprite
+  if prev ~= state.sprite then app.sprite = state.sprite end
+  local res = table.pack(pcall(fn, ...))
+  if prev and prev ~= state.sprite then pcall(function() app.sprite = prev end) end
+  if not res[1] then error(res[2], 0) end
+  return table.unpack(res, 2, res.n)
 end
 
 -- Aseprite's WebSocket has no TLS on Windows ("TLS support is not enabled on this platform"), so this leg must be plain ws://.
@@ -124,6 +138,20 @@ local function relayReceive(mt, data, err)
       local meta = parseMeta(data)
       if meta then state.meta = meta end
     end
+  elseif mt == WebSocketMessageType.BINARY and #data >= 3 and data:byte(1) == 3 then
+    -- kind 3: the tileset's art, sent once when linking
+    local idx, count = data:byte(2), data:byte(3)
+    if idx == 0 then state.artParts = {} end
+    if not state.artParts or idx ~= #state.artParts then return end
+    state.artParts[#state.artParts + 1] = data:sub(4)
+    if #state.artParts == count then
+      local path = TMP("tileset_studio_art.png")
+      local f = io.open(path, "wb")
+      f:write(table.concat(state.artParts))
+      f:close()
+      state.artParts = nil
+      state.artPath = path
+    end
   elseif mt == WebSocketMessageType.BINARY and #data >= 3 and data:byte(1) == 1 then
     local idx, count = data:byte(2), data:byte(3)
     if idx == 0 then state.parts = {} end
@@ -142,6 +170,7 @@ end
 
 -- The sheet Studio expects: every frame's flattened Albedo group in its grid cell. Without animation (or before Studio has said
 -- anything) that is just frame 1.
+local sendFrames
 local function exportAlbedo()
   local sprite = state.sprite
   local group = findGroup(sprite.layers, ALBEDO_GROUP)
@@ -151,6 +180,20 @@ local function exportAlbedo()
   local anim = meta and meta.anim
   local n = anim and #sprite.frames or 1
   local cw, ch = sprite.width, sprite.height
+  local function deliver(sheet)
+    if state.ws then return relaySendAlbedo(sheet) end
+    sheet:saveAs(join(state.folder, "albedo.png"))
+    return true
+  end
+  if meta and meta.adopt then
+    -- This file starts the project: send one tile (frame 1) and the frame count; Studio takes its size and timeline from them.
+    local tile = Image(cw, ch, ColorMode.RGB)
+    drawLayer(tile, group, 1)
+    if not deliver(tile) then return end
+    sendFrames({}, #sprite.frames)
+    say("Sent this file to Studio as the starting point (" .. cw .. "x" .. ch .. ", " .. #sprite.frames .. " frame" .. (#sprite.frames == 1 and "" or "s") .. ").")
+    return
+  end
   if anim then
     if meta.frames ~= n then say("Waiting for Studio to catch up on the frame count...") return end
     if meta.cw ~= cw or meta.ch ~= ch then
@@ -166,11 +209,7 @@ local function exportAlbedo()
     drawLayer(img, group, f)
     sheet:drawImage(img, Point(((f - 1) % cols) * cw, ((f - 1) // cols) * ch))
   end
-  if state.ws then
-    if not relaySendAlbedo(sheet) then return end
-  else
-    sheet:saveAs(join(state.folder, "albedo.png"))
-  end
+  if not deliver(sheet) then return end
   if anim and not (isPow2(sheet.width) and isPow2(sheet.height)) then
     say("Sent, but the " .. sheet.width .. "x" .. sheet.height .. " sheet is not a power of two: Studio will refuse it. Use a power-of-two tile size.")
   else
@@ -218,7 +257,7 @@ local function frameOps(old, new)
   return ops
 end
 
-local function sendFrames(ops, n)
+function sendFrames(ops, n)
   local parts = {}
   for _, o in ipairs(ops) do parts[#parts + 1] = string.format('{"op":"%s","i":%d}', o.op, o.i) end
   if state.ws then
@@ -319,13 +358,48 @@ local function importNormal(path)
   return true
 end
 
+-- Studio sent the tileset's art (once per link, when the user chose to overwrite Aseprite's): it becomes the TOP layer "Studio art" of the
+-- Albedo group (the group is made if missing), on frame 1, covering what Aseprite had.
+local function importArt(path)
+  local sprite = state.sprite
+  local pic = Image{ fromFile = path }
+  if not pic then say("Could not read the tileset's art picture.", true) return end
+  state.artDone = true
+  state.ignore = true
+  app.transaction("Tileset Studio art", function()
+    local group = findGroup(sprite.layers, ALBEDO_GROUP)
+    if not group then
+      group = sprite:newGroup()
+      group.name = "Albedo"
+    end
+    local function clear(layers)
+      for _, l in ipairs(layers) do
+        if l.isGroup then clear(l.layers)
+        else local c = l:cel(1) if c then sprite:deleteCel(c) end end
+      end
+    end
+    clear(group.layers) -- Studio's project starts the link: frame 1 of the group is overwritten
+    local layer = sprite:newLayer()
+    layer.name = "Studio art"
+    layer.parent = group
+    pcall(function() layer.stackIndex = #group.layers end) -- the top of the group, so it covers what Aseprite had
+    local cel = Image(sprite.width, sprite.height, ColorMode.RGB)
+    cel:drawImage(pic, Point(0, 0))
+    sprite:newCel(layer, 1, cel, Point(0, 0))
+  end)
+  state.ignore = false
+  state.dirty = true
+  app.refresh()
+  say("Received the tileset's art as layer \"Studio art\" in the Albedo group.")
+end
+
 -- Make the canvas exactly one tile (keeps the art at the top left), then bring in the normal map that was waiting.
 local function fitCanvas()
   local meta = state and state.meta
   if not meta or not meta.cw then say("Nothing from Studio yet.", true) return end
-  state.sprite:crop(0, 0, meta.cw, meta.ch)
+  onSprite(function() state.sprite:crop(0, 0, meta.cw, meta.ch) end)
   state.problem = nil
-  if state.pending or state.ws == nil then importNormal(state.pending) end
+  if state.pending or state.ws == nil then onSprite(importNormal, state.pending) end
   state.dirty = true
 end
 
@@ -354,6 +428,7 @@ local function start(folder, relay)
   end)
   if not (rawget(_G, "TSL_TEST") and TSL_TEST.headless) then
     state.dlg = Dialog{ title = "Tileset Studio Link", onclose = stop }
+    state.dlg:label{ text = "File: " .. ((sprite.filename and sprite.filename ~= "") and app.fs.fileName(sprite.filename) or "(unsaved sprite)") .. "  (only this file is linked)" }
     state.dlg:label{ id = "folder", text = relay and ("Room: " .. relay.room) or ("Folder: " .. folder) }
     state.dlg:label{ id = "status", text = "Linked. Paint in the group named Albedo." }
     state.dlg:button{ text = "Send now", onclick = function() local ok, err = pcall(exportAlbedo) if not ok then say("Error: " .. tostring(err)) end end }
@@ -365,17 +440,47 @@ local function start(folder, relay)
   state.tick = function()
     if not state then return end
     local ok, err = pcall(function()
+      local alive = false
+      for _, s in ipairs(app.sprites) do if s == state.sprite then alive = true end end
+      if not alive then
+        local dlg = state.dlg
+        if dlg then dlg:close() else stop() end
+        app.alert("Tileset Studio Link stopped: the linked file was closed.")
+        return
+      end
       -- Studio -> Aseprite
       local m = state.meta
+      if m and m.origin == "studio" and m.cw and not state.fitted then
+        -- Studio's project starts the link: this file's canvas becomes exactly one Studio tile.
+        state.fitted = true
+        if m.cw ~= state.sprite.width or m.ch ~= state.sprite.height then
+          state.ignore = true
+          onSprite(function() state.sprite:crop(0, 0, m.cw, m.ch) end)
+          state.ignore = false
+          state.dirty = true
+          if not state.ws then state.rev = 0 end -- the normal map that was refused for the old size is read again
+        end
+      end
       if state.pending and m and m.cw == state.sprite.width and m.ch == state.sprite.height then
-        importNormal(state.pending) -- the canvas was resized by hand: the waiting normal map can go in now
+        onSprite(importNormal, state.pending) -- the canvas was resized by hand: the waiting normal map can go in now
+      end
+      if state.meta and state.meta.art and not state.artDone then
+        local artPath = state.ws and state.artPath or join(state.folder, "art.png")
+        local exists = state.ws and state.artPath
+        if not state.ws then local f = io.open(artPath, "rb") if f then f:close() exists = true end end
+        if exists and state.sprite.width == state.meta.cw and state.sprite.height == state.meta.ch then
+          state.artPath = nil
+          onSprite(importArt, artPath)
+        end
       end
       if state.ws then
-        if state.normalPath and state.meta then
+        if state.normalPath and state.meta and state.meta.adopt then
+          state.normalPath = nil -- this file starts the project: a normal map left in the relay's cache is stale
+        elseif state.normalPath and state.meta then
           local path = state.normalPath
           state.normalPath = nil
           state.rev = state.rev + 1
-          importNormal(path)
+          onSprite(importNormal, path)
         end
       else
         local meta = readMeta(state.folder)
@@ -383,12 +488,13 @@ local function start(folder, relay)
           state.meta = meta
           if meta.rev ~= state.rev then
             state.rev = meta.rev
-            importNormal()
+            onSprite(importNormal)
           end
         end
       end
       -- Aseprite -> Studio
-      if state.dirty and not state.ignore then
+      if state.meta and not state.artWait then state.artWait = os.clock() + 10 end -- how long to wait for Studio's art before sending ours
+      if state.dirty and not state.ignore and state.meta and not (state.meta.origin == "studio" and state.meta.art and not state.artDone and os.clock() < state.artWait) then
         state.dirty = false
         if syncFrames() then state.awaiting = os.clock() + 6
         elseif not state.awaiting then exportAlbedo() end
