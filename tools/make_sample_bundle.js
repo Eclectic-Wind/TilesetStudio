@@ -1,13 +1,14 @@
-// Builds samples/sample.export.json: a version 3 Godot bundle for a small scene (flat rug, table, back wall, side wall) by running the
-// Studio's own Process code headless. Usage: node tools/make_sample_bundle.js [out.json]
-// The bundle envelope below mirrors bundleJSON() in js/app.js (keep them in step); the atlas is a flat-coloured stand-in drawn here.
+// Builds samples/sample.export.json: a version 4 Godot bundle for a small scene (flat rug, table, back wall, side wall) by running the
+// Studio's own Process and Bundle code headless. Usage: node tools/make_sample_bundle.js [out.json]
+// The envelope is TS.Bundle.build (js/bundle.js), the same one Export ▸ Godot bundle and tools/export_project.js write; the atlas is a
+// flat-coloured stand-in drawn here.
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), zlib = require("zlib");
 const root = path.join(__dirname, "..");
-const ctx = { console, Math, JSON, Map, Set, Float32Array, Uint8Array, Int32Array, Int16Array, Uint8ClampedArray };
+const ctx = { console, Math, JSON, Map, Set, Float32Array, Uint8Array, Int32Array, Int16Array, Uint8ClampedArray, btoa };
 ctx.window = ctx;
 vm.createContext(ctx);
-for (const f of ["math", "mesh", "process"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
+for (const f of ["math", "shape", "mesh", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
 const TS = ctx.TS, M = TS.Mesh, P = TS.Process;
 
 // A box as raw verts / faces (counter-clockwise from outside), to merge several into one model.
@@ -27,10 +28,10 @@ const rug = M.box([48, 60, 0], 56, 40, 2); rug.name = "Rug";
 const tableTop = box(136, 84, 24, 184, 116, 28), leg = (x, y) => box(x, y, 0, x + 4, y + 4, 24);
 const table = merge("Table", [tableTop, leg(136, 84), leg(180, 84), leg(136, 112), leg(180, 112)]);
 table.tags = "furniture";
-const wall = M.box([64, 190, 0], 96, 8, 56); wall.name = "Back wall"; wall.kind = "wall";
-const side = M.box([228, 200, 0], 8, 96, 48); side.name = "Side wall"; side.kind = "side"; side.collision = "footprint";
+const wall = M.box([64, 190, 0], 96, 8, 56); wall.name = "Back wall"; wall.kind = "wall_h";
+const side = M.box([228, 200, 0], 8, 96, 48); side.name = "Side wall"; side.kind = "wall_v"; side.collision = "footprint";
 const objects = [rug, table, wall, side];
-const settings = { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 };
+const settings = { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 };
 
 // Art: opaque wherever a model shows (found with a first pass over an all-opaque canvas), a flat colour per model.
 const alpha = new Uint8Array(W * H).fill(255), data = new Uint8ClampedArray(W * H * 4);
@@ -56,14 +57,10 @@ const png = () => {
 	return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 };
 
-const maps = P.maps(r, settings);
-const bundle = {
-	format: "tileset-studio-export", version: 3, name: "sample", tile: 32, canvas: [W, H], exported: "2026-10-20T12:00:00.000Z",
-	bundleId: "6f1c2a9e-3b7d-4c58-9e1a-0d4b8f2c7a11", exportedAt: "2026-10-20T12:00:00.000Z", studioVersion: "1.0.0", walkOverHeight: P.walkOver(settings),
-	images: { atlas: "data:image/png;base64," + png().toString("base64") },
-	maps: { w: maps.w, h: maps.h, rows: maps.rows, materials: maps.materials, highlights: maps.highlights, data: Buffer.from(maps.data).toString("base64") },
-	footprints: P.footprints(objects, art, r, settings),
-};
+const bundle = TS.Bundle.build({
+	name: "sample", bundleId: "6f1c2a9e-3b7d-4c58-9e1a-0d4b8f2c7a11", atlas: "data:image/png;base64," + png().toString("base64"), art, objects, settings,
+	result: r, now: "2026-10-20T12:00:00.000Z",
+});
 const out = process.argv[2] || path.join(root, "samples", "sample.export.json");
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify(bundle));
@@ -71,5 +68,5 @@ fs.writeFileSync(out, JSON.stringify(bundle));
 const brief = Object.assign({}, bundle, { images: "...", maps: "..." });
 fs.writeFileSync(out.replace(/\.json$/, ".summary.json"), JSON.stringify(brief, null, 1));
 console.log("wrote", out, Math.round(fs.statSync(out).size / 1024), "KB");
-for (const o of bundle.footprints.objects) console.log(o.name.padEnd(10), o.kind.padEnd(6), "inferred=" + o.kindInferred, `h ${o.heightMin}-${o.heightMax}`, "flat=" + o.flat, "collision", o.collision.requested, "->", o.collision.mode, "cells", JSON.stringify(o.cells));
-console.log("clashes", JSON.stringify(bundle.footprints.clashes));
+for (const o of bundle.footprints.objects) console.log(o.name.padEnd(10), o.kind.padEnd(7), "inferred=" + o.kindInferred, `h ${o.heightMin}-${o.heightMax}`, "flat=" + o.flat, "piece", o.pieceIndex, "collision", o.collision.requested, "->", o.collision.mode, "cells", JSON.stringify(o.cells));
+console.log("pieces", bundle.footprints.pieces.map((p) => p.names.join("+") + ":" + p.kind).join(" "), "clashes", JSON.stringify(bundle.footprints.clashes));

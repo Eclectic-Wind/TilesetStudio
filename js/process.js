@@ -132,6 +132,9 @@
 	P.floorField = (objects, W, H, rule = P.bodyRule()) => {
 		const rows = H + 256, top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
 		const spans = new Array(W * rows), blocks = [], owner = new Int32Array(W * rows).fill(-1);
+		// pairs[floor point] = [[a, b, model index], ...]: the solid spans before they merge, each with the model that made it (the
+		// engine's per-piece maps read these). covers[model index] = the floor points its footprint covers (flat indices).
+		const pairs = new Array(W * rows), covers = [];
 		// heights[model index] = {min, max}: lowest underside and highest top of the model's own solid spans (null: none on the plan).
 		const heights = [];
 		let used = H;
@@ -163,6 +166,7 @@
 						hits.get(i).push(z);
 					}
 			}
+			covers.push([...hits.keys()]);
 			// Pair the crossings into filled spans. Two triangles sharing an edge both report a point on it: drop near-duplicates.
 			for (const [i, zs] of hits) {
 				zs.sort((a, b) => a - b);
@@ -177,6 +181,7 @@
 				for (let k = 0; k < clean.length; k += 2) {
 					const a = clean[k], b = k + 1 < clean.length ? clean[k + 1] : clean[k] + 0.5;
 					list.push(a, b);
+					(pairs[i] || (pairs[i] = [])).push([a, b, oi]);
 					if (a < rule.body && b > rule.step) hit = true;
 				}
 				if (hit) blocking.push(i);
@@ -197,7 +202,7 @@
 			}
 			spans[i] = merged.flat();
 		});
-		return { top, bottom, spans, blocks, heights, owner, rows, shown: Math.min(rows, used + 8) };
+		return { top, bottom, spans, blocks, heights, owner, pairs, covers, rows, shown: Math.min(rows, used + 8) };
 	};
 
 	// --- collision ---
@@ -222,29 +227,46 @@
 	P.collisionMode = (o, role) => (role ? role.mode : P.collisionRequested(o));
 
 	// --- engine roles ---
-	// Kinds: floor (walk over it), deco (art only), solid (blocks), wall (tall back wall the torch beam lands on), side (side wall
-	// that blocks light east/west). Only floor / solid are inferred; deco, wall and side are the artist's call (o.kind).
-	P.KINDS = ["floor", "deco", "solid", "wall", "side"];
+	// Kinds (bundle version 4): floor (walked over: flat ground art), wall_h (horizontal wall, runs east-west: casts shadow, the torch
+	// beam lands on it, fades while the player is behind it), wall_v (vertical wall, runs north-south: casts shadow, blocks light east
+	// / west, never fades), furn (anything else that stands: furniture, props, pillars; casts shadow, y-sorted at its base line).
+	// Inferred when the artist set nothing: flat -> floor; else tall (heightMax >= wallHeight) and thin (the shorter side of its floor
+	// box <= wallThickness) -> wall_h if its east-west extent >= its north-south extent, else wall_v; else furn.
+	P.KINDS = ["floor", "wall_h", "wall_v", "furn"];
 	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
+	P.wallHeight = (settings = {}) => settings.wallHeight ?? 48;
+	P.wallThickness = (settings = {}) => settings.wallThickness ?? 24;
+	P.defaultSettings = () => ({ alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
 
+	// Kinds that are no longer valid map on every load: deco and solid -> furn, wall -> wall_h, side -> wall_v (the old names of the
+	// same things, from versions 1-3 and from projects saved before furn existed). Mutates the objects; -> how many changed.
+	const OLD_KINDS = new Map([["wall", "wall_h"], ["side", "wall_v"], ["solid", "furn"], ["deco", "furn"]]);
+	P.migrateKinds = (objects) => {
+		let changed = 0;
+		for (const o of objects) if (OLD_KINDS.has(o.kind)) { o.kind = OLD_KINDS.get(o.kind); changed++; }
+		return changed;
+	};
 	// Per model index: {heightMin, heightMax (floor-space px above the floor; 0/0 when it has no surface on the plan), flat,
 	// kindInferred, kind, kindOverridden, requested, mode (resolved collision), hull (floor plan convex hull)}.
 	// auto -> "footprint" (a model nothing of which reaches the step blocks no floor, so it yields no polygon). An explicit
 	// strip / footprint / none is always honoured.
 	P.roles = (objects, floor, settings) => {
-		const walk = P.walkOver(settings);
+		const walk = P.walkOver(settings), wallH = P.wallHeight(settings), wallT = P.wallThickness(settings);
 		return objects.map((o, oi) => {
 			const h = floor.heights[oi], heightMin = h ? round2(h.min) : 0, heightMax = h ? round2(h.max) : 0;
 			const flat = !!h && heightMax <= walk;
-			const kindInferred = flat ? "floor" : "solid";
+			const vi = o.faces.length ? Mesh.faceVerts(o) : [];
+			// The model's floor box: its east-west and north-south extents.
+			const ew = span(vi.map((i) => o.verts[i][0])), ns = span(vi.map((i) => o.verts[i][1]));
+			const kindInferred = flat ? "floor" : h && heightMax >= wallH && Math.min(ew, ns) <= wallT ? (ew >= ns ? "wall_h" : "wall_v") : "furn";
 			const kindOverridden = P.KINDS.includes(o.kind);
 			const requested = P.collisionRequested(o);
 			const mode = requested !== "auto" ? requested : "footprint";
-			const vi = o.faces.length ? Mesh.faceVerts(o) : [];
 			return { heightMin, heightMax, flat, kindInferred, kind: kindOverridden ? o.kind : kindInferred, kindOverridden, requested, mode,
 				hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])) };
 		});
 	};
+	const span = (list) => (list.length ? list.reduce((m, v) => Math.max(m, v), -Infinity) - list.reduce((m, v) => Math.min(m, v), Infinity) : 0);
 
 	// {models: [{mode, polygons (footprint mode, floor px), blocked (floor px count)}] by object index,
 	//  mask Uint8 over the floor plan (1 = floor a footprint model blocks, 2 = its collision, 4 = a strip model's strip, as Godot
@@ -489,11 +511,20 @@
 	//                              A material + 1 (0 = no art); materials = [[roughness, metallic], ...] indexed by A - 1.
 	//   rows H..H+rows-1 (floor)   per floor point: R top + 1 (0 = nothing stands there), G underside, B gap bottom + 1 (0 = no gap),
 	//                              A gap top. A gap is the tallest hole (>= MIN_GAP px) between the solid spans there (a cart's shelves).
+	// Version 4: where a floor point's spans belong to different pieces, the gap is instead the boundary between the topmost piece's
+	// lowest run and the run under it, whatever its size (0 px: touching, so B = A + 1). Each half of the point then belongs to one piece.
 	// The engine builds its heightfield from the floor part exactly instead of guessing it from the art.
+	//
+	// maps.pieces (version 4) is the same W x (H + rows) grid, RGBA8 too, of 16-bit piece numbers (lo, hi bytes; 0 = no piece; a
+	// piece's number is its place in footprints.pieces + 1):
+	//   rows 0..H-1 (art space)   R, G = the piece of the art pixel's owner (hole-filled pixels included); B, A = 0.
+	//   rows H..H+rows-1 (floor)  R, G = the piece of the run above the gap (the top piece when there is no gap); B, A = the piece of the
+	//                             run below the gap (the same as R, G when there is no gap).
 	const MIN_GAP = 3;
 	P.maps = (r, settings) => {
-		const W = r.w, H = r.h, floor = r.floor, rows = floor.shown;
-		const data = new Uint8Array(W * (H + rows) * 4);
+		const W = r.w, H = r.h, floor = r.floor, rows = floor.shown, pm = r.pieceMap, cut = settings.alphaCut;
+		if (!pm) throw new Error("P.maps needs r.pieceMap (P.pieces)");
+		const data = new Uint8Array(W * (H + rows) * 4), pieces = new Uint8Array(W * (H + rows) * 4);
 		const materials = [], index = new Map();
 		const material = (rough, metal) => {
 			const key = Math.round(rough * 255) * 256 + Math.round(metal * 255);
@@ -509,33 +540,55 @@
 			materials.forEach((m, k) => { const d = (m[0] - rough) ** 2 + (m[1] - metal) ** 2; if (d < bd) { bd = d; best = k; } });
 			return best;
 		};
+		// Piece number of a model (0 = none), 16-bit into two bytes.
+		const pieceOf = (oi) => (oi >= 0 && pm.pieceOf[oi] >= 0 ? pm.pieceOf[oi] + 1 : 0);
+		const put16 = (o, n) => { pieces[o] = n & 255; pieces[o + 1] = n >> 8; };
 		for (let i = 0; i < W * H; i++) {
-			if (r.alpha[i] <= settings.alphaCut) continue;
+			if (r.alpha[i] <= cut) continue;
 			const has = !isNaN(r.height[i]), o = i * 4;
 			const n = has ? P.mapNormal(r, i, settings) : [0, 1, 0];
 			data[o] = has ? TS.clamp(Math.round(r.height[i]), 0, 255) : 0;
 			data[o + 1] = Math.round(TS.clamp(n[0] * 0.5 + 0.5, 0, 1) * 255);
 			data[o + 2] = Math.round(TS.clamp(n[1] * 0.5 + 0.5, 0, 1) * 255);
 			data[o + 3] = material(has ? r.rough[i] : 1, has ? r.metal[i] : 0) + 1;
+			put16(o, pieceOf(r.owner[i]));
 		}
 		const byte = (v) => TS.clamp(Math.round(v), 0, 255);
 		let gaps = 0;
 		for (let k = 0; k < W * rows; k++) {
 			if (floor.top[k] < 0) continue;
-			const sp = floor.spans[k], o = (W * H + k) * 4;
-			let under = floor.bottom[k], top = floor.top[k], lo = -1, hi = 0, best = MIN_GAP;
-			if (sp && sp.length >= 2) {
-				under = sp[0]; top = sp[sp.length - 1];
-				for (let j = 1; j + 1 < sp.length; j += 2) {
-					const gap = sp[j + 1] - sp[j];
-					if (gap >= best) { best = gap; lo = sp[j]; hi = sp[j + 1]; }
+			const o = (W * H + k) * 4;
+			// The solid runs here, bottom to top. Crossings merge into one run while they touch (within 0.5 px) and belong to one piece;
+			// a run is {a, b, piece}: its bottom, top and piece.
+			const prs = (floor.pairs[k] || []).slice().sort((p, q) => p[0] - q[0]), runs = [];
+			for (const [a, b, oi] of prs) {
+				const piece = pieceOf(oi), last = runs[runs.length - 1];
+				if (last && last.piece === piece && a <= last.b + 0.5) last.b = Math.max(last.b, b);
+				else runs.push({ a, b, piece });
+			}
+			let under = floor.bottom[k], top = floor.top[k], topPiece = pieceOf(floor.owner[k]);
+			let lo = -1, hi = 0, upper = topPiece, lower = topPiece;
+			if (runs.length) {
+				under = runs[0].a; top = runs[runs.length - 1].b; topPiece = runs[runs.length - 1].piece;
+				upper = lower = topPiece;
+				// The topmost piece's lowest run and the run under it: that boundary is the gap, whatever its size.
+				const j = runs.findIndex((run) => run.piece === topPiece);
+				if (j > 0) { lo = runs[j - 1].b; hi = Math.max(lo, runs[j].a); lower = runs[j - 1].piece; upper = runs[j].piece; }
+				else {
+					// Otherwise the tallest gap, as before.
+					let best = MIN_GAP;
+					for (let q = 0; q + 1 < runs.length; q++) {
+						const gap = runs[q + 1].a - runs[q].b;
+						if (gap >= best) { best = gap; lo = runs[q].b; hi = runs[q + 1].a; lower = runs[q].piece; upper = runs[q + 1].piece; }
+					}
 				}
 			}
 			data[o] = byte(top) + 1 > 255 ? 255 : byte(top) + 1;
 			data[o + 1] = byte(under);
 			if (lo >= 0) { data[o + 2] = Math.min(255, byte(lo) + 1); data[o + 3] = byte(hi); gaps++; }
+			put16(o, upper); put16(o + 2, lower);
 		}
-		return { w: W, h: H, rows, materials, highlights: !!settings.packHighlights, data, gaps };
+		return { w: W, h: H, rows, materials, highlights: !!settings.packHighlights, data, pieces, gaps };
 	};
 
 	// Version 2 adds each model's `collision` ({mode, polygons}) and the rule it was made with; the version 1 fields stay, so an
@@ -545,21 +598,29 @@
 	// collision.requested (collision.mode is now the RESOLVED mode); plus walkOverHeight, cellOwners and clashes at this level. The
 	// shape of version 2 (name, solid, z, footprint, roughness, metallic, collision.mode / polygons) is unchanged. The index of a
 	// model in `objects` below is what cells / cellOwners / clashes refer to.
+	//
+	// Bundle version 4 (see addons/studio_import/BUNDLE_V4.md) adds: wallHeight / wallThickness (here and at the top level), per model
+	// pieceIndex (its piece's number, 1-based) and outline (its exact floor outline), and footprints.pieces, the piece table: one entry
+	// per piece, in order, its number being its position + 1. The kinds are now floor, wall_h, wall_v and furn.
 	P.footprints = (objects, art, result, settings) => {
 		const rule = P.bodyRule(settings);
 		const r = result && result.roles && result.roles.length === objects.length ? result : P.run(objects, art, settings);
+		const pm = r.pieceMap || (r.pieceMap = P.pieces(objects, r, settings));
 		const col = r.collision, roles = r.roles;
 		// Export index of each model (loose lines / points are left out below, so indices shift).
 		const exported = objects.map((o, oi) => oi).filter((oi) => objects[oi].faces.length);
 		const idx = new Map(exported.map((oi, k) => [oi, k]));
 		const own = P.cellOwnership(objects, r, settings);
+		const bounds = (oi) => Mesh.bounds(objects[oi], Mesh.faceVerts(objects[oi]));
 		return {
 			version: 2,
 			walkOverHeight: P.walkOver(settings),
+			wallHeight: P.wallHeight(settings),
+			wallThickness: P.wallThickness(settings),
 			canvas: [art.w, art.h],
 			tile: 32,
-			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas (X, Y - Z). footprint = convex hull on the floor plan. " +
-				"collision.mode: strip = the importer's 4 px strip along the footprint's south edge; footprint = collision.polygons (floor px) " +
+			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas (X, Y - Z). footprint = convex hull on the floor plan; outline = the exact " +
+				"floor outline (a traced mask, not a hull). collision.mode: strip = the importer's 4 px strip along the footprint's south edge; footprint = collision.polygons (floor px) " +
 				"is what the player's 24x12 feet box collides with: the floor where the model's solid spans reach into [step, body] px, sides " +
 				`pulled in ${COLLIDE_SIDE} px and south edges ${COLLIDE_SOUTH} px north (feet stop 4 px in front, can stand at its back edge); none = never blocks.`,
 			collision: { step: rule.step, body: rule.body, feet: [FEET.w, FEET.h], south: COLLIDE_SOUTH, side: COLLIDE_SIDE, min: COLLIDE_MIN },
@@ -576,6 +637,29 @@
 					tags: typeof o.tags === "string" ? o.tags : "",
 					piece: typeof o.piece === "string" ? o.piece.trim() : "",
 					cells: own.cells[oi],
+					pieceIndex: pm.pieceOf[oi] + 1,
+					outline: outlineOf(r.floor.covers[oi], r.w),
+				};
+			}),
+			// The piece table: the models of each piece, its kind (the strongest of its models'), its height, the floor rows its footprint
+			// spans (base = the south edge, its sort line; back = the north edge), its exact outline and the atlas cells it occupies.
+			pieces: pm.pieces.map((p) => {
+				const KIND_RANK = { floor: 0, furn: 1, wall_v: 2, wall_h: 3 };
+				const floorPoints = new Set(), cells = new Map(), zs = [];
+				let kind = "floor";
+				for (const oi of p.objs) {
+					for (const i of r.floor.covers[oi]) floorPoints.add(i);
+					for (const c of own.cells[oi]) cells.set(c[0] + "," + c[1], c);
+					const b = bounds(oi);
+					zs.push(b.min[2], b.max[2]);
+					if (KIND_RANK[roles[oi].kind] > KIND_RANK[kind]) kind = roles[oi].kind;
+				}
+				const rowsOf = [...floorPoints].map((i) => (i / r.w) | 0);
+				return {
+					names: p.names, models: p.objs.map((oi) => idx.get(oi)), kind,
+					z: [round2(Math.min(...zs)), round2(Math.max(...zs))],
+					base: rowsOf.length ? Math.max(...rowsOf) : 0, back: rowsOf.length ? Math.min(...rowsOf) : 0,
+					outline: outlineOf([...floorPoints], r.w), cells: [...cells.values()],
 				};
 			}),
 			// Every occupied atlas cell and the models in it, then the cells two or more models share (one entry per pair).
@@ -583,6 +667,16 @@
 			clashes: own.clashes.map((e) => ({ cell: e.cell, models: e.models.map((oi) => idx.get(oi)), samePiece: e.samePiece })),
 		};
 	};
+
+	// The exact outline of a set of floor points (flat indices into a grid W wide): the traced (P.trace) mask of them, in floor-plan px.
+	function outlineOf(list, W) {
+		if (!list || !list.length) return [];
+		let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+		for (const i of list) { const x = i % W, y = (i / W) | 0; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+		const w = x1 - x0 + 1, h = y1 - y0 + 1, mask = new Uint8Array(w * h);
+		for (const i of list) mask[(((i / W) | 0) - y0) * w + (i % W - x0)] = 1;
+		return P.trace(mask, w, h).map((poly) => poly.map(([x, y]) => [x + x0, y + y0]));
+	}
 
 	// Which atlas tile cells (32 px; [column, row]) each model occupies: the cells holding art it paints (its pixels on top at that
 	// spot) or floor points it tops. The same sampling P.pieces uses for a piece's content, per model instead of per piece. Floor
@@ -649,21 +743,23 @@
 			items.push({ oi, o, hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])), z0: b.min[2], z1: b.max[2] });
 		});
 		const root = items.map((_, i) => i), find = (k) => { while (root[k] !== k) k = root[k]; return k; };
-		// A model with a `piece` name is placed by you: it joins every model with the same name (however far apart) and never
-		// joins by footprint; unnamed models join each other by footprint as before.
+		// A floor-kind model is always a piece of its own (it never joins, and its name doesn't group it). A model with a `piece` name
+		// is placed by you: it joins every model with the same name (however far apart) and never joins by footprint; unnamed models
+		// join each other by footprint as before.
+		const solo = (it) => !!r.roles && !!r.roles[it.oi] && r.roles[it.oi].kind === "floor";
 		const label = (it) => (typeof it.o.piece === "string" ? it.o.piece.trim() : "");
 		const firstNamed = new Map();
-		items.forEach((it, i) => { it.label = label(it); if (it.label) { if (firstNamed.has(it.label)) root[find(i)] = find(firstNamed.get(it.label)); else firstNamed.set(it.label, i); } });
+		items.forEach((it, i) => { it.solo = solo(it); it.label = it.solo ? "" : label(it); if (it.label) { if (firstNamed.has(it.label)) root[find(i)] = find(firstNamed.get(it.label)); else firstNamed.set(it.label, i); } });
 		for (let a = 0; a < items.length; a++)
-			for (let b = a + 1; b < items.length; b++) if (!items[a].label && !items[b].label && polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
+			for (let b = a + 1; b < items.length; b++) if (!items[a].label && !items[b].label && !items[a].solo && !items[b].solo && polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
 		const groups = new Map();
 		items.forEach((it, i) => { const k = find(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); });
 		const pieceOf = new Int32Array(objects.length).fill(-1);
 		const pieces = [...groups.values()].map((its, id) => {
 			const cols = new Map(), names = its[0].label ? [its[0].label] : [...new Set(its.map((it) => it.o.name))];
-			// Flat art: every model is kind floor (walked over) or deco (art only), so the piece has no height, shadow or outline to
-			// anchor. It has no anchor cells and its art / floor is never judged: it can't be misread, only drawn.
-			const flat = !!r.roles && its.every((it) => r.roles[it.oi] && (r.roles[it.oi].kind === "floor" || r.roles[it.oi].kind === "deco"));
+			// Flat art: every model is kind floor (walked over), so the piece has no height, shadow or outline to anchor. It has no
+			// anchor cells and its art / floor is never judged: it can't be misread, only drawn.
+			const flat = !!r.roles && its.every((it) => r.roles[it.oi] && r.roles[it.oi].kind === "floor");
 			let top = Infinity; // highest drawn row of the piece's art (its tops), for the column-clash check
 			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
 			for (const it of its) {

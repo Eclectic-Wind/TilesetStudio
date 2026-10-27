@@ -15,9 +15,7 @@
 		anim: TS.Rig.newAnim(), // bones, clips and the Aseprite sheet (see rig.js)
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
-	function defaultSettings() { return { alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2 }; }
-	// The Studio had no version number yet: this is the one written to bundles (bump it by hand per release).
-	const STUDIO_VERSION = "1.0.0";
+	function defaultSettings() { return TS.Process.defaultSettings(); }
 	// Generated once per project, saved in the project file; lets the importer tell a moved / renamed export from a new one.
 	function newUUID() {
 		if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -233,7 +231,7 @@
 	}
 
 	function projectJSON() {
-		return JSON.stringify({ format: "tileset-studio", version: 1, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
+		return JSON.stringify({ format: "tileset-studio", version: 2, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
 			settings: S.settings, objects: S.objects, anim: S.anim, references: S.refs }, null, 1);
 	}
 
@@ -262,6 +260,8 @@
 		S.anim = Object.assign(TS.Rig.newAnim(), p.anim || {}); TS.Rig.bumpIds(S.anim);
 		Mesh.bumpIds(S.objects);
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
+		// Kinds that are no longer valid (deco, solid, wall, side) are mapped on every load; see TS.Process.migrateKinds.
+		const migrated = TS.Process.migrateKinds(S.objects) > 0;
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
 		Object.assign(S.settings, defaultSettings(), p.settings || {});
@@ -273,7 +273,7 @@
 		refPanel();
 		undoStack.length = 0; redoStack.length = 0;
 		setUnsaved(false);
-		if (!p.bundleId) markUnsaved(); // an older project gets its id now: autosave keeps it until the project is saved
+		if (!p.bundleId || migrated) markUnsaved(); // an older project gets its id now, and its kinds are mapped: autosave keeps them until the project is saved
 		$("snap").value = S.snap;
 		settingsToControls();
 		if (TS.AnimUI) TS.AnimUI.projectChanged();
@@ -283,7 +283,7 @@
 	}
 
 	// The Processing panel shows the open project's settings.
-	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16]];
+	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16], ["s_wallh", "wallHeight", parseInt, 0, 255], ["s_wallt", "wallThickness", parseInt, 0, 255]];
 	function settingsToControls() {
 		for (const [id, key] of SETTING_IDS) if ($(id)) $(id).value = S.settings[key];
 		if ($("s_pack")) $("s_pack").checked = !!S.settings.packHighlights;
@@ -396,8 +396,8 @@
 
 	// The name exported files go by: the Export menu's Name (saved with the project), else the tileset's name. Kept to letters,
 	// digits, - and _ so it is a safe file name everywhere (Godot paths included).
-	const cleanName = (s) => String(s || "").trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "");
-	const exportName = () => cleanName(S.exportName) || cleanName(S.name) || "tileset";
+	const cleanName = TS.Bundle.cleanName;
+	const exportName = () => TS.Bundle.exportName(S.name, S.exportName);
 
 	const imageDataURL = (img) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d").putImageData(img, 0, 0); return c.toDataURL("image/png"); };
 	// The art as PNG data (the tileset may have been opened from any image type the browser reads).
@@ -406,20 +406,11 @@
 	// One file for Godot (addons/studio_import): the art, every map and the footprints / collision, as `name.export.json`. The
 	// plugin unpacks it next to itself into name.png, name_height.png, name_normal.png, name_pbr.png, name_footprints.json and
 	// builds name_tileset.tres.
+	// The envelope itself is TS.Bundle.build (js/bundle.js), shared with tools/export_project.js.
 	function bundleJSON() {
 		processNow();
-		const maps = TS.Process.maps(S.result, S.settings), name = exportName();
-		// Raw bytes as base64 (chunked: String.fromCharCode can't take megabytes at once).
-		let bin = "";
-		for (let i = 0; i < maps.data.length; i += 0x8000) bin += String.fromCharCode.apply(null, maps.data.subarray(i, i + 0x8000));
-		const now = new Date().toISOString();
-		return JSON.stringify({
-			format: "tileset-studio-export", version: 3, name, tile: 32, canvas: [S.art.w, S.art.h], exported: now,
-			bundleId: S.bundleId, exportedAt: now, studioVersion: STUDIO_VERSION, walkOverHeight: TS.Process.walkOver(S.settings),
-			images: { atlas: artDataURL() },
-			maps: { w: maps.w, h: maps.h, rows: maps.rows, materials: maps.materials, highlights: maps.highlights, data: btoa(bin) },
-			footprints: TS.Process.footprints(S.objects, S.art, S.result, S.settings),
-		});
+		return JSON.stringify(TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
+			settings: S.settings, result: S.result, now: new Date().toISOString() }));
 	}
 
 	// The Godot bundle (one .export.json). The loose png / height / normal / pbr / footprints files are gone: the bundle holds them all.
@@ -598,7 +589,7 @@
 		if (!parts.length) return;
 		for (const c of bad) lines.push(`cell ${c.cx}, ${c.cy}: ${c.status === 2 ? "conflict" : "floating"}: ${c.msg}`);
 		for (const c of columns) lines.push(`column clash, tile column ${c.col}: ${c.a.join(", ")} / ${c.b.join(", ")} stand on different rows; one tile layer measures the upper as part of the lower`);
-		for (const c of shared) lines.push(`cell ${c.cell[0]}, ${c.cell[1]}: shared by ${name(c.models[0])} / ${name(c.models[1])}; the importer can't tell whose it is`);
+		for (const c of shared) lines.push(`cell ${c.cell[0]}, ${c.cell[1]}: shared by ${name(c.models[0])} / ${name(c.models[1])}; a version 3 importer can't tell whose it is (version 4 splits the cell per piece)`);
 		const el = document.createElement("button");
 		el.className = "clash";
 		el.title = lines.join("\n") + "\nFix: move a piece to its own tile columns, or onto the same bottom row. Click to open the Pieces view.";
@@ -2508,7 +2499,7 @@
 			<label title="How it blocks the player in the game. Strip: only a 4 px strip along the south edge of its footprint, you walk into its drawn top. Footprint (walk-behind): the floor it really covers blocks wherever it reaches between the step and body heights (Processing), so you walk round it and can stand behind it. None: never blocks. The Collision view shows it.">Collision
 				<select id="p_collision">${reqValue === undefined ? mixedOpt : ""}${[["auto", `auto${role && !multi ? " (now: " + role.mode + ")" : ""}`], ["strip", "strip (walk into the top)"], ["footprint", "footprint (walk behind)"], ["none", "none"]].map(([v, t]) =>
 					`<option value="${v}" ${reqValue === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor, everything else solid. Floor: walked over. Deco: art only. Solid: blocks. Wall: a tall back wall the torch beam lands on. Side: a side wall that blocks light east / west. Wall and side are never inferred. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
+			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor. Tall and thin (at least the wall height, and the shorter side of its footprint at most the wall thickness) are wall_h (runs east-west) or wall_v (runs north-south). Everything else is furn. Floor: walked over. wall_h: the torch beam lands on it, and it fades while you are behind it. wall_v: blocks light east / west. Furn: any standing prop, furniture or pillar (what populates a room); it casts shadow. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
 				<select id="p_kind">${kindValue === undefined ? mixedOpt : ""}<option value="" ${kindValue === "" ? "selected" : ""}>default: ${role && !multi ? role.kindInferred + " (inferred)" : "inferred per model"}</option>${TS.Process.KINDS.map((k) =>
 					`<option value="${k}" ${kindValue === k ? "selected" : ""}>${k}</option>`).join("")}</select></label>
 			${role && !multi ? `<p class="dim">height ${role.heightMin}-${role.heightMax} px above the floor${role.flat ? " · flat (walkable)" : ""}</p>` : ""}

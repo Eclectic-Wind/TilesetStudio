@@ -60,7 +60,7 @@ Your tileset is drawn in a fixed projection, and the models you place sit in tha
 | `images.atlas` | Your tileset art as a PNG data URL |
 | `maps.data` | Base64 of one raw RGBA8 image, `maps.w` wide and `maps.h + maps.rows` tall. Raw bytes, so don't decode it through a canvas |
 | `maps.materials` | `[[roughness, metallic], ...]`, 0 to 1 |
-| `footprints` | Per-model floor footprints, height range, kind, collision polygons and piece names, in floor-plan pixels |
+| `footprints` | Per-model floor footprints and exact outlines, height range, kind, collision polygons, piece names, and the piece table (`pieces`), in floor-plan pixels |
 | `tile`, `canvas` | Tile size (32) and art size |
 
 **Art rows** (`0 .. h-1`) hold one texel per art pixel:
@@ -99,7 +99,7 @@ Load `name.png` as your albedo/atlas and the maps as your engine's height, norma
 
 ### Footprints and collision
 
-`footprints.objects[]` is what you need for gameplay. Each model gives its `footprint` (convex hull) and `z` range, its `kind` (`floor`, `deco`, `solid`, `wall`, `side`), its `piece` name and `cells` (the 32 px atlas cells it occupies). Its `collision.mode` is `footprint`, `strip` or `none`, and `footprint` mode carries `collision.polygons` ready to use as colliders. Top-level `footprints.collision` describes the player box those polygons were built for. Coordinates are floor-plan pixels: X east, Y south, Z up.
+`footprints.objects[]` is what you need for gameplay. Each model gives its `footprint` (convex hull) and `z` range, its `kind` (`floor`, `wall_h`, `wall_v`, `furn`), its `piece` name, its `pieceIndex` (its piece's number in `footprints.pieces`), its exact `outline` and `cells` (the 32 px atlas cells it occupies). Its `collision.mode` is `footprint`, `strip` or `none`, and `footprint` mode carries `collision.polygons` ready to use as colliders. Top-level `footprints.collision` describes the player box those polygons were built for. Coordinates are floor-plan pixels: X east, Y south, Z up.
 
 ### Any engine
 

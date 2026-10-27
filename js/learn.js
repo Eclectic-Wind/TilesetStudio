@@ -370,44 +370,43 @@
 	});
 
 	// 5 ---------------------------------------------------------------------------------------------------------------
-	// auto: the Studio works the kind out from the height (2 px or less = floor, anything higher = solid). The rest are never guessed.
+	// auto: the Studio works the kind out from the shape: flat is floor; tall and thin is a wall (wall_h or wall_v by direction); the rest is furn.
 	const KINDS = [
-		{ k: "floor", auto: true, say: "Floor: you walk on it.", sub: "Automatic: anything 2 px or less of height (Z). Rugs, paths, the stone floor here.", key: "floor" },
-		{ k: "solid", auto: true, say: "Solid: it blocks you.", sub: "Automatic: anything higher than floor. Tables, crates, beds.", key: "crate" },
-		{ k: "deco", say: "Deco: it only looks nice.", sub: "By hand: posters, grass tufts. No collision, no shadow.", key: "poster" },
-		{ k: "wall", say: "Wall: the big wall at the back.", sub: "By hand: the torch's light lands on it. Never guessed, even though it looks solid.", key: "wall" },
-		{ k: "side", say: "Side: a wall on the left or right.", sub: "By hand: it blocks light going east and west.", key: "side" },
+		{ k: "floor", auto: true, say: "Floor: you walk on it.", sub: "Automatic: flat, 2 px of height (Z) or less. Rugs, paths, the stone floor here.", key: "floor" },
+		{ k: "furn", auto: true, say: "Furn: anything else that stands.", sub: "Automatic for the rest: crates, tables, beds, pillars. It casts shadow and sorts with you by its base.", key: "crate" },
+		{ k: "wall_h", auto: true, say: "Wall (east-west): the back wall.", sub: "Automatic when tall and thin, running east-west: the torch's light lands on it.", key: "wall" },
+		{ k: "wall_v", auto: true, say: "Wall (north-south): a side wall.", sub: "Automatic when tall and thin, running north-south: it blocks light going east and west.", key: "side" },
 	];
-	L.push({
+	// The lesson's own tints: the Studio's Kind view colours (the palette above has no kind names).
+	const KC = { floor: C.floor, wall_h: C.wall, wall_v: C.side, furn: C.solid };	L.push({
 		title: "Give each thing a job", dur: 24,
-		caps: [{ t: 0, say: "Every model has a job: its kind.", sub: "Watch the five kinds light up one by one." }].concat(KINDS.map((k, i) => ({ t: 2 + i * 3, say: k.say, sub: k.sub }))).concat([{ t: 17, say: "Floor and Solid work themselves out. The rest you set by hand.", sub: "Select the model, then Properties → Kind. Deco, Wall and Side are never guessed." }]),
-		extra: `<p class="kindnote"><b>Floor, Solid: automatic.</b> 2 px of height or less is floor, anything higher is solid; override it if it is wrong.<br><b>Deco, Wall, Side: yours to set.</b> Select the model, then <b>Properties → Kind</b> (several at once works). The Kind view tints each model so you can check.</p>`,
+		caps: [{ t: 0, say: "Every model has a job: its kind.", sub: "Watch the four kinds light up one by one." }].concat(KINDS.map((k, i) => ({ t: 2 + i * 3, say: k.say, sub: k.sub }))).concat([{ t: 17, say: "The rules work it out. You only override the odd one.", sub: "Select the model, then Properties → Kind." }]),
+		extra: `<p class="kindnote"><b>All four are automatic.</b> Flat (2 px of height or less) is floor. Tall and thin is a wall: wall_h if it runs east-west, wall_v if north-south. Anything else that stands is deco.<br><b>Override by hand:</b> select the model, then <b>Properties → Kind</b> (several at once works). The Kind view tints each model so you can check.</p>`,
 		show: [["kind", "Kind view"]],
 		make() {
 			const models = sampleModels();
 			models.push(boxModel("crate", 100, 148, 0, 126, 174, 22, "#9a7248"));
-			models.push(Object.assign(boxModel("poster", 94, 128.4, 40, 122, 128.7, 68, "#d9a24a"), { order: 131 }));
 			models.push(boxModel("side", 164, 113, 0, 172, 192, 84, "#6a7488"));
-			const nameOf = { floor: "floor", crate: "solid", poster: "deco", wall: "wall", side: "side" };
+			const nameOf = { floor: "floor", crate: "furn", wall: "wall_h", side: "wall_v" };
 			return (g, t) => {
 				bg(g);
 				const cam = camAt(ISO, 2.0, W / 2 - 8);
 				ground(g, cam, 1);
 				const summary = t >= 17, idx = t < 2 || summary ? -1 : Math.min(4, Math.floor((t - 2) / 3)), local = (t - 2) - idx * 3, pulse = 0.55 + 0.25 * Math.sin(t * 5);
 				drawWorld(g, cam, models, (m) => {
-					if (summary) return nameOf[m.key] ? { tint: { rgb: hex(C[nameOf[m.key]]), a: 0.35 + 0.1 * Math.sin(t * 4) } } : {};
+					if (summary) return nameOf[m.key] ? { tint: { rgb: hex(KC[nameOf[m.key]]), a: 0.35 + 0.1 * Math.sin(t * 4) } } : {};
 					const kd = KINDS[idx], on = kd && m.key === kd.key;
 					if (idx < 0) return {};
-					return on ? { tint: { rgb: hex(C[kd.k]), a: pulse * 0.6 } } : { alpha: 0.38 };
+					return on ? { tint: { rgb: hex(KC[kd.k]), a: pulse * 0.6 } } : { alpha: 0.38 };
 				});
 				if (idx >= 0) {
 					const kd = KINDS[idx], m = models.find((q) => q.key === kd.key), b = bounds(m), mid = project([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2], cam);
 					const a = sege(local, 0, 0.4) * (1 - sege(local, 2.6, 3)), lx = W - 100, ly = 56 + 0;
-					arrow(g, [lx - 52, ly + 14], [mid[0] + (mid[0] < lx ? 14 : -14), mid[1] - 8], C[kd.k], a * 0.8, 2);
-					pill(g, lx, ly, `${kd.k} · ${kd.auto ? "auto" : "by hand"}`, C[kd.k], a, 18);
+					arrow(g, [lx - 52, ly + 14], [mid[0] + (mid[0] < lx ? 14 : -14), mid[1] - 8], KC[kd.k], a * 0.8, 2);
+					pill(g, lx, ly, `${kd.k} · ${kd.auto ? "auto" : "by hand"}`, KC[kd.k], a, 18);
 				}
-				KINDS.forEach((kd, i) => { const y = 36 + i * 27; g.save(); g.globalAlpha = i === idx ? 1 : 0.35; g.fillStyle = C[kd.k]; g.beginPath(); g.roundRect(18, y - 8, 16, 16, 4); g.fill(); g.restore(); text(g, kd.k, 42, y, i === idx || summary ? C.ink : C.dim, 14, "left"); text(g, kd.auto ? "auto" : "by hand", 92, y, kd.auto ? C.ok : C.amber, 12, "left", i === idx || summary ? 1 : 0.4); });
-				if (summary) pill(g, W / 2 + 40, H - 30, "Deco, Wall, Side: set by hand in Properties → Kind", C.amber, sege(t, 17.4, 18.2), 13);
+				KINDS.forEach((kd, i) => { const y = 36 + i * 27; g.save(); g.globalAlpha = i === idx ? 1 : 0.35; g.fillStyle = KC[kd.k]; g.beginPath(); g.roundRect(18, y - 8, 16, 16, 4); g.fill(); g.restore(); text(g, kd.k, 42, y, i === idx || summary ? C.ink : C.dim, 14, "left"); text(g, kd.auto ? "auto" : "by hand", 92, y, kd.auto ? C.ok : C.amber, 12, "left", i === idx || summary ? 1 : 0.4); });
+				if (summary) pill(g, W / 2 + 40, H - 30, "Set by hand in Properties → Kind when the rules get one wrong", C.amber, sege(t, 17.4, 18.2), 13);
 			};
 		},
 	});
