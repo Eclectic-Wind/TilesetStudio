@@ -85,15 +85,18 @@
 				<ul id="outliner" data-empty="No models yet. Pick Add ▾ (or press Shift+A) to place one."></ul>
 			</details>
 		<div id="pencilpanel" class="pencilpanel">
-			<h3>Pencil &middot; custom object</h3>
-			<label>Draw <select id="pencil_mode"><option value="freehand">Freehand</option><option value="corners">Click corners</option></select></label>
+			<h3>Free Draw</h3>
+			<label>Action <select id="pencil_operation"><option value="add">Add shape</option><option value="cut">Cut through</option><option value="carve">Carve recess</option></select></label>
+			<label>Draw <select id="pencil_mode"><option value="freehand">Freehand</option><option value="corners">Click corners</option><option value="box">Box</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option></select></label>
 			<label title="Start on an existing object's face to draw on its plane. The first point locks the surface for the whole outline."><input id="pencil_surface" type="checkbox" checked> Draw on object surfaces</label>
 			<p id="pencil_target" class="penciltarget" aria-live="polite">Start on a face to draw on it.</p>
 			<label title="Used when the first point is in empty space, or surface placement is off.">Empty space <select id="pencil_plane"><option value="front">Upright front</option><option value="top">Flat top</option></select></label>
-			<label title="On an object: build outward from the starting face. In empty space: front depth or top height. Zero makes a single face.">Thickness <input id="pencil_thickness" type="number" min="0" max="255" step="1" value="8"> px</label>
+			<label id="pencil_depth_row" title="Shape thickness or inward carve depth"><span id="pencil_depth_label">Thickness</span> <input id="pencil_thickness" type="number" min="0" max="255" step="0.1" value="8"> px</label>
 			<label title="Remove small wobbles from freehand strokes, in image pixels. Higher values make simpler shapes. Clicked corners are kept.">Simplify <input id="pencil_simplify" type="number" min="0" max="32" step="0.5" value="1"> px</label>
+			<label title="Round corners on this Free Draw outline before creating, cutting or carving. This does not bevel existing mesh edges.">Corner radius <input id="pencil_radius" type="number" min="0" max="64" step="0.5" value="0"> px</label>
+			<label id="pencil_bevel_row">Edge bevel <input id="pencil_bevel" type="number" min="0" max="64" step="0.5" value="0"> px</label>
 			<label><input id="pencil_snap" type="checkbox"> Snap outline to grid</label>
-			<p id="pencil_help" class="dim">Drag around an outline and release to create an object.</p>
+			<p id="pencil_help" class="dim">Draw an outline and release to preview. Scroll for height, Shift+scroll for fine adjustment. Click or Enter applies; Esc cancels.</p>
 			<div class="pencilactions"><button id="pencil_finish" class="primary">Finish shape</button><button id="pencil_back" title="Remove the last corner (Backspace)">Undo point</button><button id="pencil_clear">Clear</button><button id="pencil_done">Done (Q)</button></div>
 		</div>
 			<details class="sec" open id="sec_props">
@@ -165,8 +168,8 @@
 			<button data-tool="box" title="Box select (B): drag a rectangle to select every model it touches, in 3D too (Shift adds, Alt-drag or middle-drag still orbits)">▭</button>
 			<button data-tool="ref" title="Move reference: drag to slide the active reference across the floor (X, Y). Its height stays locked. Add one under References.">⤧</button>
 			<button data-tool="cursor" title="3D cursor (C): tap where the next piece goes (on a top to stack)">⊕</button>
-			<button data-act="add" title="Add a primitive at the cursor (Shift+A)">＋</button>
-			<button data-tool="pencil" title="Pencil (P): draw a custom-shaped object">&#9998;</button>
+
+			<button data-tool="pencil" title="Free Draw (P): add a rounded shape, cut through a closed solid, or carve a recess. Works in the held 3D camera. Click corners or drag an outline.">&#9998;</button>
 			<span class="gap"></span>
 			<button data-act="grab" title="Move (G)">✥</button>
 			<button data-act="scale" title="Scale (S)">⤢</button>
@@ -240,8 +243,10 @@
 		<div class="outwrap"><canvas id="out"></canvas></div>
 		<div class="lightbar">
 			<span title="Drag in the view to move the light; Shift+wheel = height">Light</span>
+<label>Renderer <select id="lit_renderer"><option value="current">Current</option><option value="gpu">GPU (experimental)</option><option value="compare">Compare</option></select></label><span id="lit_renderer_status" role="status"></span>
 			<label>height <input id="lightz" type="range" min="0" max="160" value="36"> <span id="lightz_v">36</span></label>
 			<label>reach <input id="lightr" type="range" min="40" max="600" value="220"></label>
+			<label title="Lit preview resolution only; exports remain full resolution">Render scale <select id="render_scale"><option value="1">100%</option><option value="0.75">75%</option><option value="0.5">50%</option><option value="0.25">25%</option></select></label>
 			<label><input id="shadows" type="checkbox" checked> shadows</label>
 		</div>
 		<div id="pieceinfo" class="pieceinfo"></div>
@@ -327,7 +332,7 @@
 			<tr><td>E on edges / vertices</td><td>grow quads / new points on lines, then move them</td><td>Alt+E</td><td>extrude manifold: pushed in, a face cuts the model (no inner walls); pulled out flush, it merges with the faces beside it</td></tr>
 			<tr><td>F (edit mode)</td><td>fill: 2 vertices → a line, 3+ vertices or an edge loop → a face (outside edit mode: frame)</td><td>Ctrl+E</td><td>bridge two faces (a tunnel / neck) or two edge loops / strips (a band); same vertex counts</td></tr>
 			<tr><td>Ctrl+right-click (edit)</td><td>new point at the pointer, joined to the selected one: draw an outline, F, E up</td><td>Ctrl+J</td><td>join the selected models into the active one (Add ▸ Point starts from nothing)</td></tr>
-			<tr><td>K (edit mode)</td><td>knife: click points along a cut (snap to vertices / edges, or start off the model), Enter / right-click cuts, Backspace drops a point, first point closes; X-ray cuts through</td><td>P</td><td>pencil: drag an outline (or click corners) and release; Esc clears, Q leaves</td></tr>
+		<tr><td>K (edit mode)</td><td>knife: click points along a cut (snap to vertices / edges, or start off the model), Enter / right-click cuts, Backspace drops a point, first point closes; X-ray cuts through</td><td>P</td><td>Free Draw: add a shape, cut through or carve a closed solid; set Corner Radius for this outline; works in the held 3D camera</td></tr>
 			<tr><td>X / Y / Z twice</td><td>local axis while moving, scaling or turning (the model's own axes, each about its own middle; in edit mode the selection's normal)</td><td>click again</td><td>picks the next thing under the pointer (white outline = what a click takes); X-ray picks through faces</td></tr>
 			<tr><td>type a number</td><td>exact value while a tool runs</td><td>Shift</td><td>half the snap step (Snap off: no snapping)</td></tr>
 			<tr><td>Alt-drag, middle-drag</td><td>look round (eases back on release)</td><td>Space-drag, Shift+middle</td><td>pan</td></tr>
@@ -340,7 +345,7 @@
 			<tr><td>Ctrl+arrows, PageUp/Down</td><td>nudge one snap step (Shift: half)</td><td>[ / ]</td><td>snap step down / up</td></tr>
 			<tr><td>Alt+Z</td><td>X-ray</td><td>outliner</td><td>double-click renames, the dot hides, the box filters</td></tr>
 		</table>
-		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Pencil (P)</b> draws a custom-shaped object, on a model's face or in empty space. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
+		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Free Draw (P)</b> creates a custom shape or cuts/carves a closed solid from the same outline; Corner Radius rounds only that outline. It also works in the held 3D camera. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
 		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
 		<p><b>Into Godot:</b> set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p>
 	</div>
@@ -348,12 +353,14 @@
 <script src="js/math.js"></script>
 <script src="js/shape.js"></script>
 <script src="js/mesh.js"></script>
+<script src="js/carve.js"></script>
 <script src="js/render.js"></script>
 <script src="js/process.js"></script>
 <script src="js/bundle.js"></script>
 <script src="js/rig.js"></script>
 <script src="js/aseprite.js"></script>
 <script src="js/prism.js"></script>
+<script src="js/lit-gpu.js"></script>
 <script src="js/output.js"></script>
 <script src="js/gltf.js"></script>
 <script src="js/transfer.js"></script>
@@ -362,6 +369,7 @@
 <script src="js/learn.js"></script>
 <script src="js/app.js"></script>
 <script src="js/anim-ui.js"></script>
+<script src="js/layout.js"></script>
 <script src="js/ui.js"></script>
 </body>
 </html>

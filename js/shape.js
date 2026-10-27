@@ -43,6 +43,29 @@
 		const a = simplifyOpen(p.slice(0, far + 1), tolerance), b = simplifyOpen(p.slice(far).concat([p[0]]), tolerance);
 		return Shape.clean(a.slice(0, -1).concat(b.slice(0, -1)));
 	};
+	// Round each outline corner with a short quadratic arc; radius is clamped to adjacent edge lengths.
+	Shape.roundCorners = (input, radius) => {
+		const r = Number(radius);
+		if (!Number.isFinite(r) || r < 0 || r > 128) throw new Error("Corner radius must be between 0 and 128 px.");
+		const p = Shape.clean(input);
+		if (r === 0 || p.length < 3) return p;
+		const out = [];
+		for (let i = 0; i < p.length; i++) {
+			const a = p[(i + p.length - 1) % p.length], b = p[i], c = p[(i + 1) % p.length];
+			const la = Math.hypot(a[0] - b[0], a[1] - b[1]), lc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+			const d = Math.min(r, la * 0.45, lc * 0.45);
+			if (d < 0.01) { out.push(b.slice()); continue; }
+			const start = [b[0] + (a[0] - b[0]) * d / la, b[1] + (a[1] - b[1]) * d / la];
+			const end = [b[0] + (c[0] - b[0]) * d / lc, b[1] + (c[1] - b[1]) * d / lc];
+			out.push(start);
+			for (const t of [1 / 3, 2 / 3]) {
+				const u = 1 - t;
+				out.push([u * u * start[0] + 2 * u * t * b[0] + t * t * end[0], u * u * start[1] + 2 * u * t * b[1] + t * t * end[1]]);
+			}
+			out.push(end);
+		}
+		return Shape.clean(out);
+	};
 	function intersects(a, b, c, d) {
 		const abC = cross(a, b, c), abD = cross(a, b, d), cdA = cross(c, d, a), cdB = cross(c, d, b);
 		if (abC * abD < -EPS && cdA * cdB < -EPS) return true;
@@ -100,6 +123,7 @@
 		let p = Shape.simplify(input, Math.max(0, Number(options.simplify) || 0));
 		if (options.snap > 0) p = Shape.clean(p.map((q) => q.map((v) => TS.snap(v, options.snap))));
 		Shape.validate(p);
+		if (options.radius > 0) { p = Shape.roundCorners(p, options.radius); Shape.validate(p); }
 		if (Shape.area(p) < 0) p.reverse();
 		const thickness = Number(options.thickness ?? 8), base = Number(options.base ?? 0);
 		if (!Number.isFinite(thickness) || thickness < 0 || thickness > 255 || !Number.isFinite(base) || base < 0)
@@ -132,5 +156,93 @@
 		obj.solid = thickness > 0;
 		if (obj.solid) obj.collision = "footprint";
 		return obj;
+	};
+	Shape.create3D = (input, options = {}) => {
+		if (!Array.isArray(input) || !input.every((s) => s && Array.isArray(s.screen) && Array.isArray(s.point) && Array.isArray(s.normal) &&
+			s.screen.length === 2 && s.point.length === 3 && s.normal.length === 3 && [...s.screen, ...s.point, ...s.normal].every(Number.isFinite)))
+			throw new Error("The 3D outline contains an invalid point.");
+		const key = (p) => `${p[0]},${p[1]}`;
+		const byScreen = new Map(input.map((s) => [key(s.screen), s]));
+		let outline = Shape.simplify(input.map((s) => s.screen), Math.max(0, Number(options.simplify) || 0));
+		if (options.snap > 0) outline = Shape.clean(outline.map((q) => q.map((v) => TS.snap(v, options.snap))));
+		Shape.validate(outline);
+		if (options.radius > 0) { outline = Shape.roundCorners(outline, options.radius); Shape.validate(outline); }
+		let samples = outline.map((p) => byScreen.get(key(p)) || input.reduce((best, s) =>
+			Math.hypot(s.screen[0] - p[0], s.screen[1] - p[1]) < Math.hypot(best.screen[0] - p[0], best.screen[1] - p[1]) ? s : best, input[0]));
+		if (Shape.area(outline) < 0) { outline.reverse(); samples.reverse(); }
+		const thickness = Number(options.thickness ?? 8);
+		if (!Number.isFinite(thickness) || thickness < 0 || thickness > 255) throw new Error("Thickness must be between 0 and 255 px.");
+		const normals = samples.map((s) => TS.v3.norm(s.normal)), offset = thickness || 0.03;
+		const front = samples.map((s, i) => TS.v3.add(s.point, TS.v3.scale(normals[i], offset))), frontSamples = samples.slice();
+		const n = front.length, faces = [], indexByScreen = new Map(outline.map((p, i) => [key(p), i]));
+		const getIndex = (screen, fallback) => {
+			const k = key(screen), old = indexByScreen.get(k); if (old !== undefined) return old;
+			const sample = typeof options.surfaceAt === "function" ? options.surfaceAt(screen) : null;
+			const s = sample && sample.point && sample.normal ? sample : fallback;
+			const i = front.length; indexByScreen.set(k, i); frontSamples.push(s);
+			const normal = TS.v3.norm(s.normal); normals.push(normal); front.push(TS.v3.add(s.point, TS.v3.scale(normal, offset)));
+			return i;
+		};
+		for (const baseTri of Shape.triangulate(outline)) {
+			const [a, b, c] = baseTri.map((i) => outline[i]);
+			const steps = typeof options.surfaceAt === "function" ? TS.clamp(Math.ceil(Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), Math.hypot(c[0] - b[0], c[1] - b[1]), Math.hypot(a[0] - c[0], a[1] - c[1])) / 48), 1, 6) : 1;
+			const grid = [];
+			for (let j = 0; j <= steps; j++) {
+				grid[j] = [];
+				for (let i = 0; i <= steps - j; i++) {
+					const u = i / steps, v = j / steps, screen = [a[0] * (1 - u - v) + b[0] * u + c[0] * v, a[1] * (1 - u - v) + b[1] * u + c[1] * v];
+					const fallback = { point: samples[baseTri[0]].point.map((x, k) => x * (1 - u - v) + samples[baseTri[1]].point[k] * u + samples[baseTri[2]].point[k] * v),
+						normal: TS.v3.norm(samples[baseTri[0]].normal.map((x, k) => x * (1 - u - v) + samples[baseTri[1]].normal[k] * u + samples[baseTri[2]].normal[k] * v)) };
+					grid[j][i] = getIndex(screen, fallback);
+				}
+			}
+			const addTriangle = (ids) => {
+				let face = ids.slice();
+				const avg = TS.v3.norm(face.reduce((sum, i) => TS.v3.add(sum, normals[i]), [0, 0, 0]));
+				const fn = TS.v3.norm(TS.v3.cross(TS.v3.sub(front[face[1]], front[face[0]]), TS.v3.sub(front[face[2]], front[face[0]])));
+				if (TS.v3.dot(fn, avg) < 0) face.reverse();
+				faces.push({ v: face });
+			};
+			for (let j = 0; j < steps; j++) for (let i = 0; i < steps - j; i++) {
+				addTriangle([grid[j][i], grid[j][i + 1], grid[j + 1][i]]);
+				if (i < steps - j - 1) addTriangle([grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]]);
+			}
+		}
+		const back = frontSamples.map((s) => s.point.slice()), frontCount = front.length;
+		if (thickness > 0) {
+			for (const f of faces.slice()) faces.push({ v: f.v.map((i) => i + frontCount).reverse() });
+			for (let i = 0; i < n; i++) { const j = (i + 1) % n; faces.push({ v: [i + frontCount, j + frontCount, j, i] }); }
+		}
+		const obj = TS.Mesh.newObject("Custom shape", thickness > 0 ? [...front, ...back] : front, []);
+		obj.faces = faces; obj.smooth = 0; obj.solid = thickness > 0; if (obj.solid) obj.collision = "footprint";
+		const normal = TS.v3.len(normals.reduce((a, b) => TS.v3.add(a, b), [0, 0, 0])) > 1e-6 ? TS.v3.norm(normals.reduce((a, b) => TS.v3.add(a, b), [0, 0, 0])) : normals[0];
+		let u = TS.v3.sub(front[1], front[0]);
+		if (TS.v3.len(u) < 1e-6) u = TS.v3.cross(Math.abs(normal[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], normal);
+		u = TS.v3.norm(u);
+		obj.basis = [u, TS.v3.norm(TS.v3.cross(normal, u)), normal];
+		return obj;
+	};
+
+	// A closed primitive loft; bevel belongs only to this generated mesh.
+	Shape.primitive = (input, kind, height, bevel = 0) => {
+		const xs=input.map(p=>p[0]), ys=input.map(p=>p[1]);
+		const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+		const rx=(x1-x0)/2, ry=(y1-y0)/2, cx=(x0+x1)/2, cy=(y0+y1)/2;
+		if (!(rx>0.01 && ry>0.01 && height>0) || !Number.isFinite(height)) throw new Error("Drag a wider shape and set a positive height/depth.");
+		if (!Number.isFinite(bevel) || bevel<0) throw new Error("Bevel must be non-negative.");
+		if(kind==="sphere") return TS.Mesh.sphere([cx,cy,0],rx,ry,height/2,16,8);
+		const b=Math.min(bevel,rx*.45,ry*.45,height*.45), verts=[],faces=[];
+		const ring=(z,inset)=>{
+			const X=rx-inset,Y=ry-inset;
+			const pts=kind==="cylinder" ? Array.from({length:24},(_,i)=>[Math.cos(i*Math.PI/12)*X,Math.sin(i*Math.PI/12)*Y]) :
+				(b>0 ? [[-X+b,-Y],[X-b,-Y],[X,-Y+b],[X,Y-b],[X-b,Y],[-X+b,Y],[-X,Y-b],[-X,-Y+b]] : [[-X,-Y],[X,-Y],[X,Y],[-X,Y]]);
+			verts.push(...pts.map(([x,y])=>[cx+x,cy+y,z]));return pts.length;
+		};
+		const n=ring(0,b); if(b>0){ring(b,0);ring(height-b,0);} ring(height,b);
+		const rings=verts.length/n;
+		faces.push(Array.from({length:n},(_,i)=>n-1-i));
+		for(let r=0;r<rings-1;r++)for(let i=0;i<n;i++){const j=(i+1)%n;faces.push([r*n+i,r*n+j,(r+1)*n+j,(r+1)*n+i]);}
+		faces.push(Array.from({length:n},(_,i)=>(rings-1)*n+i));
+		const obj=TS.Mesh.newObject(kind==="box"?"Box":"Cylinder",verts,[]);obj.faces=faces.map(v=>({v}));obj.solid=true;obj.collision="footprint";return obj;
 	};
 })();

@@ -362,7 +362,7 @@
 	}
 
 	// View preferences remembered per browser (snap, display, output view and light).
-	const PREF_IDS = ["snap", "shade", "opacity", "xray", "belowz", "grid", "auto", "lightz", "lightr", "shadows"];
+	const PREF_IDS = ["snap", "shade", "opacity", "xray", "belowz", "grid", "auto", "lightz", "lightr", "shadows", "render_scale", "lit_renderer"];
 	function savePrefs() {
 		const p = { outMode: output ? output.mode : "lit", snapV: 2 };
 		for (const id of PREF_IDS) { const el = $(id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
@@ -1533,8 +1533,9 @@
 		const triParts = [], lineParts = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
 		const sel = [1.0, 0.55, 0.15];
 		const hv = hover && hover.obj.id === S.active && S.edit && hover.mode === S.elemMode ? hover : null;
-		for (const obj of shownObjs()) {
-			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id), editing = S.edit && isActive;
+		for (const original of [...shownObjs(), ...(pencil?.preview?.add ? [pencil.preview.object] : [])]) {
+			const obj = pencil?.preview?.object?.id === original.id ? pencil.preview.object : original;
+			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id) || !!(pencil?.preview?.add && pencil.preview.object === obj), editing = S.edit && isActive;
 			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
 			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
 			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel ? "s" : "n") + (S.edit ? "e" : "") : null, hit = cacheable && geomCache.get(obj);
@@ -1738,27 +1739,51 @@
 	}
 
 	// --- pencil: trace a simple outline, then create an ordinary editable mesh ---
+	const pencilPrimitive = () => ["box","cylinder","sphere"].includes($("pencil_mode").value);
+	function pencilRectangle(end) {
+		const a=pencil.dragStart; if(!a || !end)return;
+		pencil.pts=[[a[0],a[1]],[end[0],a[1]],[end[0],end[1]],[a[0],end[1]]];
+		dirty=true;
+	}
+	function pencilPrimitiveMesh(cutting=false, target=null) {
+		const kind=$("pencil_mode").value;
+		const depth=cutting && $("pencil_operation").value==="cut" ? TS.Carve.depth(target,pencil.surface,1,true) : Number($("pencil_thickness").value);
+		const obj=TS.Shape.primitive(pencil.pts,kind,cutting && kind==="sphere" ? depth*2 : depth,Number($("pencil_bevel").value));
+		let normal=pencil.view3d?pencil.anchor.normal:pencil.surface?.normal || ($("pencil_plane").value==="top"?[0,0,1]:[0,1,0]);
+		const frontY=Math.max(...pencil.pts.map(p=>p[1]))+Math.max(0,S.cursor[2]);
+		const map=p=>pencil.view3d?pencilWorld2D(p):pencil.surface?TS.Shape.surfacePoint(p,pencil.surface):$("pencil_plane").value==="top"?[p[0],p[1]+Math.max(0,S.cursor[2]),Math.max(0,S.cursor[2])]:[p[0],frontY,frontY-p[1]];
+		obj.verts=obj.verts.map(([x,y,z])=>v3.add(map([x,y]),v3.scale(normal,cutting?z-depth+0.01:z)));
+		if(TS.Carve.volume(obj)<0)obj.faces.forEach(f=>f.v.reverse());
+		return obj;
+	}
 	function pencilHint() {
 		const corners = $("pencil_mode").value === "corners";
 		const help = corners ? "Click corners, then click the first point or press Enter to finish. Backspace removes a corner." :
-			"Drag around an outline and release to create an object. Small wobbles are simplified.";
-		const placement = $("pencil_surface").checked ? " Start on an object to use its face; thickness builds outward." : " Surface placement is off; empty-space settings apply.";
-		$("pencil_help").textContent = help + placement + " Thickness 0 creates a single face. Q returns to selection.";
-		status("Pencil: " + help + " Space-drag pans; wheel zooms; Esc clears the outline.");
+			"Drag an outline and release to preview. Scroll for height; Shift+scroll for fine adjustment; click or Enter to apply.";
+		const op = $("pencil_operation").value, cut = op !== "add";
+		$("pencil_bevel_row").hidden = !["box","cylinder"].includes($("pencil_mode").value);
+		$("pencil_radius").disabled = pencilPrimitive();
+		$("pencil_snap").disabled = !!pencil?.view3d;
+		$("pencil_plane").disabled = !!pencil?.view3d || !!pencil?.surface;
+		$("pencil_depth_label").textContent = op === "carve" ? "Carve depth" : "Thickness";
+		$("pencil_depth_row").hidden = op === "cut";
+		$("pencil_finish").textContent = cut ? (pencil?.preview ? "Apply " + op : "Preview " + op) : (pencil?.preview ? "Apply shape" : "Preview shape");
+		$("pencil_help").textContent = (pencilPrimitive() ? "Drag opposite corners of the footprint. Release to preview, scroll for height/depth, then click or Enter to apply. Sphere uses the footprint and height as its three diameters. " : help) + (cut ? " Start on a closed solid's surface. Preview, then Apply / Enter." : " Corner Radius rounds this outline only.") + " Q returns to selection.";
+		status(pencil?.adjusting ? "Preview: scroll adjusts height/depth; Shift+scroll = fine; click or Enter applies; Esc cancels." : "Free Draw: " + help + " Space-drag pans; wheel zooms before drawing; Esc clears.");
 	}
 	function clearPencil() {
 		if (!pencil) return;
-		pencil.pts = []; pencil.hover = null; pencil.pointer = null; pencil.error = false; pencil.surface = null; pencil.hoverSurface = null;
+		pencil.pts = []; pencil.samples = []; pencil.hover = null; pencil.pointer = null; pencil.error = false; pencil.surface = null; pencil.hoverSurface = null; pencil.preview = null; pencil.targetId = null; pencil.anchor = null; pencil.dragStart=null; pencil.adjusting=false;
 		dirty = true; pencilHint();
 	}
 	function pencilBack() {
 		if (!pencil) return;
-		pencil.pts.pop(); pencil.error = false;
-		if (!pencil.pts.length) { pencil.surface = null; pencil.hoverSurface = null; }
+		pencil.adjusting=false; pencil.pts.pop(); pencil.samples?.pop(); pencil.error = false; pencil.preview = null;
+		if (!pencil.pts.length) { pencil.surface = null; pencil.hoverSurface = null; pencil.targetId = null; pencil.anchor = null; }
 		dirty = true;
 	}
 	function pencilPickSurface(px, py) {
-		if (!$("pencil_surface").checked) return null;
+		if (!$("pencil_surface").checked && $("pencil_operation").value === "add") return null;
 		const hit = pickObject(px, py);
 		if (!hit) return null;
 		const face = hit.obj.faces[hit.face], ray = renderer.ray(px, py);
@@ -1774,17 +1799,37 @@
 			normal = v3.norm(v3.cross(v3.sub(outline[1], outline[0]), v3.sub(outline[2], outline[0])));
 		}
 		if (v3.dot(normal, ray.d) > 0) normal = v3.scale(normal, -1);
-		if (Math.abs(normal[1] + normal[2]) < 1e-6) return null;
+		if (!pencil?.view3d && Math.abs(normal[1] + normal[2]) < 1e-6) return null;
 		return { origin: hit.point.slice(), normal, outline, objectId: hit.obj.id, name: hit.obj.name, face: hit.face };
 	}
 	function pencilPoint(px, py) {
+		if (pencil?.view3d && pencil.anchor) return pencilSample3D(px, py)?.screen || null;
 		const p = renderer.canvasPoint(px, py).map((v) => Math.round(v * 100) / 100);
 		if ($("pencil_snap").checked) return p.map((v) => TS.snap(v, S.snap));
 		return p;
 	}
+	function pencilSample3D(px, py) {
+		if (!pencil?.anchor) return null;
+		const ray = renderer.ray(px, py), n = pencil.anchor.normal, den = v3.dot(ray.d, n);
+		if (Math.abs(den) < 1e-5) return null;
+		const t = v3.dot(v3.sub(pencil.anchor.origin, ray.o), n) / den;
+		if (!(t > 0)) return null;
+		const point = v3.add(ray.o, v3.scale(ray.d, t)), rel = v3.sub(point, pencil.anchor.origin);
+		return { screen: [v3.dot(rel, pencil.anchor.u), v3.dot(rel, pencil.anchor.v)], point, normal: n.slice() };
+	}
+	function pencilWorld2D(p) { return v3.add(pencil.anchor.origin, v3.add(v3.scale(pencil.anchor.u, p[0]), v3.scale(pencil.anchor.v, p[1]))); }
+	function pencilSetAnchor(hit, px, py) {
+		const ray = renderer.ray(px, py), normal = hit ? hit.normal : v3.scale(ray.d, -1), origin = hit ? hit.origin : renderer.free.target.slice();
+		let u = v3.cross(Math.abs(normal[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0], normal);
+		u = v3.norm(u); const v = v3.norm(v3.cross(normal, u));
+		pencil.anchor = { origin, normal, u, v };
+	}
 	function pencilAdd(p) {
 		const prev = pencil.pts[pencil.pts.length - 1];
-		if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 0.01) pencil.pts.push(p);
+		if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 0.01) {
+			pencil.pts.push(p);
+			if (pencil.view3d) pencil.samples.push({ screen: p.slice(), point: pencilWorld2D(p), normal: pencil.anchor.normal.slice() });
+		}
 		pencil.error = false; dirty = true;
 	}
 	function pencilFinish() {
@@ -1793,39 +1838,69 @@
 			const corners = $("pencil_mode").value === "corners";
 			const simplify = Number($("pencil_simplify").value);
 			if (!Number.isFinite(simplify) || simplify < 0 || simplify > 32) throw new Error("Simplify must be between 0 and 32 px.");
-			const obj = TS.Shape.create(pencil.pts, {
+			const op = $("pencil_operation").value, radius = Number($("pencil_radius").value);
+			if (!Number.isFinite(radius) || radius < 0 || radius > 64) throw new Error("Corner radius must be between 0 and 64 px.");
+			if (op === "add" && pencil.preview?.add) {
+				const obj=pencil.preview.object; pushUndo(); S.objects.push(obj); S.active=obj.id; S.selected=new Set([obj.id]); S.edit=false; S.elemSel.clear();
+				clearPencil(); changed(); status(`Added ${obj.name}. Ctrl+Z undoes it.`); return obj;
+			}
+			if (op !== "add") {
+				const target = objById(pencil.targetId || pencil.surface?.objectId);
+				if (!target || !pencil.surface) throw new Error("Start the outline on the model you want to cut or carve.");
+				if (pencil.preview) {
+					if (pencil.preview.before !== JSON.stringify(target)) throw new Error("The target changed. Preview the cut again.");
+					const result = pencil.preview.object, at = S.objects.indexOf(target);
+					pushUndo();
+					if (result.faces.length) { S.objects[at] = result; S.active = result.id; S.selected = new Set([result.id]); }
+					else { S.objects.splice(at, 1); S.active = null; S.selected.clear(); }
+					S.edit = false; S.elemSel.clear(); clearPencil(); changed(); status(`${op === "cut" ? "Cut" : "Carve"} applied to ${target.name}. Ctrl+Z undoes it.`); return result;
+				}
+				const carveOptions = { surface: pencil.surface, depth: Number($("pencil_thickness").value), through: op === "cut", simplify: corners ? 0 : simplify, snap: $("pencil_snap").checked ? S.snap : 0, radius };
+				if (pencilPrimitive()) { carveOptions.cutter=pencilPrimitiveMesh(true,target); carveOptions.radius=0; carveOptions.simplify=0; }
+				if (pencil.view3d) carveOptions.pointAt = (q) => pencilWorld2D(q);
+				const result = TS.Carve.subtract(target, pencil.pts, carveOptions);
+				pencil.adjusting=true; pencil.preview = { ...result, before: JSON.stringify(target) }; pencil.pointer = null; pencil.hover = null; pencil.error = false;
+				$("pencil_finish").textContent = `Apply ${op}`; dirty = true;
+				status(`Preview on ${target.name}. Scroll adjusts depth (Carve); Shift+scroll is fine. Click / Enter confirms; Esc cancels.`); return result.object;
+			}
+			const obj = pencilPrimitive() ? pencilPrimitiveMesh() : pencil.view3d ? TS.Shape.create3D(pencil.samples, { thickness: Number($("pencil_thickness").value), simplify: corners ? 0 : simplify, radius }) : TS.Shape.create(pencil.pts, {
 				plane: $("pencil_plane").value, thickness: Number($("pencil_thickness").value), base: Math.max(0, S.cursor[2]),
 				simplify: corners ? 0 : simplify, snap: $("pencil_snap").checked ? S.snap : 0,
-				surface: pencil.surface,
+				surface: pencil.surface, radius,
 			});
-			const surfaceName = pencil.surface && pencil.surface.name;
-			pushUndo();
 			obj.name = `Custom shape.${String(S.objects.length + 1).padStart(2, "0")}`;
-			S.objects.push(obj); S.active = obj.id; S.selected = new Set([obj.id]); S.edit = false; S.elemSel.clear();
-			clearPencil(); changed();
-			status(`Added ${obj.name}${surfaceName ? ` on ${surfaceName}` : ""} (${obj.faces[0].v.length} outline corners). Draw another, or press Q to select and Tab to edit.`);
-			return obj;
-		} catch (err) { pencil.pointer = null; pencil.error = true; dirty = true; status("Pencil: " + err.message + " Use Clear to redraw."); }
+			pencil.preview = {object:obj,add:true}; pencil.adjusting=true; pencil.pointer=null; pencil.hover=null; pencil.error=false;
+			dirty=true; pencilHint(); return obj;
+		} catch (err) { pencil.preview=null; pencil.pointer = null; pencil.error = true; dirty = true; status("Pencil: " + err.message + " Use Clear to redraw."); }
 	}
 	function pencilDown(e) {
-		if (!pencil || renderer.free.blend > 0) return;
-		const p = pencilPoint(...mouse);
+		if (!pencil || (pencil.view3d ? renderer.free.blend < 0.99 : renderer.free.blend > 0)) return;
+		if (pencil.adjusting) { pencilFinish(); return; }
+		let p = pencilPoint(...mouse);
+		const capture = () => {
+			pencil.surface = pencilPickSurface(...mouse); pencil.targetId = pencil.surface?.objectId || null;
+			if ($("pencil_operation").value !== "add" && !pencil.surface) { status("Start Cut / Carve on a visible face of a closed solid."); return false; }
+			if (pencil.view3d) pencilSetAnchor(pencil.surface, ...mouse);
+			p = pencilPoint(...mouse);
+			return true;
+		};
 		if ($("pencil_mode").value === "corners") {
-			const first = pencil.pts[0], s = first && renderer.toScreen([first[0], first[1], 0]);
+			const first = pencil.pts[0], s = first && renderer.toScreen(pencil.view3d ? pencilWorld2D(first) : [first[0], first[1], 0]);
 			if (pencil.pts.length >= 3 && Math.hypot(s[0] - mouse[0], s[1] - mouse[1]) <= 10) { pencilFinish(); return; }
 			if (pencil.pts.length >= 256) return status("Pencil: 256 corners reached. Finish this shape or remove a corner.");
-			if (!pencil.pts.length) pencil.surface = pencilPickSurface(...mouse);
+			if (!pencil.pts.length && !capture()) return;
 			pencilAdd(p); pencil.hover = p;
 		} else {
-			clearPencil(); pencil.surface = pencilPickSurface(...mouse); pencil.pointer = e.pointerId; pencilAdd(p);
+			clearPencil(); if (!capture()) return; pencil.pointer = e.pointerId; pencilAdd(p); if(pencilPrimitive()) pencil.dragStart=p.slice();
 		}
 	}
 	function pencilMove(e) {
-		if (!pencil) return;
+		if (!pencil || pencil.adjusting) return;
 		pencil.hover = pencilPoint(...mouse);
 		if (!pencil.pts.length) pencil.hoverSurface = pencilPickSurface(...mouse);
 		if (pencil.pointer === e.pointerId) {
-			const last = pencil.pts[pencil.pts.length - 1], d = Math.hypot(pencil.hover[0] - last[0], pencil.hover[1] - last[1]);
+			if(pencilPrimitive()){pencilRectangle(pencil.hover);return;}
+			const last = pencil.pts[pencil.pts.length - 1], d = pencil.hover ? Math.hypot(pencil.hover[0] - last[0], pencil.hover[1] - last[1]) : 0;
 			if (pencil.pts.length < 4096 && d >= Math.max(0.25, 2 / renderer.cam.zoom)) pencilAdd(pencil.hover);
 			else if (pencil.pts.length >= 4096) status("Pencil: stroke limit reached. Release to finish this outline.");
 		}
@@ -1838,6 +1913,7 @@
 		$("pencil_finish").disabled = pencil.pts.length < 3;
 		$("pencil_back").disabled = !pencil.pts.length || $("pencil_mode").value !== "corners";
 		$("pencil_clear").disabled = !pencil.pts.length;
+		if(pencil.preview) return;
 		const add = (tag, attrs) => { const el = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value); svg.appendChild(el); };
 		const target = pencil.pts.length ? pencil.surface : pencil.hoverSurface;
 		const targetText = target ? `${pencil.pts.length ? "Drawing on" : "Surface"}: ${target.name} (face ${target.face + 1})` :
@@ -1846,9 +1922,10 @@
 		$("pencil_plane").disabled = !!pencil.surface;
 		// The outlined face and label show what the first point will attach to, even with X-ray enabled.
 		if (target) add("polygon", { points: target.outline.map((p) => renderer.toScreen(p).join(",")).join(" "), fill: "#64d9c411", stroke: "#64d9c4", "stroke-width": 1, "stroke-dasharray": "3 4" });
-		const toWorld = (p) => pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : [p[0], p[1], 0];
+		const toWorld = (p) => pencil.view3d ? pencilWorld2D(p) : pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : [p[0], p[1], 0];
 		const toScreen = (p) => renderer.toScreen(toWorld(p));
-		const corners = $("pencil_mode").value === "corners", path = pencil.pts.slice();
+		const corners = $("pencil_mode").value === "corners"; let path = pencil.pts.slice();
+		if(pencilPrimitive() && path.length===4 && $("pencil_mode").value!=="box"){const a=path[0],b=path[2];path=Array.from({length:48},(_,i)=>[(a[0]+b[0])/2+Math.cos(i*Math.PI/24)*(b[0]-a[0])/2,(a[1]+b[1])/2+Math.sin(i*Math.PI/24)*(b[1]-a[1])/2]);}
 		if (corners && pencil.hover && path.length) path.push(pencil.hover);
 		if (!path.length) return;
 		let points = path.map(toScreen);
@@ -1881,9 +1958,10 @@
 			if (!S.art && tool === "pencil") return status("Open a tileset or project first, then choose Pencil (P).");
 			if (modal) cancelModal();
 			S.armed = null; S.armedOpts = null; knife = null; S.loopCut = false; loopHover = null; hover = null;
-			if (renderer.free.blend > 0 || S.stay3d) { if (S.stay3d) toggleStay3d(false); anim = null; renderer.free.blend = 0; }
+			const view3d = S.stay3d && renderer.free.blend >= 0.99;
+			if (!view3d && renderer.free.blend > 0) { anim = null; renderer.free.blend = 0; }
 			S.edit = false; S.elemSel.clear();
-			pencil = tool === "pencil" ? { pts: [], hover: null, pointer: null, error: false, surface: null, hoverSurface: null } : null;
+			pencil = tool === "pencil" ? { pts: [], samples: [], hover: null, pointer: null, error: false, surface: null, hoverSurface: null, view3d } : null;
 			modalBar(); panels();
 		} else if (pencil) pencil = null;
 		press = null; marquee(null);
@@ -2123,6 +2201,8 @@
 			if (exchange?.draft?.pointer === e.pointerId) { exchange.draft.pointer = null; return; }
 			if (pencil && pencil.pointer === e.pointerId) {
 				mouse = localPoint(e); const end = pencilPoint(...mouse), first = pencil.pts[0];
+				if (!end) { pencil.pointer = null; return; }
+				if(pencilPrimitive()){pencilRectangle(end);pencil.pointer=null;pencilFinish();return;}
 				if (Math.hypot(end[0] - first[0], end[1] - first[1]) * renderer.cam.zoom <= 10) {
 					// Close at the first corner, discarding only the last sample if it also sits near the start.
 					const last = pencil.pts[pencil.pts.length - 1];
@@ -2155,6 +2235,13 @@
 		});
 		canvas.addEventListener("wheel", (e) => {
 			e.preventDefault();
+			if (pencil?.adjusting) {
+				if ($("pencil_operation").value === "cut") { status("Cut Through uses the full target depth. Click / Enter applies; Esc cancels."); return; }
+				const delta=e.deltaY || e.deltaX; if(!delta)return;
+				const field=$("pencil_thickness"), minimum=pencilPrimitive() || $("pencil_operation").value==="carve" ? .1 : 0;
+				const next=TS.clamp((Number(field.value)||0)+(delta<0?1:-1)*(e.shiftKey?.1:1),minimum,255);
+				field.value=String(Math.round(next*10)/10); pencil.preview=null; pencilFinish(); return;
+			}
 			if (renderer.free.blend > 0) {
 				// 3D view: the wheel moves the eye in and out (the zoom sets its distance).
 				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); dirty = true; }
@@ -2572,8 +2659,9 @@
 		$("pencil_back").onclick = () => { pencilBack(); $("view").focus(); };
 		$("pencil_done").onclick = () => { setTool("select"); $("view").focus(); };
 		$("pencil_mode").onchange = () => { clearPencil(); $("pencil_simplify").disabled = $("pencil_mode").value === "corners"; pencilHint(); };
-		$("pencil_surface").onchange = () => { if (pencil) { pencil.surface = $("pencil_surface").checked && pencil.pts.length ? pencilPickSurface(...renderer.toScreen([pencil.pts[0][0], pencil.pts[0][1], 0])) : null; pencil.hoverSurface = null; pencil.error = false; dirty = true; pencilHint(); } };
-		for (const id of ["pencil_plane", "pencil_thickness", "pencil_simplify", "pencil_snap"]) $(id).onchange = () => { if (pencil) { pencil.error = false; dirty = true; } };
+		$("pencil_surface").onchange = () => { if (pencil) { if (!pencil.view3d) pencil.surface = $("pencil_surface").checked && pencil.pts.length ? pencilPickSurface(...renderer.toScreen([pencil.pts[0][0], pencil.pts[0][1], 0])) : null; pencil.hoverSurface = null; pencil.error = false; pencil.preview = null; dirty = true; if(pencil.adjusting) pencilFinish(); else pencilHint(); } };
+		$("pencil_operation").onchange = () => { clearPencil(); pencilHint(); };
+		for (const id of ["pencil_plane", "pencil_thickness", "pencil_simplify", "pencil_snap", "pencil_radius", "pencil_bevel"]) $(id).onchange = () => { if (pencil) { pencil.error = false; pencil.preview = null; dirty = true; if(pencil.adjusting) pencilFinish(); else pencilHint(); } };
 		// « / » fold the palette and nav panels (remembered per browser).
 		for (const b of document.querySelectorAll("[data-fold]")) {
 			const panel = $(b.dataset.fold), key = "ts.fold." + b.dataset.fold, open = b.textContent;
@@ -2645,6 +2733,8 @@
 		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
 			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
+		$("lit_renderer").onchange = () => { output.rendererMode=["current","gpu","compare"].includes($("lit_renderer").value)?$("lit_renderer").value:"current"; output.render(); };
+		$("render_scale").onchange = () => { const scale=Number($("render_scale").value); output.renderScale=[1,.75,.5,.25].includes(scale)?scale:1; $("render_scale").value=String(output.renderScale); output.render(); };
 		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
 		$("shadows").onchange = () => { output.shadows = $("shadows").checked; output.render(); };
 		for (const [id, key, parse, lo, hi] of SETTING_IDS)

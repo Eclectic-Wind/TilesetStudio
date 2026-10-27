@@ -151,14 +151,15 @@
 		if (o && (o.mode === "lit" || o.mode === "normals")) o.render();
 	}
 	// Fills img (art-sized) with the current frame for the output panel; false when there is nothing to show.
-	function frameImage(mode, lt, ambient, img) {
+	function frameImage(mode, lt, ambient, img, sourceSize = img) {
 		if (!on || !sheet || !clip()) return false;
 		const c = cell(), lay = sheet.layout;
-		if (img.width !== c.w || img.height !== c.h) return false;
+		if (sourceSize.width !== c.w || sourceSize.height !== c.h) return false;
 		const [ox, oy] = Rig.cellOrigin(lay, A().frame), d = sheet.sheet.data, out = img.data;
 		const hasAlb = albedo && albedo.width === lay.w && albedo.height === lay.h;
-		for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
-			const si = ((oy + y) * lay.w + ox + x) * 4, di = (y * c.w + x) * 4;
+		for (let py = 0; py < img.height; py++) for (let px = 0; px < img.width; px++) {
+			const x=Math.min(c.w-1,Math.floor((px+.5)*c.w/img.width)), y=Math.min(c.h-1,Math.floor((py+.5)*c.h/img.height));
+			const si = ((oy + y) * lay.w + ox + x) * 4, di = (py * img.width + px) * 4;
 			if (!d[si + 3]) { out.set([22, 22, 27, 255], di); continue; }
 			if (mode === "normals") { out.set([d[si], d[si + 1], d[si + 2], 255], di); continue; }
 			const n = [d[si] / 127.5 - 1, d[si + 1] / 127.5 - 1, d[si + 2] / 127.5 - 1];

@@ -20,6 +20,11 @@
 			this.canvas = canvas;
 			this.ctx = canvas.getContext("2d");
 			this.mode = "lit";
+			this.renderScale = 1;
+			this.rendererMode = "current";
+			const host=canvas.parentElement;this.primaryPane=document.createElement('div');this.primaryPane.className='lit-pane';host.insertBefore(this.primaryPane,canvas);this.primaryPane.append(canvas);this.comparePane=document.createElement('div');this.comparePane.className='lit-pane lit-compare';this.comparePane.hidden=true;this.compareCanvas=document.createElement('canvas');this.compareCanvas.className='lit-compare-canvas';this.comparePane.append(this.compareCanvas);host.append(this.comparePane);host.classList.add('lit-host');
+			for(const [pane,text]of [[this.primaryPane,'Current · interact here'],[this.comparePane,'GPU · synchronized']]){const label=document.createElement('span');label.className='lit-pane-label';label.textContent=text;pane.append(label);}
+
 			this.light = { x: 0, y: 0, z: 36, radius: 220, on: false };
 			this.shadows = true;
 			this.usePrisms = true;   // shadow test: prisms decide where to look, the floor spans decide the shadow
@@ -34,6 +39,7 @@
 
 		set(result, settings) {
 			this.result = result;
+			if(this.gpu)this.gpu.source=null;
 			this.settings = settings;
 			this._prisms = null;
 			if (result && !this.light.on) { this.light.x = result.w * 0.25; this.light.y = result.h * 0.9; this.light.on = true; }
@@ -110,11 +116,18 @@
 		// Recompute the image for the current mode, then draw it.
 		render() {
 			const r = this.result;
-			this.off = null;
+			this.off = null; this.gpuOff=null;
+			const activeGPU=this.mode==='lit' && this.rendererMode!=='current';
+			const status=document.getElementById('lit_renderer_status');
+			if(status)status.textContent='';
+			if(r && activeGPU){try{if(TS.AnimUI?.on)throw Error('Animation uses Current renderer');this.gpu=this.gpu||new TS.LitGPU();this.gpuOff=this.gpu.render(this);if(status)status.textContent='GPU lighting · reference shadows';}catch(e){if(status)status.textContent='Current fallback: '+e.message;}}
+			const comparing=!!this.gpuOff && this.rendererMode==='compare';this.comparePane.hidden=!comparing;this.primaryPane.parentElement.classList.toggle('lit-comparing',comparing);
+			if(this.gpuOff && this.rendererMode==='gpu'){this.off=this.gpuOff;this.draw();return;}
 			if (r) {
-				const rows = this.rows(), img = new ImageData(r.w, rows);
+				const rows = this.rows(), scale = this.mode === "lit" ? TS.clamp(Number(this.renderScale) || 1, .25, 1) : 1;
+				const img = new ImageData(Math.max(1, Math.ceil(r.w * scale)), Math.max(1, Math.ceil(rows * scale)));
 				// Animating: Lit and Normals show the clip's current frame (albedo x normals), so playback runs here too.
-				const anim = (this.mode === "lit" || this.mode === "normals") && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(this.mode, this.light, this.ambient, img);
+				const anim = (this.mode === "lit" || this.mode === "normals") && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(this.mode, this.light, this.ambient, img, {width:r.w,height:rows});
 				if (anim) { /* drawn */ }
 				else if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
@@ -122,7 +135,7 @@
 				else if (this.mode === "kind") this._kinds(img);
 				else this._pixels(img);
 				this.off = document.createElement("canvas");
-				this.off.width = r.w; this.off.height = rows;
+				this.off.width = img.width; this.off.height = img.height;
 				this.off.getContext("2d").putImageData(img, 0, 0);
 			}
 			this.draw();
@@ -130,6 +143,10 @@
 
 		// Draw the last computed image at the current zoom and pan (cheap: zooming and panning only call this).
 		draw() {
+			this._drawSingle();
+			if(this.gpuOff && !this.comparePane.hidden){const saved=[this.canvas,this.ctx,this.off,this.onzoom,this.ox,this.oy];try{this.canvas=this.compareCanvas;this.ctx=this.compareCanvas.getContext('2d');this.off=this.gpuOff;this.onzoom=null;this._drawSingle();}finally{[this.canvas,this.ctx,this.off,this.onzoom,this.ox,this.oy]=saved;}}
+		}
+		_drawSingle() {
 			const r = this.result, ctx = this.ctx;
 			const box = this.canvas.parentElement.getBoundingClientRect();
 			this.canvas.width = Math.max(1, box.width);
@@ -138,7 +155,7 @@
 			ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 			if (this.onzoom) this.onzoom(r ? this.scale() : 0);
 			if (!r || !this.off) return;
-			const rows = this.off.height, s = this.scale();
+			const rows = this.rows(), s = this.scale();
 			if (this.view.s) {
 				this.ox = Math.round(this.canvas.width / 2 - this.view.cx * s);
 				this.oy = Math.round(this.canvas.height / 2 - this.view.cy * s);
@@ -304,16 +321,17 @@
 		_pixels(img) {
 			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut;
 			this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
-			for (let y = 0; y < r.h; y++)
-				for (let x = 0; x < r.w; x++) {
-					const i = y * r.w + x, o = i * 4;
+			for (let py = 0; py < img.height; py++)
+				for (let px = 0; px < img.width; px++) {
+					const x = Math.min(r.w-1, Math.floor((px+.5)*r.w/img.width)), y = Math.min(r.h-1, Math.floor((py+.5)*r.h/img.height));
+					const i = y * r.w + x, o = (py * img.width + px) * 4, source = i * 4;
 					if (r.alpha[i] <= cut) {
 						if (this.mode === "lit") { const f = this._floor(x + 0.5, y + 0.5, 0); d.set([f * 34, f * 34, f * 40, 255], o); }
 						else d.set([22, 22, 27, 255], o);
 						continue;
 					}
 					const has = !isNaN(r.height[i]);
-					const a = [art[o], art[o + 1], art[o + 2]];
+					const a = [art[source], art[source + 1], art[source + 2]];
 					switch (this.mode) {
 						case "lit": d.set(this._lit(r, i, x, y, a), o); d[o + 3] = 255; break;
 						case "height": {
