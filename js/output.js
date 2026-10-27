@@ -42,6 +42,7 @@
 			if(this.gpu)this.gpu.source=null;
 			this.settings = settings;
 			this._prisms = null;
+			this.litNormal = result ? TS.Process.litNormals(result, settings) : null;
 			if (result && !this.light.on) { this.light.x = result.w * 0.25; this.light.y = result.h * 0.9; this.light.on = true; }
 			this.render();
 		}
@@ -366,7 +367,7 @@
 		_lit(r, i, x, y, albedo) {
 			const has = !isNaN(r.height[i]);
 			const h = has ? r.height[i] : 0;
-			const n = has ? [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]] : [0, 0, 1];
+			const N = this.litNormal, n = has ? [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]] : [0, 0, 1];
 			const p = [x + 0.5, y + 0.5 + h, h];
 			const toL = v3.sub([this.light.x, this.light.y, this.light.z], p), dist = v3.len(toL), l = v3.scale(toL, 1 / dist);
 			const att = Math.max(0, 1 - dist / this.light.radius) ** 2;

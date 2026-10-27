@@ -467,6 +467,17 @@
 		return [n[0], n[2], n[1]];
 	};
 
+	// The world normals (east, south, up) with the relief bump, per art pixel: what the Lit view shades with, so it matches the map.
+	P.litNormals = (r, settings) => {
+		const out = new Float32Array(r.w * r.h * 3);
+		for (let i = 0; i < r.w * r.h; i++) {
+			if (isNaN(r.height[i])) { out[i * 3 + 2] = 1; continue; }
+			const n = P.mapNormal(r, i, settings);
+			out[i * 3] = n[0]; out[i * 3 + 1] = n[2]; out[i * 3 + 2] = n[1];
+		}
+		return out;
+	};
+
 	// The art's shading as a little bump, within one surface (same model, similar normal), clamped.
 	function relief(r, i, n, strength) {
 		const W = r.w, x = i % W, y = (i / W) | 0, d = r.art.data;
