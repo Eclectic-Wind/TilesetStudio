@@ -1,4 +1,82 @@
-# Godot bundle schema, version 3 (`<name>.export.json`)
+# Godot bundle schema, version 4 (`<name>.export.json`)
+
+Version 4 only **adds** to version 3 (below): every version 3 field keeps its shape, so a version 3 reader still reads the file. Four things change:
+
+- `kind` is one of four: `floor`, `wall_h`, `wall_v`, `deco` (version 3 had `floor`, `deco`, `solid`, `wall`, `side`).
+- Pieces are exact: `footprints.pieces` (the Studio's piece grouping), each model's `pieceIndex` and exact `outline`, and `maps.pieces`, the piece number of every art pixel and floor point.
+- Where a floor point's solid runs belong to different pieces, its gap in `maps.data` is the boundary between them (see *Maps*).
+- `wallHeight` and `wallThickness` (the Processing settings the kinds were inferred with) are written at the top level and in `footprints`.
+
+Coordinates as in version 3: floor-plan px (X east, Y south, Z up); a world point (X, Y, Z) is drawn at canvas (X, Y - Z). Cells are `[column, row]` of the 32 px atlas grid.
+
+## Top level (version 4)
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `version` | int | 4 | was 3 |
+| `wallHeight` | int px, 0-255 | 48 | a tall model at least this high can infer a wall kind (see *Kind*). Processing panel, saved in the project |
+| `wallThickness` | int px, 0-255 | 24 | a tall model's shorter floor side must be at most this to be a wall. Processing panel, saved in the project |
+
+Everything else at the top level is as in version 3 (`bundleId`, `exportedAt`, `studioVersion`, `walkOverHeight`).
+
+## Kind (version 4)
+
+| kind | meaning in the engine |
+|---|---|
+| `floor` | walked over: flat ground art (floors, rugs, papers, slabs). Never casts shadow, never joins a piece, drawn under actors |
+| `wall_h` | horizontal wall, runs east-west on the map (back / front walls). Casts shadow, the torch beam lands on it, fades while the player is behind it |
+| `wall_v` | vertical wall, runs north-south (side walls). Casts shadow, blocks light east / west, never fades |
+| `deco` | anything else that stands: furniture, props, pillars, stairs. Casts shadow, y-sorted against actors at its base line |
+
+Inferred when the artist set nothing: `flat` (heightMax <= walkOverHeight) -> `floor`; else, when heightMax >= `wallHeight` and the shorter side of the model's floor box is <= `wallThickness`: `wall_h` if its east-west extent is at least its north-south extent, else `wall_v`; else `deco`.
+
+Migration: a version 3 bundle's kinds map `wall` -> `wall_h`, `side` -> `wall_v`, `solid` -> `deco`, and `deco` on a flat model -> `floor`. A version 1 or 2 project is mapped the same way when the Studio opens it.
+
+## `footprints` (version 4 additions)
+
+| field | type | meaning |
+|---|---|---|
+| `wallHeight`, `wallThickness` | int px | as at the top level |
+| `pieces` | `[piece]` | the piece table: one entry per piece, in order. A piece's **number** is its position + 1 (0 always means no piece). Floor-kind models are always pieces of their own |
+
+A piece:
+
+| field | type | meaning |
+|---|---|---|
+| `names` | `[string]` | as the Pieces view shows them |
+| `models` | `[int]` | indices into `footprints.objects` |
+| `kind` | kind | the strongest of its models' kinds (`floor` < `deco` < `wall_v` < `wall_h`) |
+| `z` | `[min, max]` | lowest underside / highest top of its models |
+| `base` | number | floor y (canvas px) of its south edge: the largest floor row its footprint covers. Its sort line |
+| `back` | number | floor y of its north edge: the smallest floor row its footprint covers |
+| `outline` | `[[[x, y], ...], ...]` | exact floor outline: the traced mask of every floor point the piece covers, not a hull (an L stays an L) |
+| `cells` | `[[x, y], ...]` | atlas cells holding its art or floor points |
+
+## `footprints.objects[]` (version 4 additions)
+
+| field | type | meaning |
+|---|---|---|
+| `kind` | kind | one of the four (see *Kind*) |
+| `pieceIndex` | int >= 1 | the number of the piece this model belongs to (its place in `footprints.pieces`, + 1) |
+| `outline` | `[[[x, y], ...], ...]` | the model's own exact floor outline (traced, not a hull) |
+
+## Maps (version 4 additions)
+
+- **`maps.pieces`** (new): base64 RGBA8, exact bytes, on the same W x (H + rows) grid as `maps.data`. Piece numbers are 16-bit: low byte, high byte; 0 = no piece.
+  - rows 0..H-1 (art space): R, G = the piece of the art pixel's owner (hole-filled pixels included; 0 where no model paints). B, A = 0.
+  - rows H..H+rows-1 (floor space): R, G = the piece of the run **above** the gap (the top piece when there is no gap); B, A = the piece of the run **below** the gap (the same as R, G when there is no gap). 0 where nothing stands.
+- **`maps.data`, floor space, B / A** (changed): where a floor point's solid runs belong to different pieces (a floating piece over another, an arm reaching over a lower piece), the gap is the boundary between the topmost piece's lowest run and what is under it, whatever its size. Touching pieces have B = A + 1 (a 0 px gap). Otherwise the tallest gap, as before. So each half of a floor point belongs to exactly one piece.
+
+## Export
+
+- Export ▸ Godot bundle writes it. `tools/export_project.js <in.studio.json> <out.export.json>` writes the same bundle headless (both build it with `TS.Bundle.build`, js/bundle.js). The differences: `exportedAt`, and the atlas, which the headless tool takes as the project's own PNG bytes (the browser re-encodes it).
+- The sample: `node tools/make_sample_bundle.js` regenerates `samples/sample.export.json`.
+
+---
+
+## Version 3 (earlier)
+
+> The kind names and meanings below are version 3's. Version 4 replaces them (see *Kind*); the rest of this section still describes version 4 unchanged.
 
 Version 3 only **adds** fields. Every version 1 / 2 field is written exactly as before (`exported`, `images`, `maps`, `footprints.objects[].solid / z / footprint / roughness / metallic / collision.mode / collision.polygons`, `footprints.collision`), so an older importer still reads the file. Two things change meaning:
 

@@ -119,6 +119,8 @@
 					<label title="Footprint-mode collision: a floor point blocks where a model's solid part reaches between the step and this height (things hung above it, like a high shelf or a lamp shade, don't block)">Player body height <span class="unit"><input id="s_body" type="number" min="1" max="255" value="40"> px</span></label>
 					<label title="Footprint-mode collision: parts entirely below this height (a rug, paper on the floor) don't block">Step height <span class="unit"><input id="s_step" type="number" min="0" max="64" value="4"> px</span></label>
 					<label title="Engine roles: a model whose highest point is at or below this height is flat: it infers kind floor and (collision auto) never blocks. 0-16 px">Walk-over height <span class="unit"><input id="s_walk" type="number" min="0" max="16" value="2"> px</span></label>
+					<label title="Engine roles: a tall, thin model (at least this high, and the shorter side of its floor box at most the wall thickness) infers kind wall_h or wall_v. Set both to 0 for no walls. 0-255 px">Wall height <span class="unit"><input id="s_wallh" type="number" min="0" max="255" value="48"> px</span></label>
+					<label title="The most a tall model's shorter floor side can be to count as a wall (see wall height). 0-255 px">Wall thickness <span class="unit"><input id="s_wallt" type="number" min="0" max="255" value="24"> px</span></label>
 					<label class="row" title="Also write roughness/metallic as the engine's current highlight channels (height map G = strength, B = gloss). Off: grayscale height map, engine defaults."><input id="s_pack" type="checkbox" checked> Pack highlights into the height map</label>
 				</div>
 			</details>
@@ -348,6 +350,7 @@
 <script src="js/mesh.js"></script>
 <script src="js/render.js"></script>
 <script src="js/process.js"></script>
+<script src="js/bundle.js"></script>
 <script src="js/rig.js"></script>
 <script src="js/aseprite.js"></script>
 <script src="js/prism.js"></script>
