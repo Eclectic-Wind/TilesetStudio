@@ -36,8 +36,8 @@ Your tileset is drawn in a fixed projection, and the models you place sit in tha
 
 ## What you can do
 
-- **Model** with Blender-style tools: boxes, cylinders, wedges, spheres, extrude, inset, bevel, loop cut, knife, bridge, snapping to the tile grid. Draw custom shapes with the **Pencil**.
-- **Look round** in 3D (hold Alt and drag, or press **5** to stay there) to check depth and stacking.
+- **Model** with Blender-style tools: boxes, cylinders, wedges, spheres, extrude, inset, bevel, loop cut, knife, bridge, snapping to the tile grid. **Free Draw** adds an outline, cuts through a closed solid, or carves a recess. Corner Radius rounds only the active outline.
+- **Look round** in 3D (hold Alt and drag, or press **5** to stay there) to check depth and stacking. Free Draw and the main modeling tools also work in the held 3D camera.
 - **Check the result** in the output view: lit preview with shadows, height / normal / roughness / metal maps, holes the models miss, floor plan, collision and tile-piece problems.
 - **Import 3D** from glTF (`.glb`, with bones and animation), OBJ or other projects, and reuse parts as **stamps**.
 - **Animate** with bones (rigid or bending), a timeline and clips, and render every frame's normal map into a spritesheet. It can link live to Aseprite ([guide](docs/animation-aseprite.md)).
@@ -115,3 +115,18 @@ Whatever you build, keep both tileset sides a multiple of 32 px and keep separat
 | `samples/` | Example projects (`ward_bedroom2`, `BasicSample` used by Learn) |
 | `docs/` | [Full reference](docs/reference.md), [export schema](docs/export-schema.md), [animation and Aseprite](docs/animation-aseprite.md) |
 | `tools/aseprite/` | The Aseprite extension for the live animation link |
+
+### Free Draw primitives
+Choose Box, Cylinder or Sphere, then drag opposite corners of the footprint. Set Thickness for the height (sphere: third diameter). Edge bevel applies to newly generated boxes and cylinder rims and is clamped to fit. The same shapes work as Cut and Carve cutters; spherical cutters produce curved cavities. Cut extends the cutter through the target depth. Clear/Esc cancels a cut preview; Apply/Enter commits it.
+
+### Window menu
+Window controls sidebar, toolbar, lighting, statistics, references and animation visibility. Drag the sidebar edge or center divider to resize; arrow keys also adjust focused dividers. Choose Split View, Modeling Only or Preview Only, or use each viewport’s maximize/restore button. Lighting and statistics can collapse to headers. Layout is saved in this browser; Reset Layout restores defaults. The top Add menu and Shift+A remain available.
+
+### Lit preview render scale
+The Lighting controls include Render Scale: 100% (default), 75%, 50%, and 25%. This scales the Lit preview sampling resolution, including animation playback, while maintaining its displayed size and light coordinates. Other map views, processed source maps and exports remain full resolution. The selected scale is remembered in browser preferences. Lower scales trade preview detail for fewer lighting calculations.
+
+### Free Draw height adjustment
+Finish a freehand/corner outline or drag a primitive footprint to enter a live preview. Scroll up/down adjusts height or Carve depth by 1 px; Shift+scroll adjusts by 0.1 px. Thickness remains editable and synchronized. Click in the modeling viewport or press Enter to commit, or Esc to cancel. Cut Through always uses the full target depth. The wheel returns to normal camera navigation after confirming/canceling. Preview edits do not add undo steps; confirmation creates one undo step.
+
+### Lit renderer comparison (experimental)
+Lighting controls now offer Current (default), GPU, and Compare. GPU moves material and lighting shading to WebGL2 while retaining the reference CPU shadow test. Compare shows Current on the left and GPU on the right; interact with the left pane to synchronize light, zoom, and pan. Both use the same Height, Reach, Render Scale and shadow controls. Only the selected renderer runs outside Compare. GPU maps are cached until processing updates them. WebGL failures, oversized textures and animation playback fall back to Current with a visible message. Project data and exports are unchanged. GPU visual matching and performance require testing on target hardware; this experimental mode does not claim pixel-exact equivalence. Heavy shadow scenes may remain CPU-bound.
