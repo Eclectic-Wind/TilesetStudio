@@ -260,8 +260,8 @@
 		S.anim = Object.assign(TS.Rig.newAnim(), p.anim || {}); TS.Rig.bumpIds(S.anim);
 		Mesh.bumpIds(S.objects);
 		if (p.tileset) await setTileset(p.tileset, p.name + ".png");
-		// Before version 2 the kinds had other names and meanings (wall, side, solid, deco on a flat model): map them once.
-		const migrated = (p.version || 1) < 2 && !!S.art && TS.Process.migrateKinds(S.objects, S.art, Object.assign(TS.Process.defaultSettings(), p.settings || {})) > 0;
+		// Kinds that are no longer valid (deco, solid, wall, side) are mapped on every load; see TS.Process.migrateKinds.
+		const migrated = TS.Process.migrateKinds(S.objects) > 0;
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
 		Object.assign(S.settings, defaultSettings(), p.settings || {});
@@ -2412,7 +2412,7 @@
 			<label title="How it blocks the player in the game. Strip: only a 4 px strip along the south edge of its footprint, you walk into its drawn top. Footprint (walk-behind): the floor it really covers blocks wherever it reaches between the step and body heights (Processing), so you walk round it and can stand behind it. None: never blocks. The Collision view shows it.">Collision
 				<select id="p_collision">${reqValue === undefined ? mixedOpt : ""}${[["auto", `auto${role && !multi ? " (now: " + role.mode + ")" : ""}`], ["strip", "strip (walk into the top)"], ["footprint", "footprint (walk behind)"], ["none", "none"]].map(([v, t]) =>
 					`<option value="${v}" ${reqValue === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor. Tall and thin (at least the wall height, and the shorter side of its footprint at most the wall thickness) are wall_h (runs east-west) or wall_v (runs north-south). Everything else is deco. Floor: walked over. wall_h: the torch beam lands on it, and it fades while you are behind it. wall_v: blocks light east / west. Deco: any standing prop, furniture or pillar; it casts shadow. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
+			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor. Tall and thin (at least the wall height, and the shorter side of its footprint at most the wall thickness) are wall_h (runs east-west) or wall_v (runs north-south). Everything else is furn. Floor: walked over. wall_h: the torch beam lands on it, and it fades while you are behind it. wall_v: blocks light east / west. Furn: any standing prop, furniture or pillar (what populates a room); it casts shadow. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
 				<select id="p_kind">${kindValue === undefined ? mixedOpt : ""}<option value="" ${kindValue === "" ? "selected" : ""}>default: ${role && !multi ? role.kindInferred + " (inferred)" : "inferred per model"}</option>${TS.Process.KINDS.map((k) =>
 					`<option value="${k}" ${kindValue === k ? "selected" : ""}>${k}</option>`).join("")}</select></label>
 			${role && !multi ? `<p class="dim">height ${role.heightMin}-${role.heightMax} px above the floor${role.flat ? " · flat (walkable)" : ""}</p>` : ""}

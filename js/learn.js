@@ -370,15 +370,15 @@
 	});
 
 	// 5 ---------------------------------------------------------------------------------------------------------------
-	// auto: the Studio works the kind out from the shape: flat is floor; tall and thin is a wall (wall_h or wall_v by direction); the rest is deco.
+	// auto: the Studio works the kind out from the shape: flat is floor; tall and thin is a wall (wall_h or wall_v by direction); the rest is furn.
 	const KINDS = [
 		{ k: "floor", auto: true, say: "Floor: you walk on it.", sub: "Automatic: flat, 2 px of height (Z) or less. Rugs, paths, the stone floor here.", key: "floor" },
-		{ k: "deco", auto: true, say: "Deco: anything else that stands.", sub: "Automatic for the rest: crates, tables, beds, pillars. It casts shadow and sorts with you by its base.", key: "crate" },
+		{ k: "furn", auto: true, say: "Furn: anything else that stands.", sub: "Automatic for the rest: crates, tables, beds, pillars. It casts shadow and sorts with you by its base.", key: "crate" },
 		{ k: "wall_h", auto: true, say: "Wall (east-west): the back wall.", sub: "Automatic when tall and thin, running east-west: the torch's light lands on it.", key: "wall" },
 		{ k: "wall_v", auto: true, say: "Wall (north-south): a side wall.", sub: "Automatic when tall and thin, running north-south: it blocks light going east and west.", key: "side" },
 	];
 	// The lesson's own tints: the Studio's Kind view colours (the palette above has no kind names).
-	const KC = { floor: C.floor, wall_h: C.wall, wall_v: C.side, deco: C.solid };	L.push({
+	const KC = { floor: C.floor, wall_h: C.wall, wall_v: C.side, furn: C.solid };	L.push({
 		title: "Give each thing a job", dur: 24,
 		caps: [{ t: 0, say: "Every model has a job: its kind.", sub: "Watch the four kinds light up one by one." }].concat(KINDS.map((k, i) => ({ t: 2 + i * 3, say: k.say, sub: k.sub }))).concat([{ t: 17, say: "The rules work it out. You only override the odd one.", sub: "Select the model, then Properties → Kind." }]),
 		extra: `<p class="kindnote"><b>All four are automatic.</b> Flat (2 px of height or less) is floor. Tall and thin is a wall: wall_h if it runs east-west, wall_v if north-south. Anything else that stands is deco.<br><b>Override by hand:</b> select the model, then <b>Properties → Kind</b> (several at once works). The Kind view tints each model so you can check.</p>`,
@@ -387,7 +387,7 @@
 			const models = sampleModels();
 			models.push(boxModel("crate", 100, 148, 0, 126, 174, 22, "#9a7248"));
 			models.push(boxModel("side", 164, 113, 0, 172, 192, 84, "#6a7488"));
-			const nameOf = { floor: "floor", crate: "deco", wall: "wall_h", side: "wall_v" };
+			const nameOf = { floor: "floor", crate: "furn", wall: "wall_h", side: "wall_v" };
 			return (g, t) => {
 				bg(g);
 				const cam = camAt(ISO, 2.0, W / 2 - 8);

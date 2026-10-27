@@ -229,30 +229,23 @@
 	// --- engine roles ---
 	// Kinds (bundle version 4): floor (walked over: flat ground art), wall_h (horizontal wall, runs east-west: casts shadow, the torch
 	// beam lands on it, fades while the player is behind it), wall_v (vertical wall, runs north-south: casts shadow, blocks light east
-	// / west, never fades), deco (anything else that stands: furniture, props, pillars; casts shadow, y-sorted at its base line).
+	// / west, never fades), furn (anything else that stands: furniture, props, pillars; casts shadow, y-sorted at its base line).
 	// Inferred when the artist set nothing: flat -> floor; else tall (heightMax >= wallHeight) and thin (the shorter side of its floor
-	// box <= wallThickness) -> wall_h if its east-west extent >= its north-south extent, else wall_v; else deco.
-	P.KINDS = ["floor", "wall_h", "wall_v", "deco"];
+	// box <= wallThickness) -> wall_h if its east-west extent >= its north-south extent, else wall_v; else furn.
+	P.KINDS = ["floor", "wall_h", "wall_v", "furn"];
 	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
 	P.wallHeight = (settings = {}) => settings.wallHeight ?? 48;
 	P.wallThickness = (settings = {}) => settings.wallThickness ?? 24;
 	P.defaultSettings = () => ({ alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
 
-	// Projects before version 2 (before bundle version 4) had kinds wall, side, solid and deco with other meanings: wall -> wall_h,
-	// side -> wall_v, solid -> deco, and deco on a flat model -> floor. Mutates the objects; -> how many changed. Projects that never
-	// set a kind are simply inferred again.
-	P.migrateKinds = (objects, art, settings) => {
-		const roles = P.run(objects, art, settings).roles;
+	// Kinds that are no longer valid map on every load: deco and solid -> furn, wall -> wall_h, side -> wall_v (the old names of the
+	// same things, from versions 1-3 and from projects saved before furn existed). Mutates the objects; -> how many changed.
+	const OLD_KINDS = new Map([["wall", "wall_h"], ["side", "wall_v"], ["solid", "furn"], ["deco", "furn"]]);
+	P.migrateKinds = (objects) => {
 		let changed = 0;
-		objects.forEach((o, oi) => {
-			if (o.kind !== "wall" && o.kind !== "side" && o.kind !== "solid" && o.kind !== "deco") return;
-			let k = o.kind === "wall" ? "wall_h" : o.kind === "side" ? "wall_v" : "deco";
-			if (k === "deco" && roles[oi].flat) k = "floor";
-			o.kind = k; changed++;
-		});
+		for (const o of objects) if (OLD_KINDS.has(o.kind)) { o.kind = OLD_KINDS.get(o.kind); changed++; }
 		return changed;
 	};
-
 	// Per model index: {heightMin, heightMax (floor-space px above the floor; 0/0 when it has no surface on the plan), flat,
 	// kindInferred, kind, kindOverridden, requested, mode (resolved collision), hull (floor plan convex hull)}.
 	// auto -> "footprint" (a model nothing of which reaches the step blocks no floor, so it yields no polygon). An explicit
@@ -265,7 +258,7 @@
 			const vi = o.faces.length ? Mesh.faceVerts(o) : [];
 			// The model's floor box: its east-west and north-south extents.
 			const ew = span(vi.map((i) => o.verts[i][0])), ns = span(vi.map((i) => o.verts[i][1]));
-			const kindInferred = flat ? "floor" : h && heightMax >= wallH && Math.min(ew, ns) <= wallT ? (ew >= ns ? "wall_h" : "wall_v") : "deco";
+			const kindInferred = flat ? "floor" : h && heightMax >= wallH && Math.min(ew, ns) <= wallT ? (ew >= ns ? "wall_h" : "wall_v") : "furn";
 			const kindOverridden = P.KINDS.includes(o.kind);
 			const requested = P.collisionRequested(o);
 			const mode = requested !== "auto" ? requested : "footprint";
@@ -608,7 +601,7 @@
 	//
 	// Bundle version 4 (see addons/studio_import/BUNDLE_V4.md) adds: wallHeight / wallThickness (here and at the top level), per model
 	// pieceIndex (its piece's number, 1-based) and outline (its exact floor outline), and footprints.pieces, the piece table: one entry
-	// per piece, in order, its number being its position + 1. The kinds are now floor, wall_h, wall_v and deco.
+	// per piece, in order, its number being its position + 1. The kinds are now floor, wall_h, wall_v and furn.
 	P.footprints = (objects, art, result, settings) => {
 		const rule = P.bodyRule(settings);
 		const r = result && result.roles && result.roles.length === objects.length ? result : P.run(objects, art, settings);
@@ -651,7 +644,7 @@
 			// The piece table: the models of each piece, its kind (the strongest of its models'), its height, the floor rows its footprint
 			// spans (base = the south edge, its sort line; back = the north edge), its exact outline and the atlas cells it occupies.
 			pieces: pm.pieces.map((p) => {
-				const KIND_RANK = { floor: 0, deco: 1, wall_v: 2, wall_h: 3 };
+				const KIND_RANK = { floor: 0, furn: 1, wall_v: 2, wall_h: 3 };
 				const floorPoints = new Set(), cells = new Map(), zs = [];
 				let kind = "floor";
 				for (const oi of p.objs) {

@@ -43,7 +43,7 @@
 		floorPlan() { return this.mode === "heightfield" || this.mode === "collision" || this.mode === "pieces" || this.mode === "kind"; }
 
 		// Kind view tints and collision-view outlines, as [r, g, b].
-		static KIND_COLOURS = { floor: [90, 200, 110], wall_h: [210, 90, 210], wall_v: [70, 210, 220], deco: [235, 150, 60] };
+		static KIND_COLOURS = { floor: [90, 200, 110], wall_h: [210, 90, 210], wall_v: [70, 210, 220], furn: [235, 150, 60] };
 		static MODE_COLOURS = { none: "#5dff8a", strip: "#ffa030", footprint: "#ff4d4d" };
 
 		// A distinct colour per piece (golden-angle hues), as [r, g, b].
@@ -225,7 +225,7 @@
 				}
 		}
 
-		// Kind: like Pieces, but tinted by the resolved kind (floor / wall_h / wall_v / deco) of the model that paints each pixel;
+		// Kind: like Pieces, but tinted by the resolved kind (floor / wall_h / wall_v / furn) of the model that paints each pixel;
 		// floor with no art above it is a dim tint of its model's kind.
 		_kinds(img) {
 			const r = this.result, d = img.data, cut = this.settings.alphaCut, art = r.art.data, roles = r.roles;

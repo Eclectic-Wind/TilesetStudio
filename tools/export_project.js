@@ -70,8 +70,8 @@ const art = { w: img.w, h: img.h, data: img.data, alpha };
 const settings = Object.assign(P.defaultSettings(), project.settings || {});
 const objects = project.objects || [];
 
-// Projects saved before bundle version 4 carry the old kinds: map them first (the Studio does this on open).
-if ((project.version || 1) < 2) P.migrateKinds(objects, art, settings);
+// Projects carrying retired kind names (deco, solid, wall, side) are mapped first, as the Studio does on open.
+P.migrateKinds(objects);
 const result = P.run(objects, art, settings);
 result.pieceMap = P.pieces(objects, result, settings);
 

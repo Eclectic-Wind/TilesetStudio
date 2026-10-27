@@ -255,15 +255,15 @@ pans, and ⛶ fits it again.
   (under or over the body). A **24x12 feet box** follows the pointer: green where the feet can stand, red where they can't, and
   the readout names what blocks it.
 
-- **Kind**: models tinted by their resolved kind (green floor, orange deco, magenta wall_h, cyan wall_v); a small rug or a
+- **Kind**: models tinted by their resolved kind (green floor, orange furn, magenta wall_h, cyan wall_v); a small rug or a
   2 px bump shows up as floor. Hover reads a cell's model, kind (set or inferred), height range and collision.
 - **Pieces**: how the engine will group the art into "tiles". Models whose footprints come within 2 px are one **piece**; the
   view tints the art by piece (one colour each, legend under the view) and draws the 32 px cells. A cell's **border** is the piece
   the engine reads that cell as; a **diamond** marks a piece's anchor cell (its lowest row in that tile column). **Red hatched** =
   conflict: another piece's art or floor sits in a cell the engine reads as a different piece. **Yellow dashed** = floating: art
   with no anchored cell below it in its column, so the engine treats it as flat art. Hover a cell for who paints it, what the
-  engine reads, and why. A piece made only of **floor** or **deco** models is flat art (no height, shadow or outline), so it has no
-  anchor and is never judged; set a model's Kind to deco to make it count. The legend line counts conflicts, so "No conflicts" is the goal. To define pieces yourself, type a
+  engine reads, and why. A piece made only of **floor** models is flat art (no height, shadow or outline), so it has no
+  anchor and is never judged; set a model's Kind to furn to make it count. The legend line counts conflicts, so "No conflicts" is the goal. To define pieces yourself, type a
   **Piece** name in the Properties panel (select several models to name them together): models with the same name are one piece
   however far apart, and a named model never joins another by footprint, so a model with its own name is split off. Empty = automatic.
   The name is exported as `piece` per model (see `docs/export-schema.md`).

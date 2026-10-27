@@ -99,7 +99,7 @@ Load `name.png` as your albedo/atlas and the maps as your engine's height, norma
 
 ### Footprints and collision
 
-`footprints.objects[]` is what you need for gameplay. Each model gives its `footprint` (convex hull) and `z` range, its `kind` (`floor`, `wall_h`, `wall_v`, `deco`), its `piece` name, its `pieceIndex` (its piece's number in `footprints.pieces`), its exact `outline` and `cells` (the 32 px atlas cells it occupies). Its `collision.mode` is `footprint`, `strip` or `none`, and `footprint` mode carries `collision.polygons` ready to use as colliders. Top-level `footprints.collision` describes the player box those polygons were built for. Coordinates are floor-plan pixels: X east, Y south, Z up.
+`footprints.objects[]` is what you need for gameplay. Each model gives its `footprint` (convex hull) and `z` range, its `kind` (`floor`, `wall_h`, `wall_v`, `furn`), its `piece` name, its `pieceIndex` (its piece's number in `footprints.pieces`), its exact `outline` and `cells` (the 32 px atlas cells it occupies). Its `collision.mode` is `footprint`, `strip` or `none`, and `footprint` mode carries `collision.polygons` ready to use as colliders. Top-level `footprints.collision` describes the player box those polygons were built for. Coordinates are floor-plan pixels: X east, Y south, Z up.
 
 ### Any engine
 

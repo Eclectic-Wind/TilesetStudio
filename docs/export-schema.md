@@ -2,7 +2,7 @@
 
 Version 4 only **adds** to version 3 (below): every version 3 field keeps its shape, so a version 3 reader still reads the file. Four things change:
 
-- `kind` is one of four: `floor`, `wall_h`, `wall_v`, `deco` (version 3 had `floor`, `deco`, `solid`, `wall`, `side`).
+- `kind` is one of four: `floor`, `wall_h`, `wall_v`, `furn` (version 3 had `floor`, `deco`, `solid`, `wall`, `side`; `deco` and `solid` are now `furn`).
 - Pieces are exact: `footprints.pieces` (the Studio's piece grouping), each model's `pieceIndex` and exact `outline`, and `maps.pieces`, the piece number of every art pixel and floor point.
 - Where a floor point's solid runs belong to different pieces, its gap in `maps.data` is the boundary between them (see *Maps*).
 - `wallHeight` and `wallThickness` (the Processing settings the kinds were inferred with) are written at the top level and in `footprints`.
@@ -26,11 +26,11 @@ Everything else at the top level is as in version 3 (`bundleId`, `exportedAt`, `
 | `floor` | walked over: flat ground art (floors, rugs, papers, slabs). Never casts shadow, never joins a piece, drawn under actors |
 | `wall_h` | horizontal wall, runs east-west on the map (back / front walls). Casts shadow, the torch beam lands on it, fades while the player is behind it |
 | `wall_v` | vertical wall, runs north-south (side walls). Casts shadow, blocks light east / west, never fades |
-| `deco` | anything else that stands: furniture, props, pillars, stairs. Casts shadow, y-sorted against actors at its base line |
+| `furn` | furniture and props: anything else that stands (tables, crates, beds, pillars, stairs), what populates a room. Casts shadow, y-sorted against actors at its base line |
 
-Inferred when the artist set nothing: `flat` (heightMax <= walkOverHeight) -> `floor`; else, when heightMax >= `wallHeight` and the shorter side of the model's floor box is <= `wallThickness`: `wall_h` if its east-west extent is at least its north-south extent, else `wall_v`; else `deco`.
+Inferred when the artist set nothing: `flat` (heightMax <= walkOverHeight) -> `floor`; else, when heightMax >= `wallHeight` and the shorter side of the model's floor box is <= `wallThickness`: `wall_h` if its east-west extent is at least its north-south extent, else `wall_v`; else `furn`.
 
-Migration: a version 3 bundle's kinds map `wall` -> `wall_h`, `side` -> `wall_v`, `solid` -> `deco`, and `deco` on a flat model -> `floor`. A version 1 or 2 project is mapped the same way when the Studio opens it.
+Migration: a version 3 bundle's kinds map `wall` -> `wall_h`, `side` -> `wall_v`, `solid` -> `furn`, `deco` -> `furn`. Any reader should map a `deco` it meets to `furn`, so older version 4 bundles stay readable. The Studio maps the same names when it opens a project of any version.
 
 ## `footprints` (version 4 additions)
 
@@ -45,7 +45,7 @@ A piece:
 |---|---|---|
 | `names` | `[string]` | as the Pieces view shows them |
 | `models` | `[int]` | indices into `footprints.objects` |
-| `kind` | kind | the strongest of its models' kinds (`floor` < `deco` < `wall_v` < `wall_h`) |
+| `kind` | kind | the strongest of its models' kinds (`floor` < `furn` < `wall_v` < `wall_h`) |
 | `z` | `[min, max]` | lowest underside / highest top of its models |
 | `base` | number | floor y (canvas px) of its south edge: the largest floor row its footprint covers. Its sort line |
 | `back` | number | floor y of its north edge: the smallest floor row its footprint covers |
