@@ -206,7 +206,7 @@
 			let best = null;
 			for (const obj of objects) {
 				if (skip && skip(obj)) continue;
-				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) continue;
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.boundsCached(obj), Infinity)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 					if (hit !== null && (!best || hit < best.t)) best = { obj, face: t.face, t: hit, point: v3.add(r.o, v3.scale(r.d, hit)) };
@@ -220,7 +220,7 @@
 			const r = this.ray(px, py), out = [];
 			for (const obj of objects) {
 				let best = null;
-				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) continue;
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.boundsCached(obj), Infinity)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 					if (hit !== null && (!best || hit < best.t)) best = { obj, face: t.face, t: hit, point: v3.add(r.o, v3.scale(r.d, hit)) };
@@ -233,7 +233,7 @@
 		// Every face of one object under a screen point, nearest first: [{face, t}] (each face once).
 		pickFaces(obj, px, py) {
 			const r = this.ray(px, py), best = new Map();
-			if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), Infinity)) return [];
+			if (!Renderer.rayBox(r.o, r.d, TS.Mesh.boundsCached(obj), Infinity)) return [];
 			for (const t of TS.Mesh.triangles(obj)) {
 				const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]);
 				if (hit !== null && (!best.has(t.face) || hit < best.get(t.face))) best.set(t.face, hit);
@@ -248,7 +248,7 @@
 			if (!s) return false;
 			const r = this.ray(s[0], s[1]), tp = v3.dot(v3.sub(p, r.o), r.d), limit = tp - (eps === undefined ? 0.75 : eps);
 			for (const obj of objects) {
-				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.bounds(obj), limit)) continue;
+				if (!Renderer.rayBox(r.o, r.d, TS.Mesh.boundsCached(obj), limit)) continue;
 				for (const t of TS.Mesh.triangles(obj)) {
 					// Triangles slightly widened: a point exactly behind a corner (common in this projection) counts as hidden.
 					const hit = Renderer.rayTri(r.o, r.d, obj.verts[t.a], obj.verts[t.b], obj.verts[t.c], 1e-4);

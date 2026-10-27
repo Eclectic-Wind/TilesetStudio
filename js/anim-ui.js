@@ -915,7 +915,7 @@
 		document.body.classList.toggle("animating", on);
 		$("b_animate").classList.toggle("on", on);
 		if (!on && playing) togglePlay();
-		if (on) { ensureClip(); render(); scheduleSheet(); } showFrameArt();
+		if (on) { loadAlbedoURL(); ensureClip(); render(); scheduleSheet(); } showFrameArt();
 		if (!on && Link.linked()) { Link.expected = null; if (api().asepriteSend) api().asepriteSend(); } // tell Aseprite the link is back to a single tile
 		api().redrawSoon();
 		draw();
@@ -962,6 +962,17 @@
 		resend: () => renderSheet(), // the link opened: the normals go out even with no albedo
 		posed: (objs) => (on && !restMode && A().bones.length ? Rig.posedObjects(objs, A(), clip(), A().frame) : objs),
 		draw,
+		// Another project was opened: nothing of the old one's rig, sheet or albedo may carry over (whether animating or not).
+		projectChanged() {
+			if (playing) { clearInterval(playing); playing = 0; }
+			if (stroke) stroke = null;
+			pass++; clearTimeout(renderTimer); clearTimeout(TS.AnimUI._t);
+			boneSel = null; multi.clear(); restMode = paintMode = parentPick = false;
+			sheet = null; pending = 0; albedo = null; albedoURL = null;
+			loadAlbedoURL();
+			if (on) { ensureClip(); render(); timeline(); scheduleSheet(); }
+			showFrameArt(); draw();
+		},
 		// The models or the whole project changed (an edit, undo, or a project opened).
 		changed() {
 			if (!on) return;

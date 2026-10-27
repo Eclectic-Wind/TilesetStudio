@@ -174,7 +174,7 @@
 	};
 	// Axis-aligned box round an object: {min, max}. Cached like the triangles.
 	const boundsCache = new WeakMap();
-	M.bounds = (obj) => {
+	M.boundsCached = (obj) => {
 		const key = M.shapeKey(obj), hit = boundsCache.get(obj);
 		if (hit && hit.key === key) return hit.box;
 		const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
