@@ -169,7 +169,7 @@
 	M.shapeKey = (obj) => {
 		let h = obj.smooth || 0;
 		for (const p of obj.verts) h = (h * 31 + p[0] * 7.31 + p[1] * 3.17 + p[2] * 1.93) % 1e9;
-		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; }
+		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; h = (h * 3 + (f.smooth === undefined ? 0 : f.smooth ? 2 : 1)) % 1e9; }
 		return h + ":" + obj.verts.length + ":" + obj.faces.length;
 	};
 	// Axis-aligned box round an object: {min, max}. Cached like the triangles.
@@ -197,10 +197,20 @@
 
 	// Per face corner normals with auto-smooth: a corner averages the normals of the faces round its vertex within obj.smooth
 	// degrees of its own face. Returns faceIndex -> [normal per corner].
+	// Hand-shaded model (some face has its own `smooth` flag, set by Shade smooth): a smooth face averages with the smooth faces
+	// round its vertex, whatever the angle; the others are flat, so the edge between the two is a sharp cut.
 	M.cornerNormals = (obj) => {
 		const fn = obj.faces.map((f) => M.faceNormal(obj, f));
 		const around = obj.verts.map(() => []);
 		obj.faces.forEach((f, fi) => f.v.forEach((vi) => around[vi].push(fi)));
+		if (obj.faces.some((f) => f.smooth !== undefined))
+			return obj.faces.map((f, fi) =>
+				f.v.map((vi) => {
+					if (!f.smooth) return fn[fi];
+					let s = [0, 0, 0];
+					for (const other of around[vi]) if (obj.faces[other].smooth) s = v3.add(s, fn[other]);
+					return v3.norm(s);
+				}));
 		const limit = Math.cos(((obj.smooth || 0) * Math.PI) / 180);
 		return obj.faces.map((f, fi) =>
 			f.v.map((vi) => {
@@ -462,10 +472,10 @@
 		for (const o of others) {
 			const base = into.verts.length;
 			into.verts.push(...o.verts.map((p) => p.slice()));
-			for (const f of o.faces) into.faces.push({ v: f.v.map((i) => i + base), mat: f.mat || (JSON.stringify(o.mat) !== JSON.stringify(into.mat) ? Object.assign({}, o.mat) : undefined) });
+			for (const f of o.faces) into.faces.push({ v: f.v.map((i) => i + base), mat: f.mat || (JSON.stringify(o.mat) !== JSON.stringify(into.mat) ? Object.assign({}, o.mat) : undefined), smooth: f.smooth });
 			for (const [a, b] of o.lines || []) (into.lines || (into.lines = [])).push([a + base, b + base]);
 		}
-		for (const f of into.faces) if (!f.mat) delete f.mat;
+		for (const f of into.faces) { if (!f.mat) delete f.mat; if (f.smooth === undefined) delete f.smooth; }
 	};
 
 	M.deleteVerts = (obj, idx) => {
@@ -655,7 +665,7 @@
 			}
 			for (let i = 0; i < count; i++) {
 				const j = (i + 1) % count;
-				obj.faces.push({ v: [f.v[i], f.v[j], ring[j], ring[i]], mat: f.mat });
+				obj.faces.push({ v: [f.v[i], f.v[j], ring[j], ring[i]], mat: f.mat, smooth: f.smooth });
 			}
 			f.v = ring;
 			inner.push(...ring);
@@ -777,7 +787,7 @@
 		for (const { fi, i } of ring.faces) {
 			const f = obj.faces[fi], v = [0, 1, 2, 3].map((k) => f.v[(i + k) % 4]);
 			const m01 = mid(v[0], v[1]), m23 = mid(v[2], v[3]);
-			newFaces.push({ v: [v[0], m01, m23, v[3]], mat: f.mat }, { v: [m01, v[1], v[2], m23], mat: f.mat });
+			newFaces.push({ v: [v[0], m01, m23, v[3]], mat: f.mat, smooth: f.smooth }, { v: [m01, v[1], v[2], m23], mat: f.mat, smooth: f.smooth });
 		}
 		// Other faces on a ring edge get its new point, so no T-junctions.
 		obj.faces.forEach((f, fi) => {
