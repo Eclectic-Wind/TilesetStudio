@@ -806,6 +806,17 @@
 		status(`Bridged with ${r.faces.length} face(s)${Mesh.isClosed(o) ? " · the model is closed" : ""}.`);
 	}
 
+	// Shade smooth: the selected faces take smooth normals (they blend across the edges between them), every other face of the
+	// model is sharp. For the normal maps; Ctrl+Z takes it back.
+	function shadeSmooth() {
+		const o = activeObj();
+		if (!S.edit || !o || S.elemMode !== "face" || !S.elemSel.size) return status("Select faces (3) to shade smooth.");
+		pushUndo();
+		o.faces.forEach((f, fi) => { f.smooth = S.elemSel.has(fi); });
+		changed();
+		status(`Shaded ${S.elemSel.size} face(s) smooth; the other ${o.faces.length - S.elemSel.size} are sharp. Ctrl+Z undoes it.`);
+	}
+
 	// Ctrl+J: join the selected models into the active one (to bridge between them, or edit them as one).
 	function joinSelection() {
 		if (noModelling("join models")) return;
@@ -2644,7 +2655,7 @@
 			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};
 		acts.extrudeman = () => { if (S.edit && S.elemMode === "face") { S.armed = "extrude"; S.armedOpts = { manifold: true }; modalBar(); status("Press on the view, drag, and let go to extrude (manifold)."); } else status("Extrude manifold works on faces (3)."); };
-		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife;
+		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife; acts.shadesmooth = shadeSmooth;
 		acts.mirror = (e) => mirrorSelection(e && e.shiftKey ? "y" : "x");
 		acts.hide = (e) => (e && e.shiftKey ? unhideAll() : hideModels("selected"));
 		for (const b of document.querySelectorAll("[data-act]")) b.onclick = (e) => {
