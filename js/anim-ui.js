@@ -7,7 +7,7 @@
 	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 	const round = (v) => Math.round(v * 100) / 100;
 	let previewMode = "lit"; // the panel's own preview: lit | normal | albedo
-	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4];
+	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4], litCache = null;
 	const S = () => TS.state, A = () => TS.state.anim, api = () => TS.api;
 	const clip = () => Rig.clipOf(A());
 	// Weight painting: with a bone selected, drag over the models to give it more (or less) of each vertex under the brush.
@@ -66,7 +66,7 @@
 		}
 		multi.clear(); boneSel = null;
 	}
-	function touched() { api().markUnsaved(); api().redrawSoon(); render(); scheduleSheet(); }
+	function touched() { api().markUnsaved(); api().redrawSoon(); scheduleSheet(); render(); }
 
 	function ensureClip() {
 		const a = A();
@@ -77,7 +77,7 @@
 
 	// --- the sheet: normals rendered for every frame, shown lit, and sent to Aseprite ---
 
-	function scheduleSheet() { pass++; clearTimeout(renderTimer); renderTimer = setTimeout(renderSheet, 250); }
+	function scheduleSheet() { pass++; litCache = null; clearTimeout(renderTimer); renderTimer = setTimeout(renderSheet, 250); }
 	// The big Lit / Normals view shows the clip's frame while animating and the rest pose otherwise: redraw it when that changes.
 	function refreshOutput() { const o = api().output; if (o && o.result) o.render(); }
 	// Frames render a few at a time so a long clip never freezes the page: the frame on screen first, then the rest in short slices
@@ -129,7 +129,7 @@
 		const lay = sheet.layout, [ox, oy] = Rig.cellOrigin(lay, A().frame), out = g.createImageData(c.w, c.h);
 		const L = v3.norm([light[0] * 2, light[1] * 2, 0.7]);
 		for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
-			const si = ((oy + y) * lay.w + ox + x) * 4, di = (y * c.w + x) * 4, d = sheet.sheet.data;
+			const si = ((oy + y) * lay.w + ox + x) * 4, di = (y * c.w + x) * 4, d = sheet.sheet.data, ai = (y * c.w + x) * 4, art = S().art;
 			if (!d[si + 3]) continue;
 			if (previewMode === "normal") { out.data.set([d[si], d[si + 1], d[si + 2], 255], di); continue; }
 			if (previewMode === "albedo") {
@@ -139,10 +139,9 @@
 			}
 			const n = v3.norm([d[si] / 127.5 - 1, d[si + 1] / 127.5 - 1, d[si + 2] / 127.5 - 1]), lit = 0.25 + 0.75 * Math.max(0, v3.dot(n, L));
 			let r = 150, gr = 150, b = 150, a = 255;
-			// The normals are the reference: where the albedo has nothing (or there is none yet) they show as plain grey.
-			if (albedo && albedo.width === lay.w && albedo.height === lay.h && albedo.data[si + 3]) {
-				r = albedo.data[si]; gr = albedo.data[si + 1]; b = albedo.data[si + 2]; a = albedo.data[si + 3];
-			}
+			// The normals are the reference: the linked Albedo colours the frame, else the tileset's own art; where neither has a pixel they show as plain grey.
+			const alb = albedo && albedo.width === lay.w && albedo.height === lay.h && albedo.data[si + 3] ? { d: albedo.data, i: si } : art && art.data[ai + 3] ? { d: art.data, i: ai } : null;
+			if (alb) { r = alb.d[alb.i]; gr = alb.d[alb.i + 1]; b = alb.d[alb.i + 2]; a = alb.d[alb.i + 3]; }
 			out.data.set([r * lit, gr * lit, b * lit, a], di);
 		}
 		g.putImageData(out, 0, 0);
@@ -150,26 +149,40 @@
 		const o = api().output;
 		if (o && (o.mode === "lit" || o.mode === "normals")) o.render();
 	}
-	// Fills img (art-sized) with the current frame for the output panel; false when there is nothing to show.
-	function frameImage(mode, lt, ambient, img, sourceSize = img) {
+	// Fills img (art-sized) with the current frame's normals for the output panel; false when there is nothing to show.
+	function frameImage(img, sourceSize = img) {
 		if (!on || !sheet || !clip()) return false;
 		const c = cell(), lay = sheet.layout;
 		if (sourceSize.width !== c.w || sourceSize.height !== c.h) return false;
 		const [ox, oy] = Rig.cellOrigin(lay, A().frame), d = sheet.sheet.data, out = img.data;
-		const hasAlb = albedo && albedo.width === lay.w && albedo.height === lay.h;
 		for (let py = 0; py < img.height; py++) for (let px = 0; px < img.width; px++) {
 			const x=Math.min(c.w-1,Math.floor((px+.5)*c.w/img.width)), y=Math.min(c.h-1,Math.floor((py+.5)*c.h/img.height));
 			const si = ((oy + y) * lay.w + ox + x) * 4, di = (py * img.width + px) * 4;
 			if (!d[si + 3]) { out.set([22, 22, 27, 255], di); continue; }
-			if (mode === "normals") { out.set([d[si], d[si + 1], d[si + 2], 255], di); continue; }
-			const n = [d[si] / 127.5 - 1, d[si + 1] / 127.5 - 1, d[si + 2] / 127.5 - 1];
-			const tl = [lt.x - (x + 0.5), lt.y - (y + 0.5), lt.z], dist = Math.hypot(tl[0], tl[1], tl[2]);
-			const shade = Math.max(0, v3.dot(n, v3.scale(tl, 1 / dist))) * Math.max(0, 1 - dist / lt.radius) ** 2;
-			const alb = hasAlb && albedo.data[si + 3] ? [albedo.data[si], albedo.data[si + 1], albedo.data[si + 2]] : [150, 150, 150];
-			for (let k = 0; k < 3; k++) out[di + k] = TS.clamp((alb[k] / 255) * (ambient + 2.2 * shade) * 255, 0, 255);
-			out[di + 3] = 255;
+			out.set([d[si], d[si + 1], d[si + 2], 255], di);
 		}
 		return true;
+	}
+
+	// The Lit view while animating: the clip's current frame processed like the rest pose (the posed models, the tileset's art, or the
+	// linked Albedo for the frame's cell), so its colour and shadows match. Kept until the frame, the models or the Albedo change.
+	function litResult() {
+		if (!on || !S().art || !clip() || !S().objects.length) return null;
+		const f = A().frame;
+		if (litCache && litCache.frame === f && litCache.albedo === albedo) return litCache;
+		const c = cell(), lay = Rig.layout(c.w, c.h, clip().frames);
+		const r = TS.Process.run(Rig.posedObjects(S().objects, A(), clip(), f), S().art, S().settings);
+		const data = new Uint8ClampedArray(S().art.data);
+		if (albedo && albedo.width === lay.w && albedo.height === lay.h) {
+			const [ox, oy] = Rig.cellOrigin(lay, f);
+			for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
+				const si = ((oy + y) * lay.w + ox + x) * 4;
+				if (albedo.data[si + 3]) data.set(albedo.data.subarray(si, si + 3), (y * c.w + x) * 4);
+			}
+		}
+		r.art = Object.assign({}, r.art, { data });
+		litCache = { frame: f, albedo, result: r, litNormal: TS.Process.litNormals(r, S().settings), prisms: null };
+		return litCache;
 	}
 
 	// --- the Aseprite link ---
@@ -916,7 +929,7 @@
 		document.body.classList.toggle("animating", on);
 		$("b_animate").classList.toggle("on", on);
 		if (!on && playing) togglePlay();
-		if (on) { loadAlbedoURL(); ensureClip(); render(); scheduleSheet(); } showFrameArt();
+		if (on) { loadAlbedoURL(); ensureClip(); scheduleSheet(); render(); } showFrameArt();
 		if (!on && Link.linked()) { Link.expected = null; if (api().asepriteSend) api().asepriteSend(); } // tell Aseprite the link is back to a single tile
 		api().redrawSoon();
 		draw();
@@ -960,6 +973,7 @@
 			return { made, frame: a.frame + 1 };
 		},
 		frameImage,
+		litResult,
 		resend: () => renderSheet(), // the link opened: the normals go out even with no albedo
 		posed: (objs) => (on && !restMode && A().bones.length ? Rig.posedObjects(objs, A(), clip(), A().frame) : objs),
 		draw,
@@ -971,14 +985,14 @@
 			boneSel = null; multi.clear(); restMode = paintMode = parentPick = false;
 			sheet = null; pending = 0; albedo = null; albedoURL = null;
 			loadAlbedoURL();
-			if (on) { ensureClip(); render(); timeline(); scheduleSheet(); }
+			if (on) { ensureClip(); scheduleSheet(); render(); timeline(); }
 			showFrameArt(); draw();
 		},
 		// The models or the whole project changed (an edit, undo, or a project opened).
 		changed() {
 			if (!on) return;
 			clearTimeout(TS.AnimUI._t);
-			TS.AnimUI._t = setTimeout(() => { loadAlbedoURL(); render(); scheduleSheet(); }, 60);
+			TS.AnimUI._t = setTimeout(() => { loadAlbedoURL(); scheduleSheet(); render(); }, 60);
 		},
 	};
 

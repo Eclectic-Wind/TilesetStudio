@@ -30,7 +30,7 @@
    stops playback first. On the timeline ◆ marks the selected bone's keys, or (dimmer) any bone's keys when none is selected; Up / Down
    jump between keys. Lowering the frame count keeps the keys past the end (the timeline says so) and raising it brings them back.
 
-The panel previews the current frame lit by the normal map (move the pointer over it to move the light), with your Albedo if linked.
+The panel previews the current frame lit by the normal map (move the pointer over it to move the light), with your Albedo if linked, else the tileset's own art.
 
 ## The spritesheet
 

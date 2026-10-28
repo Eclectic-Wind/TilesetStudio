@@ -114,8 +114,18 @@
 			return [(px - this.ox) / s, (py - this.oy) / s];
 		}
 
-		// Recompute the image for the current mode, then draw it.
+		// Recompute the image for the current mode, then draw it. Animating, the Lit view shows the clip's current frame, processed
+		// like the rest pose (AnimUI.litResult); the rest pose comes back afterwards.
 		render() {
+			const rest = this.result, frame = this.mode === "lit" && rest && TS.AnimUI && TS.AnimUI.litResult ? TS.AnimUI.litResult() : null;
+			if (!frame) return this._renderImage();
+			const saved = { result: rest, litNormal: this.litNormal, _prisms: this._prisms };
+			Object.assign(this, { result: frame.result, litNormal: frame.litNormal, _prisms: frame.prisms });
+			try { this._renderImage(); }
+			finally { frame.prisms = this._prisms; Object.assign(this, saved); }
+		}
+
+		_renderImage() {
 			const r = this.result;
 			this.off = null; this.gpuOff=null;
 			const activeGPU=this.mode==='lit' && this.rendererMode!=='current';
@@ -127,8 +137,8 @@
 			if (r) {
 				const rows = this.rows(), scale = this.mode === "lit" ? TS.clamp(Number(this.renderScale) || 1, .25, 1) : 1;
 				const img = new ImageData(Math.max(1, Math.ceil(r.w * scale)), Math.max(1, Math.ceil(rows * scale)));
-				// Animating: Lit and Normals show the clip's current frame (albedo x normals), so playback runs here too.
-				const anim = (this.mode === "lit" || this.mode === "normals") && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(this.mode, this.light, this.ambient, img, {width:r.w,height:rows});
+				// Animating: Normals shows the clip's current frame, so playback runs here too (Lit takes its frame in render()).
+				const anim = this.mode === "normals" && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(img, {width:r.w,height:rows});
 				if (anim) { /* drawn */ }
 				else if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
