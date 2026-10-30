@@ -2947,7 +2947,8 @@
 		$("o_fit").onclick = () => output.fit();
 		$("o_copy").onclick = async () => { // the image on the output canvas, as PNG on the clipboard
 			try {
-				const blob = await new Promise((ok) => $("out").toBlob(ok, "image/png"));
+				const blob = await output.fullResBlob();
+			if (!blob) throw new Error("No map to copy yet. Process first.");
 				await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
 				status("Image copied. Paste it into any app.");
 			} catch (err) { status("Could not copy the image: " + err.message); }

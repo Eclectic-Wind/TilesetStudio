@@ -164,6 +164,17 @@
 			this.draw();
 		}
 
+		// The current map at full resolution: one PNG pixel per image pixel, whatever the zoom and the Lit render scale (the on-screen
+		// canvas is only a view of it, with the background and the light marker drawn over).
+		async fullResBlob() {
+			if (!this.result) return null;
+			const saved = this.renderScale;
+			if (this.mode === "lit" && saved < 1) { // rendered again at full size, then the view comes back
+				try { this.renderScale = 1; this._renderImage(); return await new Promise((ok) => this.off.toBlob(ok, "image/png")); }
+				finally { this.renderScale = saved; this.render(); }
+			}
+			return this.off ? new Promise((ok) => this.off.toBlob(ok, "image/png")) : null;
+		}
 		// Draw the last computed image at the current zoom and pan (cheap: zooming and panning only call this).
 		draw() {
 			this._drawSingle();
