@@ -2422,6 +2422,8 @@
 		if (tag === "input" || tag === "select" || tag === "textarea") return;
 		let k = e.key.toLowerCase();
 		const ctrl = e.ctrlKey || e.metaKey;
+		// Ctrl+C with text selected on the page copies that text, as in any page; models copy only when no text is selected.
+		if (ctrl && k === "c" && String(window.getSelection()).length) return;
 		if (k === "return" || e.code === "Enter" || e.code === "NumpadEnter") k = "enter";
 		// Numpad views, as in Blender: 1 front, 3 right, 7 top (Ctrl: back, left, bottom); 5 flips orthographic / perspective.
 		const npView = { Numpad1: ["front", "back"], Numpad3: ["right", "left"], Numpad7: ["top", "bottom"] }[e.code];
@@ -2943,6 +2945,13 @@
 		$("o_zoomin").onclick = () => output.zoomAt(...outCentre(), 1);
 		$("o_zoomout").onclick = () => output.zoomAt(...outCentre(), -1);
 		$("o_fit").onclick = () => output.fit();
+		$("o_copy").onclick = async () => { // the image on the output canvas, as PNG on the clipboard
+			try {
+				const blob = await new Promise((ok) => $("out").toBlob(ok, "image/png"));
+				await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+				status("Image copied. Paste it into any app.");
+			} catch (err) { status("Could not copy the image: " + err.message); }
+		};
 		output.onzoom = (s) => { $("o_zoom").textContent = s ? `${Math.round(s * 100)}%` : ""; };
 		// Drop a tileset or project anywhere.
 		document.addEventListener("dragover", (e) => e.preventDefault());
