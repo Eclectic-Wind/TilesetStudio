@@ -2945,13 +2945,12 @@
 		$("o_zoomin").onclick = () => output.zoomAt(...outCentre(), 1);
 		$("o_zoomout").onclick = () => output.zoomAt(...outCentre(), -1);
 		$("o_fit").onclick = () => output.fit();
-		$("o_copy").onclick = async () => { // the image on the output canvas, as PNG on the clipboard
-			try {
-				const blob = await output.fullResBlob();
-			if (!blob) throw new Error("No map to copy yet. Process first.");
-				await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-				status("Image copied. Paste it into any app.");
-			} catch (err) { status("Could not copy the image: " + err.message); }
+		$("o_copy").onclick = () => { // the clipboard gets the PNG as a promise, so the copy stays inside the click
+			const png = output.fullResBlob().then((b) => { if (!b) throw new Error("No map to copy yet. Process first."); return b; });
+			navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(
+				() => status("Image copied. Paste it into any app."),
+				(err) => status("Could not copy the image: " + err.message)
+			);
 		};
 		output.onzoom = (s) => { $("o_zoom").textContent = s ? `${Math.round(s * 100)}%` : ""; };
 		// Drop a tileset or project anywhere.
