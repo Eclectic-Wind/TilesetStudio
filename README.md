@@ -32,7 +32,7 @@ The whole tool is this folder, so you can copy it anywhere to hand it out. New h
 
 **Upload tileset → model over the art → Process → check → Export**
 
-Your tileset is drawn in a fixed projection, and the models you place sit in that same projection. The studio renders what the models say about every pixel (height, surface direction, material) into maps the engine can light. Axes are colour-coded everywhere: **X** across (red), **Y** depth (green), **Z** height (blue).
+Your tileset is drawn in a fixed projection (Top-down or Isometric at a tilt you pick (30° is the 2:1 pixel-art look), set per project), and the models you place sit in that same projection. The studio renders what the models say about every pixel (height, surface direction, material) into maps the engine can light. Axes are colour-coded everywhere: **X** across (red), **Y** depth (green), **Z** height (blue).
 
 ## What you can do
 

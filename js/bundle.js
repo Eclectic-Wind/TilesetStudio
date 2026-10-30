@@ -22,9 +22,10 @@
 	// p: {name, bundleId, atlas (PNG data URL of the art), art: {w, h}, objects, settings, result (processed, with pieceMap), now (ISO 8601)}
 	Bundle.build = (p) => {
 		const P = TS.Process, { art, settings, result } = p;
-		const maps = P.maps(result, settings);
+		const maps = P.maps(result, settings), proj = TS.Proj.of(settings, art);
 		return {
-			format: "tileset-studio-export", version: Bundle.VERSION, name: p.name, tile: 32, canvas: [art.w, art.h], exported: p.now,
+			format: "tileset-studio-export", version: Bundle.VERSION, name: p.name, tile: 32, canvas: [art.w, art.h],
+			projection: proj.kind === "iso" ? { type: "iso", origin: proj.origin.slice(), tilt: proj.tilt } : { type: "oblique" }, exported: p.now,
 			bundleId: p.bundleId, exportedAt: p.now, studioVersion: Bundle.STUDIO_VERSION, walkOverHeight: P.walkOver(settings),
 			wallHeight: P.wallHeight(settings), wallThickness: P.wallThickness(settings),
 			images: { atlas: p.atlas },

@@ -1,4 +1,4 @@
-// WebGL2 viewport: the tileset's own projection (oblique: canvas (X, Y - Z), nothing foreshortened) with the art behind the
+// WebGL2 viewport: the tileset's own projection (TS.Proj: oblique canvas (X, Y - Z), or isometric at the project's tilt) with the art behind the
 // meshes, and a perspective free view for a quick look round that eases back to it. Meshes can show the art projected onto them
 // (what each surface will carry), a solid shade, or just wires. Also screen <-> world helpers and ray picking.
 "use strict";
@@ -9,12 +9,13 @@
 	const VS = `#version 300 es
 	in vec3 a_pos; in vec3 a_nrm; in vec4 a_col;
 	uniform mat4 u_vp; uniform vec2 u_art; uniform float u_point; uniform vec2 u_uvoff;
+	uniform vec3 u_pr0; uniform vec3 u_pr1; uniform vec2 u_po;       // the projection's canvas x / y rows and offset (TS.Proj matrix)
 	out vec3 v_nrm; out vec4 v_col; out vec2 v_uv; out vec3 v_pos;
 	void main() {
 		gl_Position = u_vp * vec4(a_pos, 1.0);
 		gl_PointSize = u_point;
 		v_nrm = a_nrm; v_col = a_col; v_pos = a_pos;
-		v_uv = (vec2(a_pos.x, a_pos.y - a_pos.z) - u_uvoff) / u_art;
+		v_uv = (vec2(dot(u_pr0, a_pos) + u_po.x, dot(u_pr1, a_pos) + u_po.y) - u_uvoff) / u_art;
 	}`;
 	const FS = `#version 300 es
 	precision highp float;
@@ -35,10 +36,11 @@
 		if (under) c = mix(c, vec3(1.0, 0.15, 0.15), 0.65);
 		o = vec4(c, u_opacity);
 	}`;
-	// Art backdrop: a quad over the canvas in screen space, under everything.
+	// Art backdrop: a quad over the canvas in screen space, under everything. a_pos is the floor point that draws at the canvas
+	// corner a_cv (the same point in oblique), so the quad is the floor patch the canvas shows and follows the view into 3D.
 	const BVS = `#version 300 es
-	in vec2 a_pos; uniform mat4 u_vp; out vec2 v_uv; uniform vec2 u_art;
-	void main() { gl_Position = u_vp * vec4(a_pos, 0.0, 1.0); gl_Position.z = 0.999 * gl_Position.w; v_uv = a_pos / u_art; }`;
+	in vec2 a_pos; in vec2 a_cv; uniform mat4 u_vp; out vec2 v_uv; uniform vec2 u_art;
+	void main() { gl_Position = u_vp * vec4(a_pos, 0.0, 1.0); gl_Position.z = 0.999 * gl_Position.w; v_uv = a_cv / u_art; }`;
 	const BFS = `#version 300 es
 	precision highp float; in vec2 v_uv; uniform sampler2D u_tex; uniform float u_dim; out vec4 o;
 	void main() {
@@ -49,8 +51,8 @@
 
 	// Reference art: a translucent copy of another tileset laid over the canvas at an offset (a ghost to trace or compare with).
 	const RVS = `#version 300 es
-	in vec2 a_pos; uniform mat4 u_vp; uniform vec2 u_off; uniform vec2 u_size; out vec2 v_uv;
-	void main() { gl_Position = u_vp * vec4(a_pos, 0.0, 1.0); gl_Position.z = 0.998 * gl_Position.w; v_uv = (a_pos - u_off) / u_size; }`;
+	in vec2 a_pos; in vec2 a_cv; uniform mat4 u_vp; uniform vec2 u_off; uniform vec2 u_size; out vec2 v_uv;
+	void main() { gl_Position = u_vp * vec4(a_pos, 0.0, 1.0); gl_Position.z = 0.998 * gl_Position.w; v_uv = (a_cv - u_off) / u_size; }`;
 	const RFS = `#version 300 es
 	precision highp float; in vec2 v_uv; uniform sampler2D u_tex; uniform float u_alpha; out vec4 o;
 	void main() { vec4 c = texture(u_tex, v_uv); o = vec4(c.rgb, c.a * u_alpha); }`;
@@ -68,7 +70,9 @@
 			this.backBuf = gl.createBuffer();
 			this.tex = gl.createTexture();
 			this.art = { w: 256, h: 256, has: false };
-			// Oblique camera: canvas point at the view centre, screen px per art px.
+			// The tileset's projection (TS.Proj.of(settings)); the app sets it whenever the project's setting changes.
+			this.proj = TS.Proj.OBLIQUE;
+			// Tileset camera: canvas point at the view centre, screen px per art px.
 			this.cam = { x: 128, y: 128, zoom: 3 };
 			// Free view: yaw (0 = looking north from the south), pitch, distance factor; blend 0 = oblique, 1 = free.
 			this.free = { yaw: 0, pitch: Math.PI / 4, blend: 0, ortho: false, up: null, target: [128, 128, 0] };
@@ -130,13 +134,15 @@
 			return { w: r.width, h: r.height };
 		}
 
-		obliqueMatrix() {
-			const { w, h } = this.size(), z = this.cam.zoom, k = 1 / 16384;
+		// The tileset view's matrix, built from the projection: canvas (cx, cy) = M * world + offset puts the camera's canvas point at
+		// the centre, and the depth (clip z) is the distance along the view (oblique Y + Z, iso X + Y + Z), larger = nearer.
+		tilesetMatrix() {
+			const { w, h } = this.size(), z = this.cam.zoom, k = 1 / 16384, [a, b, c, ox, d, e, f, oy] = this.proj.matrix, v = this.proj.dir;
 			return new Float32Array([
-				(2 * z) / w, 0, 0, 0,
-				0, (-2 * z) / h, -k, 0,
-				0, (2 * z) / h, -k, 0,
-				(-this.cam.x * 2 * z) / w, (this.cam.y * 2 * z) / h, 0, 1,
+				((2 * z) / w) * a, ((-2 * z) / h) * d, -k * v[0], 0,
+				((2 * z) / w) * b, ((-2 * z) / h) * e, -k * v[1], 0,
+				((2 * z) / w) * c, ((-2 * z) / h) * f, -k * v[2], 0,
+				((ox - this.cam.x) * 2 * z) / w, ((this.cam.y - oy) * 2 * z) / h, 0, 1,
 			]);
 		}
 
@@ -160,16 +166,17 @@
 
 		viewProj() {
 			const b = this.free.blend;
-			if (b <= 0) return this.obliqueMatrix();
+			if (b <= 0) return this.tilesetMatrix();
 			if (b >= 1) return this.freeMatrix();
-			return m4.lerp(this.obliqueMatrix(), this.freeMatrix(), b * b * (3 - 2 * b));
+			return m4.lerp(this.tilesetMatrix(), this.freeMatrix(), b * b * (3 - 2 * b));
 		}
 
 		// Free view target: the world point under the view centre, on the floor... raised to `z` so orbiting circles the model.
+		// It starts looking the way the tileset projection does, so the ease between the two views is a smooth turn.
 		startFree(z) {
-			this.free.target = [this.cam.x, this.cam.y + (z || 0), z || 0];
-			this.free.yaw = 0;
-			this.free.pitch = Math.PI / 4;
+			this.free.target = this.proj.toWorld(this.cam.x, this.cam.y, z || 0);
+			this.free.yaw = this.proj.yaw;
+			this.free.pitch = this.proj.pitch;
 		}
 
 		// --- screen <-> world (CSS px in the canvas) ---
@@ -184,8 +191,9 @@
 		ray(px, py) {
 			const { w, h } = this.size();
 			if (this.free.blend <= 0) {
+				// Far out along the view line through the canvas point, looking back down it.
 				const sx = this.cam.x + (px - w / 2) / this.cam.zoom, sy = this.cam.y + (py - h / 2) / this.cam.zoom;
-				return { o: [sx, sy + 4096, 4096], d: v3.norm([0, -1, -1]) };
+				return { o: v3.add(this.proj.toWorld(sx, sy, 0), v3.scale(this.proj.dir, 4096)), d: v3.norm(v3.scale(this.proj.dir, -1)) };
 			}
 			const inv = m4.invert(this.viewProj());
 			const nx = (px / w) * 2 - 1, ny = 1 - (py / h) * 2;
@@ -194,7 +202,7 @@
 			return { o: p0, d: v3.norm(v3.sub(p1, p0)) };
 		}
 
-		// Canvas point (art px) under a screen point, in the oblique view.
+		// Canvas point (art px) under a screen point, in the tileset view.
 		canvasPoint(px, py) {
 			const { w, h } = this.size();
 			return [this.cam.x + (px - w / 2) / this.cam.zoom, this.cam.y + (py - h / 2) / this.cam.zoom];
@@ -309,44 +317,48 @@
 				gl.disable(gl.DEPTH_TEST);
 				const W = this.art.w, H = this.art.h;
 				gl.bindBuffer(gl.ARRAY_BUFFER, this.backBuf);
-				gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, W, 0, W, H, 0, 0, W, H, 0, H]), gl.DYNAMIC_DRAW);
-				const loc = gl.getAttribLocation(this.back, "a_pos");
-				gl.enableVertexAttribArray(loc);
-				gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 8, 0);
+				gl.bufferData(gl.ARRAY_BUFFER, this._quad(0, 0, W, H), gl.DYNAMIC_DRAW);
+				const loc = gl.getAttribLocation(this.back, "a_pos"), cv = gl.getAttribLocation(this.back, "a_cv");
+				gl.enableVertexAttribArray(loc); gl.enableVertexAttribArray(cv);
+				gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 16, 0);
+				gl.vertexAttribPointer(cv, 2, gl.FLOAT, false, 16, 8);
 				gl.uniformMatrix4fv(gl.getUniformLocation(this.back, "u_vp"), false, vp);
 				gl.uniform2f(gl.getUniformLocation(this.back, "u_art"), W, H);
 				gl.uniform1i(gl.getUniformLocation(this.back, "u_tex"), 0);
 				gl.uniform1f(gl.getUniformLocation(this.back, "u_dim"), 1 - this.free.blend);
 				gl.drawArrays(gl.TRIANGLES, 0, 6);
-				gl.disableVertexAttribArray(loc);
+				gl.disableVertexAttribArray(loc); gl.disableVertexAttribArray(cv);
 				// Reference art over it: only in the tileset view (in 3D the art is carried by the models), fading out as 3D comes in.
 				const refs = (opts.refs || []).filter((r) => r.showArt && this.refTex.has(r.id) && r.opacity > 0);
 				if (refs.length) {
 					gl.useProgram(this.ref);
 					gl.enable(gl.BLEND);
 					gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-					const rl = gl.getAttribLocation(this.ref, "a_pos");
-					gl.enableVertexAttribArray(rl);
+					const rl = gl.getAttribLocation(this.ref, "a_pos"), rc = gl.getAttribLocation(this.ref, "a_cv");
+					gl.enableVertexAttribArray(rl); gl.enableVertexAttribArray(rc);
 					gl.uniformMatrix4fv(gl.getUniformLocation(this.ref, "u_vp"), false, vp);
 					gl.uniform1i(gl.getUniformLocation(this.ref, "u_tex"), 0);
 					for (const r of refs) {
 						const x0 = r.dx, y0 = r.dy, x1 = r.dx + r.w, y1 = r.dy + r.h;
 						gl.bindTexture(gl.TEXTURE_2D, this.refTex.get(r.id));
 						gl.bindBuffer(gl.ARRAY_BUFFER, this.backBuf);
-						gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1]), gl.DYNAMIC_DRAW);
-						gl.vertexAttribPointer(rl, 2, gl.FLOAT, false, 8, 0);
+						gl.bufferData(gl.ARRAY_BUFFER, this._quad(x0, y0, x1, y1), gl.DYNAMIC_DRAW);
+						gl.vertexAttribPointer(rl, 2, gl.FLOAT, false, 16, 0);
+						gl.vertexAttribPointer(rc, 2, gl.FLOAT, false, 16, 8);
 						gl.uniform2f(gl.getUniformLocation(this.ref, "u_off"), x0, y0);
 						gl.uniform2f(gl.getUniformLocation(this.ref, "u_size"), r.w, r.h);
 						gl.uniform1f(gl.getUniformLocation(this.ref, "u_alpha"), r.opacity * (1 - this.free.blend));
 						gl.drawArrays(gl.TRIANGLES, 0, 6);
 					}
-					gl.disableVertexAttribArray(rl);
+					gl.disableVertexAttribArray(rl); gl.disableVertexAttribArray(rc);
 					gl.bindTexture(gl.TEXTURE_2D, this.tex);
 				}
 			}
 			gl.useProgram(this.prog);
 			gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, "u_vp"), false, vp);
 			gl.uniform2f(gl.getUniformLocation(this.prog, "u_art"), this.art.w, this.art.h);
+			const [pa, pb, pc, pox, pd, pe, pf, poy] = this.proj.matrix;
+			gl.uniform3f(gl.getUniformLocation(this.prog, "u_pr0"), pa, pb, pc); gl.uniform3f(gl.getUniformLocation(this.prog, "u_pr1"), pd, pe, pf); gl.uniform2f(gl.getUniformLocation(this.prog, "u_po"), pox, poy);
 			gl.uniform1i(gl.getUniformLocation(this.prog, "u_tex"), 0);
 			gl.uniform1i(gl.getUniformLocation(this.prog, "u_hasArt"), this.art.has ? 1 : 0);
 			gl.uniform3f(gl.getUniformLocation(this.prog, "u_light"), -0.4, 0.8, 0.9);
@@ -410,6 +422,14 @@
 			gl.depthFunc(gl.LEQUAL);
 			gl.depthMask(true);
 			gl.disable(gl.BLEND);
+		}
+
+		// Two triangles over the canvas rectangle (x0, y0)-(x1, y1) as [floor x, floor y, canvas x, canvas y] per vertex: the floor point
+		// that draws at each corner, then the corner itself (the texture coordinate).
+		_quad(x0, y0, x1, y1) {
+			const out = [];
+			for (const [cx, cy] of [[x0, y0], [x1, y0], [x1, y1], [x0, y0], [x1, y1], [x0, y1]]) { const q = this.proj.toWorld(cx, cy, 0); out.push(q[0], q[1], cx, cy); }
+			return new Float32Array(out);
 		}
 
 		_stream(data, mode) {

@@ -35,13 +35,19 @@
 	const selectedObjs = () => S.objects.filter((o) => S.selected.has(o.id));
 
 	function snapshot() {
-		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel] });
+		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
+			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt });
 	}
 	function restore(json) {
 		const s = JSON.parse(json);
 		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
 		hover = null; loopHover = null; cycle = null;
+		// Undo / redo of a projection switch: the projection comes back with the models.
+		if (s.projection && (s.projection !== S.settings.projection || String(s.isoOrigin) !== String(S.settings.isoOrigin) || s.isoTilt !== S.settings.isoTilt)) {
+			S.settings.projection = s.projection; S.settings.isoOrigin = s.isoOrigin; S.settings.isoTilt = s.isoTilt;
+			syncProjection(); renderer.fit(); zoomLabel();
+		}
 		changed();
 	}
 	function pushUndo(before) {
@@ -119,6 +125,8 @@
 		$("stats").textContent = "Process to see the maps."; pieceInfo();
 		S.name = name.replace(/\.[^.]+$/, "").replace(/_(height|normal|pbr)$/, "");
 		renderer.setArt(img, img.width, img.height);
+		if (S.settings.projection === "iso") S.settings.isoOrigin = TS.Proj.defaultOrigin(img.width);
+		syncProjection();
 		renderer.fit();
 		S.cursor = [Math.round(img.width / 2 / 32) * 32, Math.round(img.height / 2 / 32) * 32, 0];
 		$("exportname").placeholder = S.name;
@@ -283,10 +291,71 @@
 	}
 
 	// The Processing panel shows the open project's settings.
-	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16], ["s_wallh", "wallHeight", parseInt, 0, 255], ["s_wallt", "wallThickness", parseInt, 0, 255]];
+	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_cavity", "cavity", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16], ["s_wallh", "wallHeight", parseInt, 0, 255], ["s_wallt", "wallThickness", parseInt, 0, 255]];
 	function settingsToControls() {
 		for (const [id, key] of SETTING_IDS) if ($(id)) $(id).value = S.settings[key];
+		syncProjection();
 		if ($("s_pack")) $("s_pack").checked = !!S.settings.packHighlights;
+	}
+
+	// --- projection (File > Projection) ---
+	// The viewport, the lit preview and the export all read the project's projection; this keeps the renderer, the shape tools, the
+	// settings control and the chip over the view in step with S.settings.projection (old projects have none: oblique).
+	function syncProjection() {
+		if (!S.settings.projection) S.settings.projection = "oblique";
+		TS.Proj.ensure(S.settings, S.art);
+		const p = TS.Proj.of(S.settings, S.art);
+		if (renderer) renderer.proj = p;
+		TS.Shape.proj = p;
+		if ($("s_proj")) $("s_proj").value = p.kind;
+		if ($("s_tilt")) { $("s_tilt").value = p.tilt || 30; $("tilt_row").hidden = p.kind !== "iso"; }
+		const chip = $("projchip");
+		if (chip) { chip.textContent = TS.Proj.chip(p); chip.title = `Projection: ${TS.Proj.LABELS[p.kind]}. Change it in File > Projection.`; }
+		dirty = true;
+	}
+	// A yes / no question in the app's own dialog (the one Save changes uses). Resolves true on OK.
+	function confirmAsk(title, text, okLabel) {
+		return new Promise((done) => {
+			const box = $("ask");
+			$("ask_title").textContent = title; $("ask_text").textContent = text;
+			$("ask_save").textContent = okLabel; $("ask_discard").hidden = true;
+			const close = (go) => { box.classList.remove("open"); box.onkeydown = box.onclick = null; $("ask_save").textContent = "Save first"; $("ask_discard").hidden = false; $("view").focus(); done(go); };
+			$("ask_save").onclick = () => close(true);
+			$("ask_cancel").onclick = () => close(false);
+			box.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") close(false); };
+			box.onclick = (e) => { if (e.target === box) close(false); };
+			box.classList.add("open");
+			$("ask_save").focus();
+		});
+	}
+	// Switch the project's projection. Models keep their 3D positions, so with models in the project it asks first. One undo step.
+	async function setProjection(kind) {
+		if (!TS.Proj.KINDS.includes(kind) || kind === S.settings.projection) { syncProjection(); return; }
+		const n = S.objects.length, label = TS.Proj.LABELS[kind];
+		if (n && !(await confirmAsk(`Switch to ${kind === "iso" ? "Isometric" : "Top-down"}?`,
+			`Your ${n} model${n === 1 ? " keeps" : "s keep"} their 3D positions, so they won't line up with the art until you move them. Ctrl+Z switches back.`, "Switch"))) { syncProjection(); return; }
+		pushUndo();
+		S.settings.projection = kind;
+		if (kind === "iso") { S.settings.isoOrigin = TS.Proj.defaultOrigin(S.art ? S.art.w : 256); S.settings.isoTilt = S.settings.isoTilt == null ? TS.Proj.DEFAULT_TILT : TS.Proj.tilt(S.settings.isoTilt); }
+		else { delete S.settings.isoOrigin; delete S.settings.isoTilt; }
+		syncProjection();
+		renderer.fit(); zoomLabel();
+		changed(); clearTimeout(processTimer); processNow();
+		status(`Projection: ${label}${n ? ". The models kept their 3D positions. Ctrl+Z switches back." : "."}`);
+	}
+
+	// Change the iso tilt (camera elevation). Same deal as the projection: models keep their 3D positions, so it asks first. One undo step.
+	async function setTilt(deg) {
+		const t = TS.Proj.tilt(deg);
+		if (S.settings.projection !== "iso" || t === TS.Proj.tilt(S.settings.isoTilt)) { syncProjection(); return; }
+		const n = S.objects.length;
+		if (n && !(await confirmAsk(`Change the tilt to ${t}°?`,
+			`Your ${n} model${n === 1 ? " keeps" : "s keep"} their 3D positions, so they won't line up with the art until you move them. Ctrl+Z switches back.`, "Change"))) { syncProjection(); return; }
+		pushUndo();
+		S.settings.isoTilt = t;
+		syncProjection();
+		changed(); clearTimeout(processTimer); processNow();
+		status(`Tilt: ${t}°${n ? ". The models kept their 3D positions. Ctrl+Z switches back." : "."}`);
 	}
 
 	// --- saving, autosave, unsaved-work guard ---
@@ -806,6 +875,17 @@
 		status(`Bridged with ${r.faces.length} face(s)${Mesh.isClosed(o) ? " · the model is closed" : ""}.`);
 	}
 
+	// Shade smooth: the selected faces take smooth normals (they blend across the edges between them), every other face of the
+	// model is sharp. For the normal maps; Ctrl+Z takes it back.
+	function shadeSmooth() {
+		const o = activeObj();
+		if (!S.edit || !o || S.elemMode !== "face" || !S.elemSel.size) return status("Select faces (3) to shade smooth.");
+		pushUndo();
+		o.faces.forEach((f, fi) => { f.smooth = S.elemSel.has(fi); });
+		changed();
+		status(`Shaded ${S.elemSel.size} face(s) smooth; the other ${o.faces.length - S.elemSel.size} are sharp. Ctrl+Z undoes it.`);
+	}
+
 	// Ctrl+J: join the selected models into the active one (to bridge between them, or edit them as one).
 	function joinSelection() {
 		if (noModelling("join models")) return;
@@ -1093,7 +1173,7 @@
 				const a = renderer.toScreen(obj.verts[e.a]), b = renderer.toScreen(obj.verts[e.b]);
 				if (!a || !b) continue;
 				const d = segDist([px, py], a, b);
-				if (d < 10 && edgeInSight(obj, e)) list.push({ k, d: Math.round(d / 2), t: -(obj.verts[e.a][1] + obj.verts[e.b][1] + obj.verts[e.a][2] + obj.verts[e.b][2]) });
+				if (d < 10 && edgeInSight(obj, e)) list.push({ k, d: Math.round(d / 2), t: -(renderer.proj.viewDepth(obj.verts[e.a]) + renderer.proj.viewDepth(obj.verts[e.b])) });
 			}
 			near(list);
 		} else {
@@ -1102,7 +1182,7 @@
 				const s = renderer.toScreen(p);
 				if (!s) return;
 				const d = Math.hypot(s[0] - px, s[1] - py);
-				if (d < 12 && inSight(p)) list.push({ k: i, d: Math.round(d / 2), t: -(p[1] + p[2]) });
+				if (d < 12 && inSight(p)) list.push({ k: i, d: Math.round(d / 2), t: -renderer.proj.viewDepth(p) });
 			});
 			near(list);
 		}
@@ -1529,6 +1609,28 @@
 		for (const q of parts) { out.set(q, o); o += q.length; }
 		return out;
 	};
+	// The tile grid as the projection draws it: the floor lattice (lines of constant X and constant Y every 32 world px) cut to the
+	// canvas rectangle, whose border is drawn stronger (cb).
+	function isoGrid(grid, proj, W, H, c, cb) {
+		const corner = [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => proj.toWorld(x, y, 0));
+		const xs = corner.map((q) => q[0]), ys = corner.map((q) => q[1]);
+		const x0 = Math.floor(Math.min(...xs) / 32) * 32, x1 = Math.ceil(Math.max(...xs) / 32) * 32, y0 = Math.floor(Math.min(...ys) / 32) * 32, y1 = Math.ceil(Math.max(...ys) / 32) * 32;
+		// Liang-Barsky in canvas space, then back to the floor.
+		const seg = (a, b, col) => {
+			const p = proj.toCanvas(a), q = proj.toCanvas(b), dx = q[0] - p[0], dy = q[1] - p[1];
+			let t0 = 0, t1 = 1;
+			for (const [d, room] of [[-dx, p[0]], [dx, W - p[0]], [-dy, p[1]], [dy, H - p[1]]]) {
+				if (d === 0) { if (room < 0) return; continue; }
+				const t = room / d;
+				if (d < 0) { if (t > t1) return; t0 = Math.max(t0, t); } else { if (t < t0) return; t1 = Math.min(t1, t); }
+			}
+			if (t1 - t0 < 1e-6) return;
+			vtx(grid, v3.lerp(a, b, t0), [0, 0, 1], col); vtx(grid, v3.lerp(a, b, t1), [0, 0, 1], col);
+		};
+		for (let x = x0; x <= x1; x += 32) seg([x, y0, 0], [x, y1, 0], c);
+		for (let y = y0; y <= y1; y += 32) seg([x0, y, 0], [x1, y, 0], c);
+		for (let i = 0; i < 4; i++) seg(corner[i], corner[(i + 1) % 4], cb);
+	}
 	function buildGeometry() {
 		const triParts = [], lineParts = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
 		const sel = [1.0, 0.55, 0.15];
@@ -1573,7 +1675,8 @@
 				vtx(hov.points, Mesh.faceCentre(o, o.faces[hv.key]), [0, 0, 1], w);
 			}
 		}
-		if (S.art && S.grid) {
+		if (S.art && S.grid && renderer.proj.kind !== "oblique") isoGrid(grid, renderer.proj, S.art.w, S.art.h, [0.5, 0.75, 1, 0.16], [0.5, 0.75, 1, 0.45]);
+		else if (S.art && S.grid) {
 			const W = S.art.w, H = S.art.h, c = [0.5, 0.75, 1, 0.16], cb = [0.5, 0.75, 1, 0.45];
 			// Nudged off exact pixel edges, where the GPU may drop a 1 px line.
 			const e = 0.02;
@@ -1614,7 +1717,9 @@
 		const ghostLines = [], ghosts = [];
 		for (const r of S.refs) {
 			if (!r.visible || !r.showModels || r.opacity <= 0) continue;
-			const at = (p) => [p[0] + r.dx, p[1] + r.dy, p[2]], gt = [];
+			// The reference slides by (dx, dy) canvas px; its models move by the floor shift that draws as.
+			const o0 = renderer.proj.toWorld(0, 0, 0), o1 = renderer.proj.toWorld(r.dx, r.dy, 0), sx = o1[0] - o0[0], sy = o1[1] - o0[1];
+			const at = (p) => [p[0] + sx, p[1] + sy, p[2]], gt = [];
 			ghosts.push({ id: r.id, w: r.w, h: r.h, dx: r.dx, dy: r.dy, opacity: r.opacity, art: r.showArt, tris: gt });
 			for (const m of r.meshes) {
 				for (const f of m.faces) {
@@ -1652,8 +1757,8 @@
 		if (S.stay3d) return;
 		// The tileset view comes back centred on where the orbit was panned to.
 		const t = renderer.free.target;
-		if (renderer.free.blend >= 1) { renderer.cam.x = t[0]; renderer.cam.y = t[1] - t[2]; }
-		animate({ yaw: 0, pitch: Math.PI / 4 }, 260, () => animate({ blend: 0 }, 160));
+		if (renderer.free.blend >= 1) { const c = renderer.proj.toCanvas(t); renderer.cam.x = c[0]; renderer.cam.y = c[1]; }
+		animate({ yaw: renderer.proj.yaw, pitch: renderer.proj.pitch }, 260, () => animate({ blend: 0 }, 160));
 	}
 	// Stay in 3D (nav "3D" button, key 5): the look-round holds until toggled off; drag orbits, Shift/Space-drag pans, wheel zooms.
 	function toggleStay3d(on) {
@@ -1750,8 +1855,8 @@
 		const depth=cutting && $("pencil_operation").value==="cut" ? TS.Carve.depth(target,pencil.surface,1,true) : Number($("pencil_thickness").value);
 		const obj=TS.Shape.primitive(pencil.pts,kind,cutting && kind==="sphere" ? depth*2 : depth,Number($("pencil_bevel").value));
 		let normal=pencil.view3d?pencil.anchor.normal:pencil.surface?.normal || ($("pencil_plane").value==="top"?[0,0,1]:[0,1,0]);
-		const frontY=Math.max(...pencil.pts.map(p=>p[1]))+Math.max(0,S.cursor[2]);
-		const map=p=>pencil.view3d?pencilWorld2D(p):pencil.surface?TS.Shape.surfacePoint(p,pencil.surface):$("pencil_plane").value==="top"?[p[0],p[1]+Math.max(0,S.cursor[2]),Math.max(0,S.cursor[2])]:[p[0],frontY,frontY-p[1]];
+		const frontY=TS.Shape.frontY(pencil.pts,Math.max(0,S.cursor[2]));
+		const map=p=>pencil.view3d?pencilWorld2D(p):pencil.surface?TS.Shape.surfacePoint(p,pencil.surface):TS.Shape.planePoint($("pencil_plane").value,p,Math.max(0,S.cursor[2]),frontY);
 		obj.verts=obj.verts.map(([x,y,z])=>v3.add(map([x,y]),v3.scale(normal,cutting?z-depth+0.01:z)));
 		if(TS.Carve.volume(obj)<0)obj.faces.forEach(f=>f.v.reverse());
 		return obj;
@@ -1799,7 +1904,7 @@
 			normal = v3.norm(v3.cross(v3.sub(outline[1], outline[0]), v3.sub(outline[2], outline[0])));
 		}
 		if (v3.dot(normal, ray.d) > 0) normal = v3.scale(normal, -1);
-		if (!pencil?.view3d && Math.abs(normal[1] + normal[2]) < 1e-6) return null;
+		if (!pencil?.view3d && Math.abs(v3.dot(normal, renderer.proj.dir)) < 1e-6) return null;
 		return { origin: hit.point.slice(), normal, outline, objectId: hit.obj.id, name: hit.obj.name, face: hit.face };
 	}
 	function pencilPoint(px, py) {
@@ -1885,7 +1990,7 @@
 			return true;
 		};
 		if ($("pencil_mode").value === "corners") {
-			const first = pencil.pts[0], s = first && renderer.toScreen(pencil.view3d ? pencilWorld2D(first) : [first[0], first[1], 0]);
+			const first = pencil.pts[0], s = first && renderer.toScreen(pencil.view3d ? pencilWorld2D(first) : renderer.proj.toWorld(first[0], first[1], 0));
 			if (pencil.pts.length >= 3 && Math.hypot(s[0] - mouse[0], s[1] - mouse[1]) <= 10) { pencilFinish(); return; }
 			if (pencil.pts.length >= 256) return status("Pencil: 256 corners reached. Finish this shape or remove a corner.");
 			if (!pencil.pts.length && !capture()) return;
@@ -1922,7 +2027,7 @@
 		$("pencil_plane").disabled = !!pencil.surface;
 		// The outlined face and label show what the first point will attach to, even with X-ray enabled.
 		if (target) add("polygon", { points: target.outline.map((p) => renderer.toScreen(p).join(",")).join(" "), fill: "#64d9c411", stroke: "#64d9c4", "stroke-width": 1, "stroke-dasharray": "3 4" });
-		const toWorld = (p) => pencil.view3d ? pencilWorld2D(p) : pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : [p[0], p[1], 0];
+		const toWorld = (p) => pencil.view3d ? pencilWorld2D(p) : pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : renderer.proj.toWorld(p[0], p[1], 0);
 		const toScreen = (p) => renderer.toScreen(toWorld(p));
 		const corners = $("pencil_mode").value === "corners"; let path = pencil.pts.slice();
 		if(pencilPrimitive() && path.length===4 && $("pencil_mode").value!=="box"){const a=path[0],b=path[2];path=Array.from({length:48},(_,i)=>[(a[0]+b[0])/2+Math.cos(i*Math.PI/24)*(b[0]-a[0])/2,(a[1]+b[1])/2+Math.sin(i*Math.PI/24)*(b[1]-a[1])/2]);}
@@ -2003,7 +2108,7 @@
 		for (const o of objs) for (const i of Mesh.selectionVerts(o, S.edit && S.elemSel.size ? S.elemMode : "object", S.elemSel)) pts.push(o.verts[i]);
 		if (renderer.free.blend > 0) {
 			// 3D view: orbit round the selection's middle, far enough back to see all of it.
-			if (!pts.length) { renderer.free.target = [renderer.art.w / 2, renderer.art.h / 2, 0]; dirty = true; return; }
+			if (!pts.length) { renderer.free.target = renderer.proj.toWorld(renderer.art.w / 2, renderer.art.h / 2, 0); dirty = true; return; }
 			const b = pointBounds(pts);
 			renderer.free.target = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
 			const r = $("view").getBoundingClientRect(), size = Math.max(16, v3.dist(b.min, b.max));
@@ -2014,7 +2119,7 @@
 		}
 		if (!pts.length) return fitView();
 		let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-		for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1] - p[2]); y1 = Math.max(y1, p[1] - p[2]); }
+		for (const p of pts) { const c = renderer.proj.toCanvas(p); x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]); }
 		const r = $("view").getBoundingClientRect();
 		const want = Math.min(r.width / Math.max(x1 - x0, 16), r.height / Math.max(y1 - y0, 16)) * 0.6;
 		renderer.cam.x = (x0 + x1) / 2; renderer.cam.y = (y0 + y1) / 2;
@@ -2163,7 +2268,7 @@
 			} else if (press && press.kind === "ref") {
 				const r = refById(press.id);
 				let ddx = NaN, ddy = NaN;
-				if (renderer.free.blend > 0) { const a = renderer.floorPoint(mouse[0], mouse[1], 0); if (a && press.floor) { ddx = a[0] - press.floor[0]; ddy = a[1] - press.floor[1]; } }
+				if (renderer.free.blend > 0) { const a = renderer.floorPoint(mouse[0], mouse[1], 0); if (a && press.floor) { const c0 = renderer.proj.toCanvas([0, 0, 0]), c1 = renderer.proj.toCanvas([a[0] - press.floor[0], a[1] - press.floor[1], 0]); ddx = c1[0] - c0[0]; ddy = c1[1] - c0[1]; } }
 				else { ddx = (mouse[0] - press.start[0]) / renderer.cam.zoom; ddy = (mouse[1] - press.start[1]) / renderer.cam.zoom; }
 				if (r && !isNaN(ddx)) { const sn = S.snap; r.dx = sn > 0 ? Math.round((press.dx0 + ddx) / sn) * sn : Math.round((press.dx0 + ddx) * 100) / 100; r.dy = sn > 0 ? Math.round((press.dy0 + ddy) / sn) * sn : Math.round((press.dy0 + ddy) * 100) / 100; refSyncXY(r); dirty = true; }
 			} else if (press && press.kind === "zoom") {
@@ -2192,7 +2297,8 @@
 			else if (!press && !pinch) updateHover(mouse[0], mouse[1]);
 			if (S.art && renderer.free.blend === 0) {
 				const cp = renderer.canvasPoint(mouse[0], mouse[1]);
-				$("coords").textContent = `canvas ${Math.floor(cp[0])}, ${Math.floor(cp[1])} · tile ${Math.floor(cp[0] / 32)}, ${Math.floor(cp[1] / 32)} · ${Math.round(renderer.cam.zoom * 100)}%`;
+				const tp = renderer.proj.kind === "oblique" ? cp : renderer.proj.toWorld(cp[0], cp[1], 0);
+				$("coords").textContent = `canvas ${Math.floor(cp[0])}, ${Math.floor(cp[1])} · tile ${Math.floor(tp[0] / 32)}, ${Math.floor(tp[1] / 32)} · ${Math.round(renderer.cam.zoom * 100)}%`;
 			}
 		});
 		const release = (e) => {
@@ -2588,7 +2694,7 @@
 	// In the tileset view depth and height both run up and down the screen (depth down, height up); in 3D they separate.
 	function drawAxes() {
 		const svg = $("axes"), f = renderer.free;
-		const p = f.blend > 0 ? f.target : [renderer.cam.x, renderer.cam.y, 0], s0 = renderer.toScreen(p);
+		const p = f.blend > 0 ? f.target : renderer.proj.toWorld(renderer.cam.x, renderer.cam.y, 0), s0 = renderer.toScreen(p);
 		if (!s0) return;
 		const dirs = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((a) => { const s = renderer.toScreen(v3.add(p, v3.scale(a, 32))); return s ? [s[0] - s0[0], s[1] - s0[1]] : [0, 0]; });
 		const len = Math.max(1e-6, ...dirs.map((d) => Math.hypot(d[0], d[1]))), C = [75, 60], R = 32;
@@ -2644,7 +2750,7 @@
 			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};
 		acts.extrudeman = () => { if (S.edit && S.elemMode === "face") { S.armed = "extrude"; S.armedOpts = { manifold: true }; modalBar(); status("Press on the view, drag, and let go to extrude (manifold)."); } else status("Extrude manifold works on faces (3)."); };
-		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife;
+		acts.fill = fillSelection; acts.bridge = bridgeSelection; acts.join = joinSelection; acts.knife = startKnife; acts.shadesmooth = shadeSmooth;
 		acts.mirror = (e) => mirrorSelection(e && e.shiftKey ? "y" : "x");
 		acts.hide = (e) => (e && e.shiftKey ? unhideAll() : hideModels("selected"));
 		for (const b of document.querySelectorAll("[data-act]")) b.onclick = (e) => {
@@ -2683,6 +2789,7 @@
 		$("mb_cancel").onclick = () => { if (knife && !modal) { knife = null; dirty = true; modalBar(); hint(); } else cancelModal(); };
 		renderer = new TS.Renderer($("view"));
 		renderer.setArt(null, 256, 256);
+		syncProjection();
 		output = new TS.Output($("out"));
 		exchange = new TS.TransferUI({ state: S, renderer: () => renderer, status, setTool, readFile, loadImage, download,
 			changed: () => { dirty = true; }, frame: frameSelection, commit: commitModels });
@@ -2745,11 +2852,13 @@
 				markUnsaved(); processNow();
 			};
 		$("s_pack").onchange = () => { S.settings.packHighlights = $("s_pack").checked; processNow(); };
+		$("s_proj").onchange = () => setProjection($("s_proj").value);
+		$("s_tilt").onchange = () => { if ($("s_tilt").value !== "") setTilt(Number($("s_tilt").value)); else syncProjection(); };
 		const out = $("out");
 		let lightDrag = false;
 		// Output view: drag = move the light; middle/right drag or Space-drag = pan; wheel = zoom; Shift+wheel = light height.
 		const outPos = (e) => { const r = out.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-		const moveLight = (e) => { if (!S.result) return; const p = output.toArt(...outPos(e)); output.light.x = p[0]; output.light.y = p[1]; output.render(); };
+		const moveLight = (e) => { if (!S.result) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); output.light.x = q[0]; output.light.y = q[1]; output.render(); };
 		let outPan = null;
 		out.addEventListener("pointerdown", (e) => {
 			try { out.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
@@ -2776,7 +2885,7 @@
 				return;
 			}
 			if (output.mode === "kind") {
-				const oi = y < r.h && r.alpha[i] > S.settings.alphaCut && r.owner[i] >= 0 ? r.owner[i] : r.floor.top[i] >= 0 ? r.floor.owner[i] : -1, role = oi >= 0 ? r.roles[oi] : null;
+				const fi = output.floorIndex(x, y), oi = y < r.h && r.alpha[i] > S.settings.alphaCut && r.owner[i] >= 0 ? r.owner[i] : fi >= 0 && r.floor.top[fi] >= 0 ? r.floor.owner[fi] : -1, role = oi >= 0 ? r.roles[oi] : null;
 				$("probe").textContent = `cell ${x >> 5}, ${y >> 5}` + (role ? ` · ${S.objects[oi].name}: ${role.kind}${role.kindOverridden ? " (set by you)" : " (inferred)"} · height ${role.heightMin}-${role.heightMax} px${role.flat ? " · flat" : ""} · collision ${role.requested === "auto" ? "auto → " : ""}${role.mode}` : " · empty");
 				return;
 			}

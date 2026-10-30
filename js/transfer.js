@@ -19,30 +19,32 @@
 			return o;
 		});
 	};
-	T.bounds = function (objects) {
+	// Bounds of the group as the projection draws it: x0..x1, y0..y1 in canvas px, z0..z1 in height.
+	T.bounds = function (objects, proj = TS.Proj.OBLIQUE) {
 		const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
-		for (const o of objects) for (const [x, y, z] of o.verts) {
-			b.x0 = Math.min(b.x0, x); b.x1 = Math.max(b.x1, x);
-			b.y0 = Math.min(b.y0, y - z); b.y1 = Math.max(b.y1, y - z);
+		for (const o of objects) for (const p of o.verts) {
+			const c = proj.toCanvas(p), z = p[2];
+			b.x0 = Math.min(b.x0, c[0]); b.x1 = Math.max(b.x1, c[0]);
+			b.y0 = Math.min(b.y0, c[1]); b.y1 = Math.max(b.y1, c[1]);
 			b.z0 = Math.min(b.z0, z); b.z1 = Math.max(b.z1, z);
 		}
 		return b;
 	};
-	// The anchor is the upper-left of the projected group. Raising its base changes Y and Z together,
-	// keeping the aligned image footprint fixed while preserving all relative heights and depth.
-	T.place = function (objects, x, y, scale, base) {
+	// The anchor is the upper-left of the projected group. Raising its base moves the group up the world (the canvas image stays
+	// where it is, shifted by the height change), keeping the aligned image footprint fixed while preserving all relative heights.
+	T.place = function (objects, x, y, scale, base, proj = TS.Proj.OBLIQUE) {
 		if (![x, y, scale, base].every(Number.isFinite) || scale <= 0 || scale > 100) throw new Error("Use a scale above 0 and at most 10,000%, with valid position and height values.");
-		const b = T.bounds(objects);
+		const b = T.bounds(objects, proj);
 		return objects.map(src => {
 			const o = clone(src); o.hidden = false;
-			o.verts = src.verts.map(p => { const z = base + (p[2] - b.z0) * scale; return [x + (p[0] - b.x0) * scale, y + (p[1] - p[2] - b.y0) * scale + z, z]; });
+			o.verts = src.verts.map(p => { const c = proj.toCanvas(p), z = base + (p[2] - b.z0) * scale; return proj.toWorld(x + (c[0] - b.x0) * scale, y + (c[1] - b.y0) * scale, z); });
 			return o;
 		});
 	};
 	// The move place() gives every point, as p' = s * p + c, so bones and key offsets can follow their models.
-	T.placeMap = function (objects, x, y, scale, base) {
-		const b = T.bounds(objects);
-		return { s: scale, c: [x - b.x0 * scale, y - (b.y0 + b.z0) * scale + base, base - b.z0 * scale] };
+	T.placeMap = function (objects, x, y, scale, base, proj = TS.Proj.OBLIQUE) {
+		const b = T.bounds(objects, proj), w0 = proj.toWorld(0, 0, 0), t = proj.toWorld(x - b.x0 * scale, y - b.y0 * scale, base - b.z0 * scale);
+		return { s: scale, c: [t[0] - scale * w0[0], t[1] - scale * w0[1], t[2] - scale * w0[2]] };
 	};
 	// A rig (bones, bind, clips from TS.Gltf.read) carried along with models: only what the given models need (their bones and the
 	// bones above them), optionally moved by a placeMap. Returns null when none of the models follows a bone.

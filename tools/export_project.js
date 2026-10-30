@@ -8,7 +8,7 @@ const root = path.join(__dirname, "..");
 const ctx = { console, Math, JSON, Map, Set, Float32Array, Uint8Array, Int32Array, Int16Array, Uint8ClampedArray, btoa };
 ctx.window = ctx;
 vm.createContext(ctx);
-for (const f of ["math", "shape", "mesh", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
+for (const f of ["math", "proj", "shape", "mesh", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
 const TS = ctx.TS, P = TS.Process;
 
 // Decodes a non-interlaced 8-bit PNG (any colour type) to RGBA8. Throws on anything else.

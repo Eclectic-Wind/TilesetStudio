@@ -138,6 +138,8 @@ footer { padding: 5px 12px; font-size: 12px; background: var(--panel); border-to
 .export .menu { min-width: 240px; }
 .menu .exportname { display: flex; align-items: center; gap: 6px; padding: 4px 8px; }
 .menu .exportname input { flex: 1; min-width: 0; }
+.menu .exportname select { flex: 1; min-width: 0; }
+.menu .exportname[hidden] { display: none; }
 .menu .primary-item { font-weight: 600; color: var(--accent); }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .modal { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 20; align-items: center; justify-content: center; }

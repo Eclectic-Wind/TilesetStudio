@@ -9,6 +9,17 @@ Version 4 only **adds** to version 3 (below): every version 3 field keeps its sh
 
 Coordinates as in version 3: floor-plan px (X east, Y south, Z up); a world point (X, Y, Z) is drawn at canvas (X, Y - Z). Cells are `[column, row]` of the 32 px atlas grid.
 
+## Projection
+
+The top level also carries `projection`, right after `canvas`: `{"type": "oblique"}` (the default, what every bundle before it meant) or `{"type": "iso", "origin": [ox, oy], "tilt": 30}`. It says how a world point (X, Y, Z) is drawn on the canvas (px, Z = px above the floor in both):
+
+| type | canvas point | notes |
+|---|---|---|
+| `oblique` | `(X, Y - Z)` | top-down 3/4. `maps.data` normals are `(east, up, south)`: R = east, G = up, B = toward the viewer (south) |
+| `iso` | `(ox + X - Y, oy + sin(tilt) * (X + Y) - Z)` | isometric at camera elevation `tilt` (degrees, 10 to 80; 30 is 2:1 pixel art, and a bundle without `tilt` means 30): a 32 px world tile is a 64 x 64 sin(tilt) diamond. The viewer looks along (-1, -1, -2 sin(tilt)), so of the points drawn at one canvas pixel the nearest has the largest `X + Y + 2 sin(tilt) Z`. **Normal maps are in screen space**: R = screen right, G = screen up, B = toward the viewer |
+
+The floor plan (`footprints`, the floor rows of `maps`) is world XY in both: floor x is the world X column and floor y the world Y row, 32 px per tile. In an isometric project the floor plan is W wide (X from 0 to the canvas width); models further east are not on it. The height map is the same in both: R = px above the floor.
+
 ## Top level (version 4)
 
 | field | type | default | meaning |

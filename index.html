@@ -16,6 +16,11 @@
 		<div class="menu">
 			<button id="b_tileset" title="Open the tileset art, a PNG (or drop it on the window)">Open tileset… <kbd>Ctrl+Shift+O</kbd></button>
 			<button id="b_project" title="Open a .studio.json project">Open project… <kbd>Ctrl+O</kbd></button>
+				<hr>
+				<label class="exportname" title="How the tileset is drawn. Top-down: a point (X, Y, Z) shows at canvas (X, Y - Z). Isometric: a 32 px tile is a 64 px wide diamond (height set by Tilt); height draws 1 px up per px; normal maps are in screen space.">Projection
+						<select id="s_proj"><option value="oblique" title="Top-down 3/4: nothing foreshortened; depth and height both run up and down the screen">Top-down (oblique)</option><option value="iso" title="Isometric: a 32 px tile is a 64 px wide diamond (height set by Tilt); height draws 1 px up per px; normal maps are in screen space">Isometric</option></select></label>
+				<label class="exportname" id="tilt_row" title="Isometric tilt: the camera's elevation, 10° to 80°. Lower is flatter, 30° is the 2:1 pixel-art look, 35.26° true isometric. Tiles are 64 px wide and 64·sin(tilt) px tall.">Tilt
+						<input id="s_tilt" type="number" min="10" max="80" step="any" value="26"> °</label>
 			<hr>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
 			<hr>
@@ -118,6 +123,7 @@
 				<div class="settings">
 					<label title="Art pixels no model covers copy the nearest covered one within this many px (0 = leave them on the floor)">Fill holes up to <span class="unit"><input id="s_fill" type="number" min="0" max="16" value="2"> px</span></label>
 					<label title="How much the art's shading bumps the normal map (0 = none)">Art relief <span class="unit"><input id="s_relief" type="number" min="0" max="2" step="0.1" value="0.5"></span></label>
+					<label title="How much deep recesses and pits tilt the normal map along their edges (0 = none)">Depth rim <span class="unit"><input id="s_cavity" type="number" min="0" max="2" step="0.1" value="1"></span></label>
 					<label title="Pixels at or below this alpha (0-255) aren't art">Alpha cut <span class="unit"><input id="s_alpha" type="number" min="0" max="254" value="13"></span></label>
 					<label title="Footprint-mode collision: a floor point blocks where a model's solid part reaches between the step and this height (things hung above it, like a high shelf or a lamp shade, don't block)">Player body height <span class="unit"><input id="s_body" type="number" min="1" max="255" value="40"> px</span></label>
 					<label title="Footprint-mode collision: parts entirely below this height (a rug, paper on the floor) don't block">Step height <span class="unit"><input id="s_step" type="number" min="0" max="64" value="4"> px</span></label>
@@ -137,6 +143,7 @@
 				<label class="chk" title="Wires show through models (Alt+Z)"><input id="xray" type="checkbox"> X-ray</label>
 				<label class="chk" title="Tint everything below the floor (Z less than 0) red"><input id="belowz" type="checkbox"> Z&lt;0</label>
 				<label class="chk" title="Show the 32 px tile grid"><input id="grid" type="checkbox" checked> Grid</label>
+				<span id="projchip" class="badge" title="Projection: Top-down (oblique). Change it in File > Projection.">Top-down</span>
 			</div>
 			<div class="viewport">
 			<canvas id="view" tabindex="0"></canvas>
@@ -188,6 +195,7 @@
 				<button data-act="knife" title="Knife (K): tap points along a cut (they snap to vertices and edges), ✓ or Enter cuts; X-ray cuts through">✂</button>
 				<button data-act="fill" title="Fill (F): 2 vertices → a line, 3+ vertices or a closed edge loop → a face">◺</button>
 				<button data-act="bridge" title="Bridge (Ctrl+E): two faces → a tunnel / neck between them; two edge loops or strips → a band">⧓</button>
+				<button data-act="shadesmooth" title="Shade smooth: the selected faces get smooth normals and every other face of this model is sharp (for the normal maps). Ctrl+Z undoes it.">◠</button>
 			</div>
 			<span class="gap"></span>
 			<button data-act="duplicate" title="Duplicate (Shift+D)">⧉</button>
@@ -318,7 +326,7 @@
 		<h2>Tileset Studio</h2>
 		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → Process → check the output → Export.
 		Axes: <b class="ax-x">X across</b> (east-west), <b class="ax-y">Y depth</b> (north-south on the ground, bigger = nearer you), <b class="ax-z">Z height</b> (up).
-		The view is the tileset's own projection: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up; the axis key at the bottom right of the view shows the directions.
+		The view is the tileset's own projection (File > Projection). Top-down: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up. Isometric: X runs down-right, Y down-left, height up; the axis key at the bottom right of the view shows the directions.
 		Model what the art shows: fronts stand on the floor line, tops sit at their height. Holes (art no model covers) show in magenta.</p>
 		<table>
 			<tr><td>Shift+A</td><td>add a primitive in the tile south-east of the red cursor</td><td>right-click, C</td><td>place the 3D cursor (on a top: stack on it)</td></tr>
@@ -348,9 +356,11 @@
 		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Free Draw (P)</b> creates a custom shape or cuts/carves a closed solid from the same outline; Corner Radius rounds only that outline. It also works in the held 3D camera. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
 		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
 		<p><b>Into Godot:</b> set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p>
+			<p class="credits">by: Chris Villarin<br>Contributions by: Nielsen Bool</p>
 	</div>
 </div>
 <script src="js/math.js"></script>
+<script src="js/proj.js"></script>
 <script src="js/shape.js"></script>
 <script src="js/mesh.js"></script>
 <script src="js/carve.js"></script>

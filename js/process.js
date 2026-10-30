@@ -1,10 +1,12 @@
-// Process: renders the models through the tileset's projection into per-pixel surface data, then the maps the lighting engine
-// reads. A canvas pixel (x, y) shows the line (x, y + t, t); its surface is the highest point of any model on that line
-// (largest t = height). Because the projection is parallel, height and normals interpolate linearly across a triangle on screen.
+// Process: renders the models through the tileset's projection (TS.Proj: oblique or isometric) into per-pixel surface data, then
+// the maps the lighting engine reads. A canvas pixel shows a line of world points (oblique: (x, y + t, t)); its surface is the
+// nearest point of any model on that line (largest proj.depth). Because the projection is parallel, depth, height and normals
+// interpolate linearly across a triangle on screen. Height is always Z (px above the floor), whatever the projection.
 //
 // Outputs (all canvas-sized, transparent where the art is):
 //   <name>_height.png  R = height px / 255 (G, B = R, or the engine's packed highlights: G strength, B gloss, from roughness)
-//   <name>_normal.png  OpenGL sprite normal map: R = east, G = up (a top), B = toward the viewer (south, an upright front)
+//   <name>_normal.png  OpenGL sprite normal map: R = east, G = up (a top), B = toward the viewer (south, an upright front);
+//                      isometric: screen space, R = screen right, G = screen up, B = toward the viewer (proj.toMapNormal)
 //   <name>_pbr.png     R = roughness, G = metallic
 //   <name>_footprints.json  each model's floor footprint (convex hull), height range, and its collision (mode, and in
 //                           footprint mode the exact polygons the player collides with; see P.collision)
@@ -16,8 +18,9 @@
 	// result: {w, h, height Float32 (NaN = nothing), normal Float32 x3, rough, metal, obj Int32, art alpha, holes, stats,
 	//          floor: {top, bottom, rows} heightfield on the floor plan}
 	P.run = (objects, art, settings) => {
-		const W = art.w, H = art.h, N = W * H;
+		const W = art.w, H = art.h, N = W * H, proj = TS.Proj.of(settings, art);
 		const height = new Float32Array(N).fill(NaN);
+		const depth = new Float32Array(N);
 		const normal = new Float32Array(N * 3);
 		const rough = new Float32Array(N), metal = new Float32Array(N);
 		const owner = new Int32Array(N).fill(-1);
@@ -29,9 +32,9 @@
 				const mat = Mesh.faceMat(obj, f);
 				for (const ids of Mesh.faceTriangles(obj, f)) {
 					const p = ids.map((k) => obj.verts[f.v[k]]), n = ids.map((k) => corners[fi][k]);
-					rasterTri(p, n, (idx, z, nx, ny, nz) => {
-						if (!(z > height[idx]) && !isNaN(height[idx])) return;
-						height[idx] = z;
+					rasterTri(proj, p, n, (idx, z, d, nx, ny, nz) => {
+						if (!(d > depth[idx]) && !isNaN(height[idx])) return;
+						height[idx] = z; depth[idx] = d;
 						normal[idx * 3] = nx; normal[idx * 3 + 1] = ny; normal[idx * 3 + 2] = nz;
 						rough[idx] = mat.roughness; metal[idx] = mat.metallic;
 						owner[idx] = oi;
@@ -91,22 +94,24 @@
 			}
 		}
 		for (let i = 0; i < N; i++) if (height[i] > 255) { clipped[i] = 1; over++; }
-		const floor = P.floorField(objects, W, H, P.bodyRule(settings));
+		const floor = P.floorField(objects, W, H, P.bodyRule(settings), proj);
 		const roles = P.roles(objects, floor, settings);
 		const collision = P.collision(objects, floor, settings, roles);
-		return { w: W, h: H, height, normal, rough, metal, owner, alpha, hole, clipped, floor, roles, collision, art,
+		return { w: W, h: H, proj, height, normal, rough, metal, owner, alpha, hole, clipped, floor, roles, collision, art,
 			stats: { covered, holes, filled, unfilled: holes - filled, unused, over } };
 	};
 
-	// Scanline-free triangle raster over the canvas: calls put(index, z, nx, ny, nz) per covered pixel centre.
-	// Screen point of a world point: (X, Y - Z). Back faces (seen from behind) are skipped: on a closed model the surface seen
-	// along a line is always a front face.
-	function rasterTri(p, n, put, W, H) {
-		const s = p.map((q) => [q[0], q[1] - q[2]]);
+	// Scanline-free triangle raster over the canvas: calls put(index, z, depth, nx, ny, nz) per covered pixel centre (z = height,
+	// depth = proj.depth: what decides the nearer surface). Screen point of a world point: proj.toCanvas. Back faces (seen from
+	// behind) are skipped: on a closed model the surface seen along a line is always a front face. The signed screen area is
+	// dot(face normal, proj.dir) up to a positive factor in both projections, so "area < 0" is exactly "faces away from proj.viewer".
+	function rasterTri(proj, p, n, put, W, H) {
+		const s = p.map((q) => proj.toCanvas(q));
 		const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[1][1] - s[0][1]) * (s[2][0] - s[0][0]);
 		if (Math.abs(area) < 1e-9) return;
-		// Faces facing the viewer (0, 1, 1) come out with a positive signed area here (screen y down); skip the rest.
+		// Faces facing the viewer come out with a positive signed area here (screen y down); skip the rest.
 		if (area < 0) return;
+		const dp = p.map((q) => proj.depth(q));
 		const x0 = Math.max(0, Math.floor(Math.min(s[0][0], s[1][0], s[2][0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(s[0][0], s[1][0], s[2][0])));
 		const y0 = Math.max(0, Math.floor(Math.min(s[0][1], s[1][1], s[2][1]))), y1 = Math.min(H - 1, Math.ceil(Math.max(s[0][1], s[1][1], s[2][1])));
 		const inv = 1 / area, eps = 1e-6;
@@ -117,20 +122,27 @@
 				const w1 = ((s[2][0] - px) * (s[0][1] - py) - (s[2][1] - py) * (s[0][0] - px)) * inv;
 				const w2 = 1 - w0 - w1;
 				if (w0 < -eps || w1 < -eps || w2 < -eps) continue;
-				const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
+				const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2], d = w0 * dp[0] + w1 * dp[1] + w2 * dp[2];
 				const nn = v3.norm([w0 * n[0][0] + w1 * n[1][0] + w2 * n[2][0], w0 * n[0][1] + w1 * n[1][1] + w2 * n[2][1], w0 * n[0][2] + w1 * n[1][2] + w2 * n[2][2]]);
-				put(y * W + x, z, nn[0], nn[1], nn[2]);
+				put(y * W + x, z, d, nn[0], nn[1], nn[2]);
 			}
 	}
 
 	// Floor-plan heightfield: per floor point, the highest (top) and lowest (bottom) model height above it, and the solid spans
 	// in between: each model's surfaces crossing that point pair up into the heights it fills (entering, leaving), so a gap
 	// between two stacked parts (a cart's shelves, a top over a lower part) stays open to light. A floor point can be south of
-	// the canvas (things drawn near the bottom stand further south), so it has H + 256 rows.
+	// the canvas (things drawn near the bottom stand further south), so it has H + 256 rows. The plan is world XY whatever the
+	// projection, W wide; in isometric the models can stand anywhere the canvas can show, so its rows come from the models' south edge.
 	// rule {step, body}: blocks[model index] lists the floor points where that model's own spans reach into [step, body] (the
 	// player's body), the floor it blocks in footprint collision mode.
-	P.floorField = (objects, W, H, rule = P.bodyRule()) => {
-		const rows = H + 256, top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
+	P.floorField = (objects, W, H, rule = P.bodyRule(), proj = TS.Proj.OBLIQUE) => {
+		let rows = H + 256;
+		if (proj.kind !== "oblique") {
+			let south = 0;
+			for (const obj of objects) if (obj.faces.length) for (const v of obj.verts) if (v[1] > south) south = v[1];
+			rows = Math.max(H, Math.min(4096, Math.ceil(south) + 16));
+		}
+		const top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
 		const spans = new Array(W * rows), blocks = [], owner = new Int32Array(W * rows).fill(-1);
 		// pairs[floor point] = [[a, b, model index], ...]: the solid spans before they merge, each with the model that made it (the
 		// engine's per-piece maps read these). covers[model index] = the floor points its footprint covers (flat indices).
@@ -236,7 +248,7 @@
 	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
 	P.wallHeight = (settings = {}) => settings.wallHeight ?? 48;
 	P.wallThickness = (settings = {}) => settings.wallThickness ?? 24;
-	P.defaultSettings = () => ({ alphaCut: 13, fill: 2, relief: 0.5, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
+	P.defaultSettings = () => ({ projection: "oblique", isoTilt: 26, alphaCut: 13, fill: 2, relief: 0.5, cavity: 1, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
 
 	// Kinds that are no longer valid map on every load: deco and solid -> furn, wall -> wall_h, side -> wall_v (the old names of the
 	// same things, from versions 1-3 and from projects saved before furn existed). Mutates the objects; -> how many changed.
@@ -460,26 +472,42 @@
 
 	// --- maps ---
 
-	P.mapNormal = (r, i, settings) => {
+	// The world normal (east, south, up) of art pixel i with the relief bump and the depth rim: relief and cavity work in world space
+	// (their tangents come from the projection), and the map vector is made from the result.
+	P.worldNormal = (r, i, settings) => {
 		let n = [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]];
-		if (settings.relief > 0) n = relief(r, i, n, settings.relief);
-		// world (east, south, up) -> map (east, up, toward the viewer = south)
-		return [n[0], n[2], n[1]];
+		const proj = r.proj || TS.Proj.of(settings, r.art);
+		if (settings.relief > 0) n = relief(proj, r, i, n, settings.relief);
+		if (settings.cavity > 0) n = cavity(proj, r, i, n, settings.cavity);
+		return n;
 	};
+	// The exported normal-map vector: world (east, south, up) -> map [right, up, toward the viewer] by the projection
+	// (oblique: (east, up, south); isometric: screen space).
+	P.mapNormal = (r, i, settings) => (r.proj || TS.Proj.of(settings, r.art)).toMapNormal(P.worldNormal(r, i, settings));
 
 	// The world normals (east, south, up) with the relief bump, per art pixel: what the Lit view shades with, so it matches the map.
 	P.litNormals = (r, settings) => {
 		const out = new Float32Array(r.w * r.h * 3);
 		for (let i = 0; i < r.w * r.h; i++) {
 			if (isNaN(r.height[i])) { out[i * 3 + 2] = 1; continue; }
-			const n = P.mapNormal(r, i, settings);
-			out[i * 3] = n[0]; out[i * 3 + 1] = n[2]; out[i * 3 + 2] = n[1];
+			const n = P.worldNormal(r, i, settings);
+			out[i * 3] = n[0]; out[i * 3 + 1] = n[1]; out[i * 3 + 2] = n[2];
 		}
 		return out;
 	};
 
+	// Unit world vectors in the surface's tangent plane (normal n) that draw as canvas right and canvas up, or null when the surface
+	// is edge-on. The oblique relief and rim keep their own tangents (below); this is the same idea taken from the projection.
+	function tangents(proj, n) {
+		const nd = v3.dot(n, proj.dir);
+		if (Math.abs(nd) < 1e-6) return null;
+		const lift = (sx, sy) => { const a = proj.toWorld(0, 0, 0), b = proj.toWorld(sx, sy, 0); return [b[0] - a[0], b[1] - a[1], b[2] - a[2]]; };
+		const along = (e) => v3.norm(v3.sub(e, v3.scale(proj.dir, v3.dot(n, e) / nd)));
+		return { u: along(lift(1, 0)), v: along(lift(0, -1)) };
+	}
+
 	// The art's shading as a little bump, within one surface (same model, similar normal), clamped.
-	function relief(r, i, n, strength) {
+	function relief(proj, r, i, n, strength) {
 		const W = r.w, x = i % W, y = (i / W) | 0, d = r.art.data;
 		const lum = (q) => (d[q * 4] * 0.3 + d[q * 4 + 1] * 0.59 + d[q * 4 + 2] * 0.11) / 255;
 		const same = (q) => q >= 0 && q < W * r.h && !isNaN(r.height[q]) && r.owner[q] === r.owner[i] &&
@@ -487,6 +515,11 @@
 		const l = lum(i);
 		const at = (dx, dy) => { const qx = x + dx, qy = y + dy; if (qx < 0 || qy < 0 || qx >= W || qy >= r.h) return l; const q = qy * W + qx; return same(q) ? lum(q) : l; };
 		const gx = TS.clamp((at(1, 0) - at(-1, 0)) * 0.5 * strength, -0.2, 0.2), gy = TS.clamp((at(0, 1) - at(0, -1)) * 0.5 * strength, -0.2, 0.2);
+		if (proj.kind !== "oblique") {
+			// Brighter = higher: the normal leans away from the brighter side, along the screen's right and up on this surface.
+			const t = tangents(proj, n);
+			return t ? v3.norm(v3.add(v3.sub(n, v3.scale(t.u, gx)), v3.scale(t.v, gy))) : n;
+		}
 		const top = Math.abs(n[2]) >= 0.7;
 		// Along the surface: u to the right, v up the screen.
 		const u = top ? [1, 0, 0] : v3.norm([-n[1], n[0], 0]);
@@ -494,10 +527,47 @@
 		return v3.norm(v3.add(v3.sub(n, v3.scale(u, gx)), v3.scale(v, gy)));
 	}
 
+	// Depth as a rim: a pixel within a few px of a wall that stands well above its own surface (a drawer let into a front, a
+	// pit in a top) tilts away from it, by how deep the step is. A recess floor faces the same way as the face round it, so
+	// without this the normal map shows no depth there (the height map holds it).
+	const CAVITY_REACH = 4, CAVITY_STEP = 2, CAVITY_DEEP = 12;
+	function cavity(proj, r, i, n, strength) {
+		const W = r.w, x = i % W, y = (i / W) | 0, h = r.height[i], oblique = proj.kind === "oblique", run = oblique ? n[1] + n[2] : v3.dot(n, proj.viewer);
+		if (run < (oblique ? 0.2 : 0.14)) return n;
+		const tan = oblique ? null : tangents(proj, n);
+		if (!oblique && !tan) return n;
+		let tx = 0, ty = 0;
+		for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+			for (let k = 1; k <= CAVITY_REACH; k++) {
+				const qx = x + dx * k, qy = y + dy * k;
+				if (qx < 0 || qy < 0 || qx >= W || qy >= r.h) break;
+				const hq = r.height[qy * W + qx];
+				if (isNaN(hq)) break;
+				// What the height would be if the surface just ran on to q, against what is there.
+				const excess = oblique ? hq - h + (n[0] * dx + n[1] * dy) * k / run : hq - h - expectedRise(proj, n, dx * k, dy * k);
+				if (excess < CAVITY_STEP) continue;
+				const w = Math.min(excess / CAVITY_DEEP, 1) * (1 - (k - 1) / CAVITY_REACH);
+				tx -= dx * w; ty -= dy * w;
+				break;
+			}
+		if (!tx && !ty) return n;
+		const top = Math.abs(n[2]) >= 0.7, s = 0.5 * strength;
+		const u = tan ? tan.u : top ? [1, 0, 0] : v3.norm([-n[1], n[0], 0]);
+		const v = tan ? tan.v : top ? [0, -1, 0] : [0, 0, 1];
+		return v3.norm(v3.add(v3.add(n, v3.scale(u, TS.clamp(tx * s, -0.8, 0.8))), v3.scale(v, TS.clamp(-ty * s, -0.8, 0.8))));
+	}
+
+	// How much higher (Z) a surface with normal n gets when it runs on over canvas (dx, dy) px from where it is: the point of the
+	// plane that draws there, found along the view line.
+	function expectedRise(proj, n, dx, dy) {
+		const a = proj.toWorld(0, 0, 0), b = proj.toWorld(dx, dy, 0), e = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+		return (-v3.dot(n, e) / v3.dot(n, proj.dir)) * proj.dir[2];
+	}
+
 	// ImageData for each map.
 	P.images = (r, settings) => {
 		const W = r.w, H = r.h, mk = () => new ImageData(W, H);
-		const hgt = mk(), nrm = mk(), pbr = mk();
+		const hgt = mk(), nrm = mk(), pbr = mk(), flat = (r.proj || TS.Proj.of(settings, r.art)).toMapNormal([0, 0, 1]);
 		for (let i = 0; i < W * H; i++) {
 			if (r.alpha[i] <= settings.alphaCut) continue;
 			const has = !isNaN(r.height[i]);
@@ -509,7 +579,7 @@
 				b = Math.round((1 - rough) * 255);
 			}
 			hgt.data.set([h, g, b, 255], i * 4);
-			const n = has ? P.mapNormal(r, i, settings) : [0, 1, 0];
+			const n = has ? P.mapNormal(r, i, settings) : flat;
 			nrm.data.set([Math.round((n[0] * 0.5 + 0.5) * 255), Math.round((n[1] * 0.5 + 0.5) * 255), Math.round((n[2] * 0.5 + 0.5) * 255), 255], i * 4);
 			pbr.data.set([Math.round(rough * 255), Math.round(metal * 255), 0, 255], i * 4);
 		}
@@ -535,6 +605,7 @@
 	P.maps = (r, settings) => {
 		const W = r.w, H = r.h, floor = r.floor, rows = floor.shown, pm = r.pieceMap, cut = settings.alphaCut;
 		if (!pm) throw new Error("P.maps needs r.pieceMap (P.pieces)");
+		const flat = (r.proj || TS.Proj.of(settings, r.art)).toMapNormal([0, 0, 1]);
 		const data = new Uint8Array(W * (H + rows) * 4), pieces = new Uint8Array(W * (H + rows) * 4);
 		const materials = [], index = new Map();
 		const material = (rough, metal) => {
@@ -557,7 +628,7 @@
 		for (let i = 0; i < W * H; i++) {
 			if (r.alpha[i] <= cut) continue;
 			const has = !isNaN(r.height[i]), o = i * 4;
-			const n = has ? P.mapNormal(r, i, settings) : [0, 1, 0];
+			const n = has ? P.mapNormal(r, i, settings) : flat;
 			data[o] = has ? TS.clamp(Math.round(r.height[i]), 0, 255) : 0;
 			data[o + 1] = Math.round(TS.clamp(n[0] * 0.5 + 0.5, 0, 1) * 255);
 			data[o + 2] = Math.round(TS.clamp(n[1] * 0.5 + 0.5, 0, 1) * 255);
@@ -630,7 +701,7 @@
 			wallThickness: P.wallThickness(settings),
 			canvas: [art.w, art.h],
 			tile: 32,
-			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas (X, Y - Z). footprint = convex hull on the floor plan; outline = the exact " +
+			note: "World px: X east, Y south (floor plan), Z up; drawn at canvas " + (r.proj && r.proj.kind === "iso" ? "(ox + X - Y, oy + sin(" + r.proj.tilt + " deg) * (X + Y) - Z), isometric " + r.proj.tilt + " deg tilt. " : "(X, Y - Z). ") + "footprint = convex hull on the floor plan; outline = the exact " +
 				"floor outline (a traced mask, not a hull). collision.mode: strip = the importer's 4 px strip along the footprint's south edge; footprint = collision.polygons (floor px) " +
 				"is what the player's 24x12 feet box collides with: the floor where the model's solid spans reach into [step, body] px, sides " +
 				`pulled in ${COLLIDE_SIDE} px and south edges ${COLLIDE_SOUTH} px north (feet stop 4 px in front, can stand at its back edge); none = never blocks.`,
@@ -696,13 +767,19 @@
 	// samePiece: the two models are one piece to the importer (footprints within 2 px), so it reads the cell consistently; false
 	// is the dangerous kind. P.clashes (pieces on different rows of one column) is a separate check.
 	P.cellOwnership = (objects, r, settings) => {
-		const T = 32, W = r.w, H = r.h, gw = Math.ceil(W / T), gh = Math.ceil(H / T), cut = settings.alphaCut;
+		const T = 32, W = r.w, H = r.h, gw = Math.ceil(W / T), gh = Math.ceil(H / T), cut = settings.alphaCut, proj = r.proj || TS.Proj.of(settings, r.art);
 		const grid = new Array(gw * gh), put = (x, y, oi) => { const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(oi); };
 		for (let y = 0; y < H; y++)
 			for (let x = 0; x < W; x++) {
 				const i = y * W + x;
 				if (r.alpha[i] > cut && r.owner[i] >= 0) put(x, y, r.owner[i]);
-				if (r.floor.top[i] >= 0 && r.floor.owner[i] >= 0) put(x, y, r.floor.owner[i]);
+				if (proj.kind === "oblique" && r.floor.top[i] >= 0 && r.floor.owner[i] >= 0) put(x, y, r.floor.owner[i]);
+			}
+		if (proj.kind !== "oblique")
+			for (let k = 0; k < r.floor.top.length; k++) {
+				if (!(r.floor.top[k] >= 0 && r.floor.owner[k] >= 0)) continue;
+				const c = proj.toCanvas([(k % W) + 0.5, ((k / W) | 0) + 0.5, 0]);
+				if (c[0] >= 0 && c[1] >= 0 && c[0] < W && c[1] < H) put(Math.floor(c[0]), Math.floor(c[1]), r.floor.owner[k]);
 			}
 		const pm = r.pieceMap || P.pieces(objects, r, settings);
 		const cells = objects.map(() => []), owners = [], clashes = [];
@@ -746,7 +823,7 @@
 	// floating}; status 0 fine, 1 floating (art with no anchored cell below it: flat art to the engine), 2 conflict (a piece's art or
 	// floor sits in a cell the engine reads as another piece's).
 	P.pieces = (objects, r, settings) => {
-		const T = 32, JOIN = 2, W = r.w, H = r.h, rows = r.floor.shown, cut = settings.alphaCut;
+		const T = 32, JOIN = 2, W = r.w, H = r.h, rows = r.floor.shown, cut = settings.alphaCut, proj = r.proj || TS.Proj.of(settings, r.art);
 		const items = [];
 		objects.forEach((o, oi) => {
 			if (!o.faces.length) return;
@@ -772,13 +849,15 @@
 			// anchor cells and its art / floor is never judged: it can't be misread, only drawn.
 			const flat = !!r.roles && its.every((it) => r.roles[it.oi] && r.roles[it.oi].kind === "floor");
 			let top = Infinity; // highest drawn row of the piece's art (its tops), for the column-clash check
-			for (const it of its) for (const q of it.hull) top = Math.min(top, q[1] - it.z1);
+			for (const it of its) for (const q of it.hull) top = Math.min(top, proj.toCanvas([q[0], q[1], it.z1])[1]);
 			for (const it of its) {
 				pieceOf[it.oi] = id;
 				if (flat) continue;
-				const xs = it.hull.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
+				// The footprint's outline at the model's underside, as drawn: its lowest row per tile column anchors the piece.
+				const base = it.hull.map((q) => proj.toCanvas([q[0], q[1], it.z0]));
+				const xs = base.map((q) => q[0]), x0 = Math.min(...xs), x1 = Math.max(...xs);
 				for (let cx = Math.floor(x0 / T); cx * T < x1; cx++) {
-					const y = maxYIn(it.hull, Math.max(x0, cx * T), Math.min(x1, cx * T + T)) - it.z0;
+					const y = maxYIn(base, Math.max(x0, cx * T), Math.min(x1, cx * T + T));
 					if (!isFinite(y)) continue;
 					cols.set(cx, Math.max(cols.has(cx) ? cols.get(cx) : -Infinity, Math.floor((y - 0.01) / T)));
 				}
@@ -788,14 +867,20 @@
 		const artPiece = new Int16Array(W * H).fill(-1), floorPiece = new Int16Array(W * rows).fill(-1);
 		for (let i = 0; i < W * H; i++) if (r.alpha[i] > cut && r.owner[i] >= 0) artPiece[i] = pieceOf[r.owner[i]];
 		for (let k = 0; k < W * rows; k++) if (r.floor.top[k] >= 0 && r.floor.owner[k] >= 0) floorPiece[k] = pieceOf[r.floor.owner[k]];
-		const gw = Math.ceil(W / T), gh = Math.ceil(rows / T), grid = new Array(gw * gh);
+		const gw = Math.ceil(W / T), gh = Math.ceil((proj.kind === "oblique" ? rows : H) / T), grid = new Array(gw * gh);
 		const put = (x, y, p) => { if (pieces[p].flat) return; const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(p); };
 		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (artPiece[y * W + x] >= 0) put(x, y, artPiece[y * W + x]);
 		// Floor points count only for a model standing on the floor (its underside no higher than the step). A raised one (a
 		// tabletop, a rail) is drawn Y - height above its footprint, so its footprint lies a row below its art and anchor and would
 		// read as another piece's cell; its collision is judged separately, not here.
 		const grounded = (oi) => !r.roles || !r.roles[oi] || r.roles[oi].heightMin <= P.bodyRule(settings).step;
-		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) if (floorPiece[y * W + x] >= 0 && grounded(r.floor.owner[y * W + x])) put(x, y, floorPiece[y * W + x]);
+		// Floor points sit in the cell they are drawn in (oblique: their own coordinates; isometric: through the projection).
+		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) {
+			if (!(floorPiece[y * W + x] >= 0 && grounded(r.floor.owner[y * W + x]))) continue;
+			if (proj.kind === "oblique") { put(x, y, floorPiece[y * W + x]); continue; }
+			const c = proj.toCanvas([x + 0.5, y + 0.5, 0]);
+			if (c[0] >= 0 && c[1] >= 0 && c[0] < W && c[1] < gh * T) put(Math.floor(c[0]), Math.floor(c[1]), floorPiece[y * W + x]);
+		}
 		// Per column: the anchors, sorted by row.
 		const anchors = [];
 		for (let cx = 0; cx < gw; cx++) {

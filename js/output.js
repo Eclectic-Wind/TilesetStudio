@@ -12,7 +12,6 @@
 "use strict";
 (function () {
 	const v3 = TS.v3;
-	const VIEWER = v3.norm([0, 1, 1]);
 	const ZOOMS = [0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
 
 	class Output {
@@ -37,13 +36,16 @@
 			this.onzoom = null;
 		}
 
+		// The projection the result was processed in (oblique unless the project is isometric).
+		proj() { return (this.result && this.result.proj) || TS.Proj.of(this.settings, this.result && this.result.art); }
+
 		set(result, settings) {
 			this.result = result;
 			if(this.gpu)this.gpu.source=null;
 			this.settings = settings;
 			this._prisms = null;
 			this.litNormal = result ? TS.Process.litNormals(result, settings) : null;
-			if (result && !this.light.on) { this.light.x = result.w * 0.25; this.light.y = result.h * 0.9; this.light.on = true; }
+			if (result && !this.light.on) { const q = this.proj().toWorld(result.w * 0.25, result.h * 0.9, 0); this.light.x = q[0]; this.light.y = q[1]; this.light.on = true; }
 			this.render();
 		}
 
@@ -59,7 +61,17 @@
 			const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h) % 6];
 			return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 		}
-		rows() { return this.floorPlan() ? this.result.floor.shown : this.result.h; }
+		// Pieces and Kind are views of the canvas (the tile cells): in isometric they stop at the art, floor points showing where they draw.
+		canvasView() { return this.mode === "pieces" || this.mode === "kind"; }
+		rows() { return this.floorPlan() && !(this.canvasView() && this.proj().kind !== "oblique") ? this.result.floor.shown : this.result.h; }
+		// The floor-plan index under canvas pixel (x, y): oblique: the same pixel (floor points share the canvas's coordinates);
+		// isometric: the floor point that draws there. -1 off the plan.
+		floorIndex(x, y) {
+			const r = this.result, p = this.proj();
+			if (p.kind === "oblique") return x >= 0 && y >= 0 && x < r.w && y < r.floor.rows ? y * r.w + x : -1;
+			const q = p.toWorld(x + 0.5, y + 0.5, 0), fx = Math.floor(q[0]), fy = Math.floor(q[1]);
+			return fx >= 0 && fy >= 0 && fx < r.w && fy < r.floor.rows ? fy * r.w + fx : -1;
+		}
 
 		// The collision under the player's feet box at this.feet (floor px; the box is FEET wide, FEET.h tall above the feet):
 		// {mask, owner} of the first colliding pixel, or null when the feet can stand there.
@@ -177,12 +189,13 @@
 			ctx.imageSmoothingEnabled = false;
 			ctx.drawImage(this.off, this.ox, this.oy, r.w * s, rows * s);
 			if (this.mode === "lit") {
-				// The light: its floor point and where it hangs.
-				const fx = this.ox + this.light.x * s, fy = this.oy + this.light.y * s, hy = fy - this.light.z * s;
+				// The light: its floor point and where it hangs, as the projection draws them.
+				const pj = this.proj(), lf = pj.toCanvas([this.light.x, this.light.y, 0]), lh = pj.toCanvas([this.light.x, this.light.y, this.light.z]);
+				const fx = this.ox + lf[0] * s, fy = this.oy + lf[1] * s, hy = this.oy + lh[1] * s;
 				ctx.strokeStyle = "rgba(255,220,120,0.8)";
 				ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, hy); ctx.stroke();
 				ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.stroke();
-				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(fx, hy, 5, 0, Math.PI * 2); ctx.fill();
+				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(this.ox + lh[0] * s, hy, 5, 0, Math.PI * 2); ctx.fill();
 			}
 			if (this.mode === "pieces" && r.pieceMap) this._pieceOverlay(ctx, r.pieceMap, s);
 			if (this.showPrisms && (this.mode === "lit" || this.floorPlan())) this._prismOverlay(ctx, s);
@@ -239,10 +252,10 @@
 		_pieces(img) {
 			const r = this.result, pm = r.pieceMap, d = img.data, cut = this.settings.alphaCut, art = r.art.data;
 			const cols = pm.pieces.map((p) => Output.pieceColour(p.id));
-			for (let y = 0; y < r.floor.shown; y++)
+			for (let y = 0; y < img.height; y++)
 				for (let x = 0; x < r.w; x++) {
-					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut;
-					const ap = inArt ? pm.artPiece[k] : -1, fp = pm.floorPiece[k];
+					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut, fk = this.floorIndex(x, y);
+					const ap = inArt ? pm.artPiece[k] : -1, fp = fk >= 0 ? pm.floorPiece[fk] : -1;
 					let col = [y < r.h ? 26 : 16, y < r.h ? 26 : 16, y < r.h ? 30 : 20];
 					if (inArt) {
 						const g = (art[o] * 0.3 + art[o + 1] * 0.59 + art[o + 2] * 0.11) * 0.55 + 40;
@@ -258,15 +271,15 @@
 		_kinds(img) {
 			const r = this.result, d = img.data, cut = this.settings.alphaCut, art = r.art.data, roles = r.roles;
 			const col = (oi) => Output.KIND_COLOURS[roles[oi].kind];
-			for (let y = 0; y < r.floor.shown; y++)
+			for (let y = 0; y < img.height; y++)
 				for (let x = 0; x < r.w; x++) {
-					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut, ao = inArt ? r.owner[k] : -1, fo = r.floor.owner[k];
+					const k = y * r.w + x, o = k * 4, inArt = y < r.h && r.alpha[k] > cut, ao = inArt ? r.owner[k] : -1, fk = this.floorIndex(x, y), fo = fk >= 0 ? r.floor.owner[fk] : -1;
 					let c = [y < r.h ? 26 : 16, y < r.h ? 26 : 16, y < r.h ? 30 : 20];
 					if (inArt) {
 						const g = (art[o] * 0.3 + art[o + 1] * 0.59 + art[o + 2] * 0.11) * 0.55 + 40;
 						if (ao >= 0) { const t = col(ao); c = [t[0] * g / 255 * 1.1, t[1] * g / 255 * 1.1, t[2] * g / 255 * 1.1]; }
 						else c = [g * 0.5 + 60, g * 0.5 + 60, g * 0.5 + 60];
-					} else if (fo >= 0 && r.floor.top[k] >= 0) { const t = col(fo); c = [t[0] * 0.3, t[1] * 0.3, t[2] * 0.3]; }
+					} else if (fo >= 0 && r.floor.top[fk] >= 0) { const t = col(fo); c = [t[0] * 0.3, t[1] * 0.3, t[2] * 0.3]; }
 					d.set([c[0], c[1], c[2], 255], o);
 				}
 		}
@@ -306,12 +319,12 @@
 		// The prisms (cached per result); the light's-eye table is rebuilt for the light's floor point on every render.
 		prisms() { return this.result ? this._prisms || (this._prisms = TS.Prism.build(this.result)) : []; }
 
-		// V: each prism as a coloured box (piece colour). Lit view: the footprint at its bottom and top (drawn at Y - Z) joined by
+		// V: each prism as a coloured box (piece colour). Lit view: the footprint at its bottom and top (as the projection draws them) joined by
 		// its edges. Plan views: the footprint with its height range. The Floor view shows the real shape inside the boxes.
 		_prismOverlay(ctx, s) {
 			ctx.save();
 			ctx.lineWidth = 1.5;
-			const lit = this.mode === "lit", pt = (q, z) => [this.ox + q[0] * s, this.oy + (q[1] - (lit ? z : 0)) * s];
+			const lit = this.mode === "lit", pj = this.proj(), pt = (q, z) => { if (!lit) return [this.ox + q[0] * s, this.oy + q[1] * s]; const c = pj.toCanvas([q[0], q[1], z]); return [this.ox + c[0] * s, this.oy + c[1] * s]; };
 			const path = (h, z) => { h.forEach((q, k) => { const [x, y] = pt(q, z); ctx[k ? "lineTo" : "moveTo"](x, y); }); ctx.closePath(); };
 			for (const pr of this.prisms()) {
 				const c = Output.pieceColour(pr.id), rgb = `${c[0] | 0},${c[1] | 0},${c[2] | 0}`;
@@ -330,7 +343,7 @@
 		}
 
 		_pixels(img) {
-			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut;
+			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut, flat = this.proj().toMapNormal([0, 0, 1]);
 			this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
 			for (let py = 0; py < img.height; py++)
 				for (let px = 0; px < img.width; px++) {
@@ -352,7 +365,7 @@
 							break;
 						}
 						case "normals": {
-							const n = has ? TS.Process.mapNormal(r, i, this.settings) : [0, 1, 0];
+							const n = has ? TS.Process.mapNormal(r, i, this.settings) : flat;
 							d.set([(n[0] * 0.5 + 0.5) * 255, (n[1] * 0.5 + 0.5) * 255, (n[2] * 0.5 + 0.5) * 255, 255], o);
 							break;
 						}
@@ -369,7 +382,7 @@
 
 		// Floor-light term for empty canvas, so the light's reach shows.
 		_floor(x, y, h) {
-			const l = this.light, dx = l.x - x, dy = l.y - (y + h), dz = l.z - h, dist = Math.hypot(dx, dy, dz);
+			const l = this.light, q = this.proj().toWorld(x, y, h), dx = l.x - q[0], dy = l.y - q[1], dz = l.z - h, dist = Math.hypot(dx, dy, dz);
 			const att = Math.max(0, 1 - dist / l.radius);
 			return 0.4 + 2 * att * att * (dz / dist);
 		}
@@ -378,7 +391,7 @@
 			const has = !isNaN(r.height[i]);
 			const h = has ? r.height[i] : 0;
 			const N = this.litNormal, n = has ? [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]] : [0, 0, 1];
-			const p = [x + 0.5, y + 0.5 + h, h];
+			const proj = this.proj(), p = proj.toWorld(x + 0.5, y + 0.5, h);
 			const toL = v3.sub([this.light.x, this.light.y, this.light.z], p), dist = v3.len(toL), l = v3.scale(toL, 1 / dist);
 			const att = Math.max(0, 1 - dist / this.light.radius) ** 2;
 			const ndl = Math.max(0, v3.dot(n, l));
@@ -386,7 +399,7 @@
 			if (shade > 0 && this.shadows && this._shadowed(r, p, toL)) shade = 0;
 			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0;
 			const a = albedo.map((c) => c / 255);
-			const half = v3.norm(v3.add(l, VIEWER));
+			const half = v3.norm(v3.add(l, proj.viewer));
 			const shin = Math.max(2, 2 / Math.max(0.02, rough ** 4) - 2);
 			const spec = Math.pow(Math.max(0, v3.dot(n, half)), shin) * ((shin + 8) / (8 * Math.PI)) * 0.25;
 			const out = [0, 1, 2].map((k) => {

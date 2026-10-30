@@ -41,6 +41,16 @@ Model what the art shows: a front stands on the line where it meets the floor; a
 px above the floor it covers. The models show the art projected onto them ("art on models"), so a model that lines up with the
 drawing looks like the drawing.
 
+**Projection:** File > Projection picks how the tileset is drawn. **Top-down (oblique)** is the default and
+everything above describes it. **Isometric** draws `(X, Y, Z)` at canvas `(ox + X − Y, oy + sin(tilt)·(X + Y) − Z)`: a 32 px tile is a
+64 × 64·sin(tilt) diamond, X runs down-right and Y down-left, and height still draws 1 px up per px, so the height map still reads "px
+above the floor". The origin `(ox, oy)` is the top centre of the art (saved in the project as `isoOrigin`). The grid becomes the
+diamond lattice, the normal map is in screen space (R right, G up, B toward the viewer) and the lighting engine's view direction is
+(1, 1, 2·sin(tilt)). The **Tilt** setting next to Projection is the camera's elevation: any value from 10° to 80° (typed in; values outside are clamped), 26° the default, 30° the 2:1 pixel-art look, 35.26° true isometric, saved as `isoTilt`; projects without it are 30°. Switching the projection or
+the tilt on a project that has models keeps their 3D positions, so they stop lining up with the art until you move them;
+Ctrl+Z switches back. A chip at the top left of the view says which projection is active. In isometric the floor plan is as wide as
+the art, so keep models in the world X range 0 to the art width.
+
 **Look round:** hold Alt (or the middle button) and drag, or drag with the eye tool. The view swings into perspective (east
 stays on the right; dragging right turns the model the way you drag, like Blender's turntable) so you can check depth and
 stacking, then eases back to the tileset view when you let go.
@@ -186,6 +196,7 @@ sits on grid points, and a new primitive fills the tile south-east of it (the re
 | Alt+E | **extrude manifold** (faces): walls that lie flush with the face beside them fold into it. Push a box's top down and it's just a shorter box (a plain extrude leaves walls doubled inside); pull a face out flush with its neighbours and they grow to meet it. Where nothing is flush it's a plain extrude |
 | F (edit mode) | **fill**: two vertices → a line; three or more vertices, or a closed edge loop (a hole's rim, a drawn outline) → a face, wound to match the faces round it (or facing you) |
 | Ctrl+E | **bridge**: two faces → both removed and their rims joined by a band (a tunnel through a model, or a neck between two pieces after Ctrl+J); two edge loops or open strips → a band between them. Both need the same number of vertices |
+| Shade smooth button (edit mode, faces) | the selected faces get smooth normals (they blend across the edges between them) and every other face of the model is sharp, for the normal maps. Once a model is hand-shaded its **Smooth shading up to** angle no longer applies to it. Ctrl+Z undoes it |
 | Ctrl+right-click (edit mode) | new point under the pointer (on a surface, or the floor / the selected point's height), snapped, joined by a line to the selected point: click round an outline, A, F, then E up |
 | Ctrl+J | join the selected models into the active one |
 | K (edit mode; palette ✂) | **knife**: click points along a cut (white dot = on a vertex, green = on an edge, where it lands on grid lines along the edge in steps up to half its length; else on the face, or off the model so a cut can start outside it), then Enter / Space / right-click (pen: ✓ on the bar) cuts; Backspace drops the last point, clicking the first point closes the loop and cuts, Esc stops. It cuts what's in sight; with X-ray it cuts right through (back and side faces too). A face is only cut where the stroke crosses it from edge to edge; faces beside a cut take its new points (no T-junctions). The new edges come out selected. Works in the 3D view too |
@@ -328,10 +339,11 @@ The Studio opens images of any size (it does not check for power-of-two). The gr
 Plain ES2020 in classic scripts (so it runs from `file://`), WebGL2, no libraries:
 
 - `js/math.js`: vectors, matrices, snapping
+- `js/proj.js`: the projection (`TS.Proj`): oblique or isometric (tilt 10° to 80°); every canvas <-> world conversion goes through it
 - `js/shape.js`: pencil outlines, simplification, validation, concave triangulation and custom solids
 - `js/mesh.js`: n-gon meshes (plus loose lines), primitives, extrude (plain / manifold, faces / edges / points) / inset / bevel /
   loop cut / knife / fill / bridge / join / transforms
-- `js/render.js`: the oblique and free-look views, art projection, picking
+- `js/render.js`: the tileset-projection and free-look views, art projection, picking
 - `js/process.js`: rasterises models into surface data, maps, holes, floor heightfield, footprints
 - `js/output.js`: the output view
 - `js/app.js`: state, undo, tools, input, panels, files (`window.TS.api` for scripting and tests)

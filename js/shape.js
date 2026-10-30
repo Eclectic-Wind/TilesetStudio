@@ -110,12 +110,26 @@
 		if (ring.length === 3) triangles.push(ring.slice());
 		return triangles;
 	};
-	// Intersect a tileset projection ray (x, y+t, t) with a captured surface plane.
+	// The tileset's projection the outlines are drawn in (the app sets it when the project's projection changes).
+	Shape.proj = TS.Proj.OBLIQUE;
+	// Intersect a tileset projection ray (canvas point (x, y): oblique (x, y+t, t)) with a captured surface plane.
 	Shape.surfacePoint = ([x, y], surface) => {
-		const n = surface.normal, denom = n[1] + n[2];
+		const n = surface.normal, proj = Shape.proj, w = proj.toWorld(x, y, 0), denom = TS.v3.dot(n, proj.dir);
 		if (Math.abs(denom) < 1e-6) throw new Error("This face is edge-on. Start on a face visible in the tileset view.");
-		const t = (TS.v3.dot(n, surface.origin) - n[0] * x - n[1] * y) / denom;
-		return [x, y + t, t];
+		const t = (TS.v3.dot(n, surface.origin) - n[0] * w[0] - n[1] * w[1] - n[2] * w[2]) / denom;
+		return [w[0] + t * proj.dir[0], w[1] + t * proj.dir[1], w[2] + t * proj.dir[2]];
+	};
+	// The world Y of the upright "front" plane for an outline drawn on the canvas: the plane through its lowest point (the one whose
+	// floor point is furthest south) at height base, so nothing of the outline ends up below base. Oblique: the largest y + base.
+	Shape.frontY = (pts, base) => Math.max(...pts.map((q) => Shape.proj.toWorld(q[0], q[1], base)[1]));
+	// The world point a canvas outline point (x, y) stands for on a drawing plane: "top" = the level plane at height z, otherwise the
+	// upright plane Y = frontY (a south-facing wall, drawn where the view line through the point meets it).
+	Shape.planePoint = (plane, [x, y], z, frontY) => {
+		const proj = Shape.proj;
+		if (plane === "top") return proj.toWorld(x, y, z);
+		if (proj.kind === "oblique") return [x, frontY, frontY - y];
+		const w = proj.toWorld(x, y, 0), t = (frontY - w[1]) / proj.dir[1];
+		return [w[0] + t * proj.dir[0], frontY, w[2] + t * proj.dir[2]];
 	};
 	Shape.create = (input, options = {}) => {
 		if (!Array.isArray(input) || !input.every((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])))
@@ -128,19 +142,19 @@
 		const thickness = Number(options.thickness ?? 8), base = Number(options.base ?? 0);
 		if (!Number.isFinite(thickness) || thickness < 0 || thickness > 255 || !Number.isFinite(base) || base < 0)
 			throw new Error("Thickness must be between 0 and 255 px, and the base height must be non-negative.");
-		const top = options.plane === "top", z = base + thickness, frontY = Math.max(...p.map((v) => v[1])) + base;
+		const top = options.plane === "top", z = base + thickness, frontY = Shape.frontY(p, base);
 		let verts, back, surfaceNormal = null;
 		if (options.surface) {
 			const s = options.surface;
 			if (![s.origin, s.normal].every((v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite)) || TS.v3.len(s.normal) < 1e-6)
 				throw new Error("The drawing surface is invalid. Clear the outline and choose the face again.");
 			surfaceNormal = TS.v3.norm(s.normal);
-			if (surfaceNormal[1] + surfaceNormal[2] < 0) surfaceNormal = TS.v3.scale(surfaceNormal, -1);
+			if (TS.v3.dot(surfaceNormal, Shape.proj.dir) < 0) surfaceNormal = TS.v3.scale(surfaceNormal, -1);
 			back = p.map((q) => Shape.surfacePoint(q, { origin: s.origin, normal: surfaceNormal }));
 			// A zero-thickness detail is lifted by 0.01 px to avoid coplanar flicker and win map processing.
 			verts = back.map((q) => TS.v3.add(q, TS.v3.scale(surfaceNormal, thickness || 0.01)));
 		} else {
-			verts = p.map(([x, y]) => top ? [x, y + z, z] : [x, frontY, frontY - y]);
+			verts = p.map((q) => top ? Shape.planePoint("top", q, z) : Shape.planePoint("front", q, 0, frontY));
 			back = verts.map(([x, y, h]) => top ? [x, y, base] : [x, y - thickness, h]);
 		}
 		const n = verts.length, front = verts.map((_, i) => i), faces = [front];

@@ -59,7 +59,9 @@
 				}
 			}
 			if (token !== this.generation) return;
-			this.source = { name, raw, kind, objects, image, rig }; this.selected.clear();
+			// A project's own canvas is drawn in the projection it was made in; a mesh file has none (oblique).
+			const proj = kind === "studio" ? TS.Proj.of(JSON.parse(raw).settings, image && { w: image.width }) : TS.Proj.OBLIQUE;
+			this.source = { name, raw, kind, objects, image, rig, proj }; this.selected.clear();
 			if (kind === "obj" || kind === "gltf") objects.forEach((o, i) => this.selected.add(i));
 			this.end(); this.api.setTool("select");
 			$("source_filter").value = ""; $("source_name").textContent = name;
@@ -89,7 +91,7 @@
 		fit(selection = false) {
 			if (!this.source) { this.drawSource(); return; }
 			const objects = selection ? this.objects() : this.source.objects; if (!objects.length) return;
-			const b = T.bounds(objects), img = this.source.image;
+			const b = T.bounds(objects, this.source.proj), img = this.source.image;
 			if (!selection && img) { b.x0 = Math.min(0, b.x0); b.y0 = Math.min(0, b.y0); b.x1 = Math.max(img.width, b.x1); b.y1 = Math.max(img.height, b.y1); }
 			const r = $("source_view").getBoundingClientRect();
 			this.cam = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, zoom: Math.max(.01, Math.min((r.width - 30) / Math.max(1, b.x1 - b.x0), (r.height - 30) / Math.max(1, b.y1 - b.y0))) };
@@ -103,15 +105,15 @@
 			g.translate(r.width / 2 - this.cam.x * z, r.height / 2 - this.cam.y * z); g.scale(z, z); g.imageSmoothingEnabled = false;
 			if (!this.source) return;
 			if (this.source.image) g.drawImage(this.source.image, 0, 0);
-			this.source.objects.forEach((o, i) => this.drawMesh(g, o, this.selected.has(i) ? "#ffbd68" : "#6ddccc88", z, this.selected.has(i)));
+			this.source.objects.forEach((o, i) => this.drawMesh(g, o, this.selected.has(i) ? "#ffbd68" : "#6ddccc88", z, this.selected.has(i), this.source.proj));
 			if (this.drag && !this.drag.pan) { const a = this.drag.start, b = this.drag.end; g.strokeStyle = "#fff"; g.lineWidth = 1 / z; g.setLineDash([4 / z, 3 / z]); g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
 		}
-		drawMesh(g, o, color, z, fill) {
+		drawMesh(g, o, color, z, fill, proj) {
 			g.strokeStyle = color; g.fillStyle = "#ffb45d15"; g.lineWidth = 1 / z;
-			const path = indices => { g.beginPath(); indices.forEach((i, n) => { const p = o.verts[i]; n ? g.lineTo(p[0], p[1] - p[2]) : g.moveTo(p[0], p[1] - p[2]); }); };
+			const path = indices => { g.beginPath(); indices.forEach((i, n) => { const p = proj.toCanvas(o.verts[i]); n ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); };
 			for (const f of o.faces) { path(f.v); g.closePath(); if (fill) g.fill(); g.stroke(); }
 			for (const l of o.lines || []) { path(l); g.stroke(); }
-			if (!o.faces.length && !(o.lines || []).length) for (const p of o.verts) { g.fillStyle = color; g.fillRect(p[0] - 2 / z, p[1] - p[2] - 2 / z, 4 / z, 4 / z); }
+			if (!o.faces.length && !(o.lines || []).length) for (const v of o.verts) { const p = proj.toCanvas(v); g.fillStyle = color; g.fillRect(p[0] - 2 / z, p[1] - 2 / z, 4 / z, 4 / z); }
 		}
 		bindSource() {
 			const c = $("source_view"); c.oncontextmenu = e => e.preventDefault();
@@ -127,15 +129,16 @@
 				if (!d.add) this.selected.clear();
 				if (d.distance > 5) {
 					const x0 = Math.min(d.start[0], d.end[0]), x1 = Math.max(d.start[0], d.end[0]), y0 = Math.min(d.start[1], d.end[1]), y1 = Math.max(d.start[1], d.end[1]);
-					this.source.objects.forEach((o, i) => { const b = T.bounds([o]); if (b.x0 >= x0 && b.x1 <= x1 && b.y0 >= y0 && b.y1 <= y1) this.selected.add(i); });
+					this.source.objects.forEach((o, i) => { const b = T.bounds([o], this.source.proj); if (b.x0 >= x0 && b.x1 <= x1 && b.y0 >= y0 && b.y1 <= y1) this.selected.add(i); });
 				} else {
 					const p = this.point(e); let best = -1, depth = -Infinity;
 					this.source.objects.forEach((o, i) => {
+						const sp = this.source.proj, far = sp.toWorld(p[0], p[1], 0).map((v, k) => v + sp.dir[k] * 1e7), back = sp.dir.map(v => -v);
 						for (const tri of TS.Mesh.triangles(o)) {
-							const hit = TS.Renderer.rayTri([p[0], p[1] + 1e7, 1e7], [0, -1, -1], o.verts[tri.a], o.verts[tri.b], o.verts[tri.c]);
+							const hit = TS.Renderer.rayTri(far, back, o.verts[tri.a], o.verts[tri.b], o.verts[tri.c]);
 							if (hit !== null && -hit > depth) { depth = -hit; best = i; }
 						}
-						if (!o.faces.length && o.verts.some(v => Math.hypot(v[0] - p[0], v[1] - v[2] - p[1]) * this.cam.zoom < 6)) best = i;
+						if (!o.faces.length && o.verts.some(v => { const c = sp.toCanvas(v); return Math.hypot(c[0] - p[0], c[1] - p[1]) * this.cam.zoom < 6; })) best = i;
 					});
 					if (best >= 0) { d.add && this.selected.has(best) ? this.selected.delete(best) : this.selected.add(best); }
 				}
@@ -146,13 +149,13 @@
 		}
 		addAtCursor() {
 			if (!this.hasSelection()) return;
-			const objects = this.objects(), b = T.bounds(objects), p = this.api.state.cursor;
-			const x = p[0] - (b.x1 - b.x0) / 2, y = p[1] - p[2] - (b.y1 - b.y0), moved = T.place(objects, x, y, 1, p[2]);
-			this.api.commit(moved, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), T.placeMap(objects, x, y, 1, p[2]))); this.closeSource(); this.api.frame();
+			const proj = this.api.renderer().proj, objects = this.objects(), b = T.bounds(objects, proj), p = this.api.state.cursor, cc = proj.toCanvas(p);
+			const x = cc[0] - (b.x1 - b.x0) / 2, y = cc[1] - (b.y1 - b.y0), moved = T.place(objects, x, y, 1, p[2], proj);
+			this.api.commit(moved, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), T.placeMap(objects, x, y, 1, p[2], proj))); this.closeSource(); this.api.frame();
 		}
 		addInPlace() { if (!this.hasSelection()) return; const objects = this.objects(); this.api.commit(objects, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id))); this.closeSource(); this.api.frame(); }
 		begin() {
-			const objects = this.objects(), b = T.bounds(objects), cam = this.api.renderer().cam;
+			const objects = this.objects(), b = T.bounds(objects, this.api.renderer().proj), cam = this.api.renderer().cam;
 			this.draft = { objects, x: cam.x - (b.x1 - b.x0) / 2, y: cam.y - (b.y1 - b.y0) / 2, scale: 1, base: b.z0, pinned: false, pointer: null, valid: true };
 			$("stamp_name").textContent = `${objects.length} part(s) from ${this.source.name}`;
 			this.syncControls(); this.hint();
@@ -171,11 +174,11 @@
 		}
 		move(point, down = false) {
 			const d = this.draft; if (!d || (d.pinned && !down && d.pointer === null)) return;
-			const b = T.bounds(d.objects), step = $("stamp_snap").checked ? this.api.state.snap : 1;
+			const b = T.bounds(d.objects, this.api.renderer().proj), step = $("stamp_snap").checked ? this.api.state.snap : 1;
 			d.x = TS.snap(point[0] - (b.x1 - b.x0) * d.scale / 2, step); d.y = TS.snap(point[1] - (b.y1 - b.y0) * d.scale / 2, step);
 			if (down) d.pinned = true; this.syncControls(); this.api.changed(); if (down) this.hint();
 		}
-		preview() { const d = this.draft; if (!d) return []; return T.place(d.objects, d.x, d.y, d.scale, d.base); }
+		preview() { const d = this.draft; if (!d) return []; return T.place(d.objects, d.x, d.y, d.scale, d.base, this.api.renderer().proj); }
 		place() {
 			if (!this.draft) return;
 			try {
@@ -194,8 +197,8 @@
 			$("stamp_place").disabled = false;
 			const g = c.getContext("2d"), cam = this.api.renderer().cam, z = cam.zoom;
 			g.scale(dpr, dpr); g.translate(r.width / 2 - cam.x * z, r.height / 2 - cam.y * z); g.scale(z, z);
-			for (const o of objects) this.drawMesh(g, o, "#ffc578", z, true);
-			const b = T.bounds(objects); g.strokeStyle = "#6ddccc"; g.lineWidth = 1 / z; g.setLineDash([5 / z, 4 / z]); g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+			for (const o of objects) this.drawMesh(g, o, "#ffc578", z, true, this.api.renderer().proj);
+			const b = T.bounds(objects, this.api.renderer().proj); g.strokeStyle = "#6ddccc"; g.lineWidth = 1 / z; g.setLineDash([5 / z, 4 / z]); g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
 		}
 	}
 	TS.TransferUI = TransferUI;
