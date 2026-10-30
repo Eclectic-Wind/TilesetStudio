@@ -39,7 +39,7 @@ Your tileset is drawn in a fixed projection (Top-down or Isometric at a tilt you
 - **Model** with Blender-style tools: boxes, cylinders, wedges, spheres, extrude, inset, bevel, loop cut, knife, bridge, snapping to the tile grid. **Free Draw** adds an outline, cuts through a closed solid, or carves a recess. Corner Radius rounds only the active outline.
 - **Look round** in 3D (hold Alt and drag, or press **5** to stay there) to check depth and stacking. Free Draw and the main modeling tools also work in the held 3D camera.
 - **Check the result** in the output view: lit preview with shadows, height / normal / roughness / metal maps, holes the models miss, floor plan, collision and tile-piece problems.
-- **Import 3D** from glTF (`.glb`, with bones and animation), OBJ or other projects, and reuse parts as **stamps**.
+- **Import 3D** from glTF (`.glb`, or `.gltf` with its data files; bones and animation), FBX (mesh geometry), OBJ or other projects, and reuse parts as **stamps**.
 - **Animate** with bones (rigid or bending), a timeline and clips, and render every frame's normal map into a spritesheet. It can link live to Aseprite ([guide](docs/animation-aseprite.md)).
 - **Stay safe**: changes autosave in the browser, with undo/redo, and the next start offers to restore unsaved work.
 
@@ -48,7 +48,7 @@ Your tileset is drawn in a fixed projection (Top-down or Isometric at a tilt you
 | Export | What you get |
 |---|---|
 | **Godot bundle** | One `<name>.export.json` holding the art, height / normal / PBR maps and footprints. Plain JSON any engine can read ([how to use it](#use-the-export-in-your-own-project), [schema](docs/export-schema.md)) |
-| **3D models** | glTF `.glb` (bones and clips included) or Wavefront OBJ |
+| **3D models** | glTF `.glb` (bones and clips included) or Wavefront OBJ; import also reads `.gltf` and FBX |
 | **Project** | `<name>.studio.json`, with the tileset embedded (Ctrl+S) |
 
 ## Use the export in your own project

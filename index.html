@@ -159,7 +159,8 @@
 						<button id="e_project" class="big">Open project</button>
 					</div>
 					<div class="cta-row"><button id="e_sample" class="link" title="Open the built-in BasicSample project">Try the sample</button><span class="dim">·</span><button id="e_learn" class="link" title="Short visual lessons (L)">Take the quick lesson</button></div>
-					<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Process</li><li><b>4</b>Export</li></ol>
+					<div class="cta-row"><button id="e_blank" class="link" title="Start a blank 512 × 512 px tileset with no art; model on the grid and open art later">New empty tileset</button></div>
+						<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Process</li><li><b>4</b>Export</li></ol>
 				</div>
 			</div>
 		<div id="coords" class="coords"></div>
@@ -272,11 +273,11 @@
 <input type="file" id="f_tileset" accept="image/png" hidden>
 <input type="file" id="f_ref" accept=".json,application/json" multiple hidden>
 <input type="file" id="f_project" accept=".json,application/json" hidden>
-<input type="file" id="f_source" accept=".obj,.json,.glb,.gltf" hidden>
+<input type="file" id="f_source" accept=".obj,.json,.glb,.gltf,.fbx,.bin" multiple hidden>
 <div id="source_dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="source_title">
 	<div class="card sourcecard">
 		<div class="sourcebar"><h2 id="source_title">Import 3D &amp; model stamps</h2><span class="grow"></span><button id="source_close">Close</button></div>
-		<div class="sourcebar"><button id="source_load" class="primary">Load source (.obj / .studio.json)</button><span id="source_name" class="dim">No source loaded</span></div>
+		<div class="sourcebar"><button id="source_load" class="primary">Load source (.glb / .gltf / .fbx / .obj / .studio.json)</button><span id="source_name" class="dim">No source loaded</span></div>
 		<div id="source_obj_options" class="sourcebar" hidden><label>Pixels per unit <input id="source_units" type="number" min="0.0001" max="100000" step="1" value="1"></label><label id="source_up_wrap">File up axis <select id="source_up"><option value="z">Z up</option><option value="y">Y up</option></select></label></div>
 		<p id="source_message" aria-live="polite">Load an existing model file. Your open image and models stay in place.</p>
 		<div class="sourcebody"><div class="sourcecanvas"><canvas id="source_view"></canvas><p class="dim">Drag a box around complete parts. Shift adds / toggles. Wheel zooms; right-drag pans.</p></div><div class="sourcelist"><input id="source_filter" type="search" placeholder="Filter source models"><div id="source_list"></div></div></div>
@@ -372,6 +373,11 @@
 <script src="js/prism.js"></script>
 <script src="js/lit-gpu.js"></script>
 <script src="js/output.js"></script>
+<script src="js/vendor/three.min.js"></script>
+<script src="js/vendor/NURBSCurve.js"></script>
+<script src="js/vendor/fflate.js"></script>
+<script src="js/vendor/FBXLoader.js"></script>
+<script src="js/fbx.js"></script>
 <script src="js/gltf.js"></script>
 <script src="js/transfer.js"></script>
 <script src="js/transfer-ui.js"></script>

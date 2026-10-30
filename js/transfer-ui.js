@@ -8,7 +8,16 @@
 			$("b_import3d").onclick = () => this.showSource();
 			$("stamp_choose").onclick = () => this.showSource();
 			$("source_load").onclick = () => $("f_source").click();
-			$("f_source").onchange = async e => { const file = e.target.files[0]; e.target.value = ""; if (file) { try { if (file.size > 40 * 1024 * 1024) throw new Error("Use a source file smaller than 40 MB."); await this.loadSource(TS.Gltf.looksLikeGltf(file.name) ? await file.arrayBuffer() : await api.readFile(file, true), file.name); } catch (err) { this.message(err.message, true); } } };
+			$("f_source").onchange = async e => { // several files at once: the main file plus the .bin / textures a .gltf points at
+				const picked = [...e.target.files]; e.target.value = ""; if (!picked.length) return;
+				try {
+					const main = picked.find(f => TS.Gltf.looksLikeGltf(f.name) || /.(fbx|obj|json)$/i.test(f.name)) || picked[0];
+					if (main.size > 40 * 1024 * 1024) throw new Error("Use a source file smaller than 40 MB.");
+					const binary = TS.Gltf.looksLikeGltf(main.name) || /.fbx$/i.test(main.name), files = {};
+					for (const f of picked) if (f !== main) files[f.name] = await f.arrayBuffer();
+					await this.loadSource(binary ? await main.arrayBuffer() : await api.readFile(main, true), main.name, files);
+				} catch (err) { this.message(err.message, true); }
+			};
 			$("source_close").onclick = () => this.closeSource();
 			$("source_dialog").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") this.closeSource(); });
 			$("source_filter").oninput = () => this.list();
@@ -19,7 +28,7 @@
 			$("source_stamp").onclick = () => { if (!this.hasSelection()) return; this.closeSource(); this.api.setTool("stamp"); };
 			$("source_add").onclick = () => this.addAtCursor();
 			$("source_keep").onclick = () => this.addInPlace();
-			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (this.source?.kind === "obj" || this.source?.kind === "gltf") this.loadSource(this.source.raw, this.source.name).catch(err => this.message(err.message, true)); };
+			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (["obj", "gltf", "fbx"].includes(this.source?.kind)) this.loadSource(this.source.raw, this.source.name, this.source.files).catch(err => this.message(err.message, true)); };
 			for (const id of ["stamp_scale", "stamp_base", "stamp_x", "stamp_y"]) $(id).oninput = () => this.controls();
 			$("stamp_snap").onchange = () => this.api.changed();
 			$("stamp_place").onclick = () => this.place();
@@ -47,9 +56,10 @@
 			window.addEventListener("resize", () => { if ($("source_dialog").classList.contains("open")) this.drawSource(); });
 		}
 		message(text, error = false) { $("source_message").textContent = text; $("source_message").classList.toggle("bad", error); }
-		async loadSource(raw, name) {
+		async loadSource(raw, name, files = {}) {
 			const token = ++this.generation; let objects, image = null, kind, warning = "", rig = null;
-			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value) }); objects = T.validate(res.objects); rig = res.rig; }
+			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value), files }); objects = T.validate(res.objects); rig = res.rig; }
+				else if (/.fbx$/i.test(name)) { kind = "fbx"; objects = T.validate(TS.Fbx.read(raw, { scale: Number($("source_units").value), up: $("source_up").value }).objects); }
 			else if (/\.obj$/i.test(name)) { kind = "obj"; objects = T.readOBJ(raw, { scale: Number($("source_units").value), up: $("source_up").value }); }
 			else {
 				const p = JSON.parse(raw); if (p.format !== "tileset-studio") throw new Error("Choose a glTF .glb, a Tileset Studio .studio.json project or a Wavefront .obj mesh.");
@@ -61,13 +71,13 @@
 			if (token !== this.generation) return;
 			// A project's own canvas is drawn in the projection it was made in; a mesh file has none (oblique).
 			const proj = kind === "studio" ? TS.Proj.of(JSON.parse(raw).settings, image && { w: image.width }) : TS.Proj.OBLIQUE;
-			this.source = { name, raw, kind, objects, image, rig, proj }; this.selected.clear();
-			if (kind === "obj" || kind === "gltf") objects.forEach((o, i) => this.selected.add(i));
+			this.source = { name, raw, kind, objects, image, rig, proj, files }; this.selected.clear();
+			if (kind === "obj" || kind === "gltf" || kind === "fbx") objects.forEach((o, i) => this.selected.add(i));
 			this.end(); this.api.setTool("select");
 			$("source_filter").value = ""; $("source_name").textContent = name;
-			$("source_obj_options").hidden = kind !== "obj" && kind !== "gltf"; $("source_up_wrap").hidden = kind === "gltf";
+			$("source_obj_options").hidden = kind === "studio"; $("source_up_wrap").hidden = kind === "gltf";
 			const rigText = rig ? ` with ${rig.bones.length} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""}` : "";
-			this.message(`${objects.length} model(s)${rigText}. ${kind === "gltf" ? "Check the scale (pixels per unit). Bones and animation come along when you add the models at the cursor or at their original position (not as a stamp). Each model follows one bone; a mesh that bends across several bones is cut into one model per bone." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
+			this.message(`${objects.length} model(s)${rigText}. ${kind === "gltf" ? "Check the scale (pixels per unit). Bones and animation come along when you add the models at the cursor or at their original position (not as a stamp). Each model follows one bone; a mesh that bends across several bones is cut into one model per bone." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : kind === "fbx" ? "FBX imports mesh geometry in its bind pose (no bones or animation yet). Check the scale (pixels per unit; FBX files are often in centimetres) and the up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
 			this.selectionChanged(); this.fit();
 		}
 		showSource() { $("source_dialog").classList.add("open"); this.list(); this.fit(); $("source_load").focus(); }

@@ -188,7 +188,7 @@
 	const COMPS = { 5120: [1, Int8Array, "getInt8"], 5121: [1, Uint8Array, "getUint8"], 5122: [2, Int16Array, "getInt16"], 5123: [2, Uint16Array, "getUint16"], 5125: [4, Uint32Array, "getUint32"], 5126: [4, Float32Array, "getFloat32"] };
 	const NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
 
-	function parseContainer(buf) {
+	function parseContainer(buf, files) {
 		const dv = new DataView(buf), td = new TextDecoder();
 		if (buf.byteLength >= 12 && dv.getUint32(0, true) === 0x46546c67) {
 			let json = null, bin = null;
@@ -202,7 +202,7 @@
 		}
 		const json = JSON.parse(td.decode(buf)), bufs = (json.buffers || []).map((b) => {
 			const m = /^data:[^;,]*;base64,(.*)$/s.exec(b.uri || "");
-			if (!m) throw new Error("This .gltf keeps its data in a separate file. Export it from Blender as “glTF Binary (.glb)”, or tick “Embedded”.");
+			if (!m) { const f = files && files[decodeURIComponent(b.uri || "")]; if (f) return f; throw new Error(`This .gltf keeps its data in “${b.uri}”. Pick that file with the .gltf (or export as “glTF Binary (.glb)”).`); }
 			const bin = atob(m[1]), arr = new Uint8Array(bin.length);
 			for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
 			return arr.buffer;
@@ -234,7 +234,7 @@
 	// (1..) and bone ids ("b1"..) are the file's own and are re-numbered when added to a project.
 	G.read = function (buffer, opts = {}) {
 		const scale = opts.scale > 0 ? opts.scale : 1;
-		const { json: gl, bufs } = parseContainer(buffer);
+		const { json: gl, bufs } = parseContainer(buffer, opts.files);
 		const nodes = gl.nodes || [];
 		const parent = new Array(nodes.length).fill(-1);
 		nodes.forEach((nd, i) => (nd.children || []).forEach((c) => { parent[c] = i; }));

@@ -75,12 +75,13 @@
 	$("e_open").onclick = () => $("f_tileset").click();
 	$("e_project").onclick = () => $("f_project").click();
 	$("e_learn").onclick = () => $("b_learn").click();
+	$("e_blank").onclick = () => TS.api.newBlankTileset();
 	if (location.protocol === "file:") $("e_sample").style.display = $("e_sample").nextElementSibling.style.display = "none"; // fetch() can't read samples from disk
 	else $("e_sample").onclick = () => fetch("samples/BasicSample.studio.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); }).then((t) => TS.api.openProject(t)).catch((err) => status("Could not open the sample: " + err));
 
 	// --- Drop overlay: say what a drop will do ---
 	const veil = document.createElement("div");
-	veil.className = "dropveil"; veil.innerHTML = "<div>Drop a tileset PNG or a project (.json) to open it</div>";
+	veil.className = "dropveil"; veil.innerHTML = "<div>Drop a tileset PNG or a project (.json) to open it, or a 3D model (.glb, .gltf, .fbx, .obj) to import</div>";
 	document.body.append(veil);
 	let depth = 0;
 	const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");

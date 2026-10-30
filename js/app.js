@@ -142,6 +142,13 @@
 		if (await setTileset(await readFile(file), file.name)) { status(`Loaded ${file.name}`); }
 	}
 
+	// A blank tileset with no art, for the start screen: 512 x 512 px (16 x 16 tiles), fully transparent. Models go on it as usual.
+	async function newBlankTileset(w = 512, h = 512) {
+		const c = document.createElement("canvas");
+		c.width = w; c.height = h;
+		if (await setTileset(c.toDataURL("image/png"), "untitled")) status(`New empty tileset, ${w} × ${h} px.`);
+	}
+
 	async function openTilesetURL(url) {
 		const blob = await (await fetch(url)).blob();
 		const dataURL = await readFile(blob);
@@ -2941,6 +2948,13 @@
 		document.addEventListener("dragover", (e) => e.preventDefault());
 		document.addEventListener("drop", async (e) => {
 			e.preventDefault();
+			const dropped = [...e.dataTransfer.files];
+			if (dropped.some(x => /.(glb|gltf|fbx|obj)$/i.test(x.name))) { // a 3D model: the Import 3D dialog reads it (with the .bin beside a .gltf)
+				$("b_import3d").click();
+				const dt = new DataTransfer(); dropped.forEach(x => dt.items.add(x));
+				$("f_source").files = dt.files; $("f_source").dispatchEvent(new Event("change"));
+				return;
+			}
 			const f = e.dataTransfer.files[0];
 			if (!f) return;
 			if (f.name.endsWith(".json")) openProject(await readFile(f, true)); else openTilesetFile(f);
@@ -3004,7 +3018,7 @@
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get viewLock() { return S.viewLock; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },
 		redraw: drawNow, // for scripted captures
-		snapshot, pushUndo, markUnsaved, panels, setTileset, status, get dirty_() { return dirty; }, redrawSoon: () => { dirty = true; },
+		snapshot, pushUndo, markUnsaved, panels, setTileset, newBlankTileset, status, get dirty_() { return dirty; }, redrawSoon: () => { dirty = true; },
 		get undoDepth() { return undoStack.length; }, get knife() { return knife; }, elemCandidates, objCandidates, toggleStay3d, frameSelection, savePrefs, setOutMode, toast, guardUnsaved,
 	};
 

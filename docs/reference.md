@@ -10,7 +10,7 @@ over the drawing, in the tileset's own projection, and the studio renders height
 
 ## The interface
 
-The top bar holds **File** (open tileset / project, save, Import 3D / stamp), **Add**, and on the right **Export** (with **Process** beside it when "auto" is off), then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
+The top bar holds **File** (open tileset / project, save, Import 3D / stamp), **Add**, and on the right **Export** (with **Process** beside it when "auto" is off), then **Learn** and **?**. View settings (snap, art/solid, opacity, X-ray, grid) sit on a bar above the model view. The left panel is four collapsible sections (Models, Properties, References, Processing settings; open/closed is remembered). With no tileset open a start screen offers Open tileset / Open project / New empty tileset (512 × 512 px, no art) / the sample / the quick lesson, and dropping a file anywhere shows what it will open. Hover any button for its name, shortcut and explanation. `js/ui.js` holds the menus, tooltips and start screen.
 No install, no build, no internet: open `index.html` in a desktop browser (Chrome/Edge/Firefox with WebGL2), or serve the
 project with `serve.ps1` (`http://127.0.0.1:8765/tools/tileset_studio/`), which also lets you open files by URL:
 `?tileset=/art/x.png` or `?project=/tools/tileset_studio/samples/ward_bedroom2.studio.json`. The whole tool is this folder;
@@ -84,7 +84,7 @@ the bottom has axis locks (X across / Y depth / Z height), an exact-value field,
 
 ### Import / export 3D (v0.8)
 
-**File ▸ Import 3D / stamp** opens a source browser. Load a glTF `.glb` (with bones and animation), a Wavefront `.obj` mesh or another `.studio.json` project. This adds models to
+**File ▸ Import 3D / stamp** opens a source browser. Load a glTF `.glb` (with bones and animation), a `.gltf` (pick it together with its `.bin` and textures), an FBX, a Wavefront `.obj` mesh or another `.studio.json` project. This adds models to
 your current scene; it does not replace the destination image or existing models. Images can have any rectangular size,
 including sheets such as 416 x 256; their pixels are not resized or padded.
 
@@ -349,7 +349,8 @@ Plain ES2020 in classic scripts (so it runs from `file://`), WebGL2, no librarie
 - `js/app.js`: state, undo, tools, input, panels, files (`window.TS.api` for scripting and tests)
 - `js/ui.js`: menus, tooltips, start screen, drop overlay, remembered panel sections (optional polish)
 - `js/transfer.js`, `js/transfer-ui.js`: OBJ read / write, Import 3D source browser, model stamps
-- `js/gltf.js`: glTF (.glb) read / write for models, bones and clips
+- `js/gltf.js`: glTF (.glb / .gltf) read / write for models, bones and clips
+- `js/fbx.js`: FBX read (mesh geometry), through `js/vendor/` (three.js FBXLoader r147 and fflate, both MIT)
 - `js/learn.js`, `js/sample_basic.js`: the Learn lessons and the built-in BasicSample they draw
 
 `serve.ps1` is a small static server for opening project art by URL.
