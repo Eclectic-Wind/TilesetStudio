@@ -7,7 +7,7 @@
 	const S = (TS.state = {
 		name: "tileset", art: null, artURL: null,
 		objects: [], active: null, selected: new Set(),
-		edit: false, elemMode: "face", elemSel: new Set(),
+		edit: false, elemMode: "face", elemSel: new Set(), gizmo: true,
 		cursor: [0, 0, 0], snap: 1, shade: "art", opacity: 0.55, xray: false, belowZ: false, grid: true,
 		settings: defaultSettings(),
 		autoProcess: true, result: null,
@@ -2396,6 +2396,7 @@
 		};
 		canvas.addEventListener("pointerup", release);
 		// The view gizmo's balls (drawAxes) act on press: the svg is rebuilt on every redraw, so a click event would be lost.
+		bindGizmo();
 		$("axes").addEventListener("pointerdown", (e) => {
 			const g = e.target.closest && e.target.closest("[data-gv]");
 			if (!g) return;
@@ -2612,7 +2613,7 @@
 	function panels() {
 		document.body.classList.toggle("editing", S.edit);
 		document.body.classList.toggle("noart", !S.art);
-		document.querySelectorAll(".editonly [data-act]").forEach((b) => b.classList.toggle("on", b.dataset.act === S.elemMode));
+		document.querySelectorAll(".editonly [data-act]").forEach((b) => b.classList.toggle("on", b.dataset.act === "gizmo" ? S.gizmo : b.dataset.act === S.elemMode));
 		// Outliner: click selects (Shift/Ctrl+click toggles), double-click renames, the eye hides / shows; the filter box narrows it.
 		const list = $("outliner"), filter = $("outfilter").value.trim().toLowerCase(), keepScroll = list.scrollTop;
 		let activeLi = null;
@@ -2816,6 +2817,69 @@
 		svg.innerHTML = html;
 	}
 
+	// Edit-mode gizmos at the middle of the selected elements (where Move / Scale / Turn pivot): an arrow per axis moves, a box on it
+	// scales along it, a ring turns about it, the centre dot moves freely. Each press starts the ordinary modal tool with the axis
+	// locked, so snapping, Esc, undo and the status line all behave as they do from the keys.
+	const GIZ = { arrow: 78, box: 50, ring: 60 };
+	function gizmoPivot() {
+		const o = S.edit && activeObj();
+		if (!o || !S.elemSel.size) return null;
+		const pts = selVerts(o).map((i) => o.verts[i]);
+		if (!pts.length) return null;
+		const b = pointBounds(pts);
+		return [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+	}
+	function drawGizmo() {
+		const svg = $("edit_gizmo");
+		const idle = !S.gizmo || modal || knife || S.armed || S.loopCut || pencil || S.tool === "stamp" || (TS.AnimUI && TS.AnimUI.on) || !(renderer.free.blend === 0 || (S.stay3d && renderer.free.blend >= 1));
+		const P = idle ? null : gizmoPivot(), s0 = P && renderer.toScreen(P);
+		const dirs = s0 ? [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((a) => { const s = renderer.toScreen(v3.add(P, v3.scale(a, 32))); return s ? [s[0] - s0[0], s[1] - s0[1]] : [0, 0]; }) : [];
+		const ppu = Math.max(0, ...dirs.map((d) => Math.hypot(d[0], d[1]))) / 32;
+		if (!s0 || !(ppu > 0) || !isFinite(ppu)) { if (svg.firstChild) svg.replaceChildren(); return; }
+		const view = renderer.ray(s0[0], s0[1]).d, at = (u, r) => [s0[0] + u[0] * r, s0[1] + u[1] * r];
+		let rings = "", arrows = "", boxes = "";
+		for (let k = 0; k < 3; k++) {
+			const col = `var(--ax-${"xyz"[k]})`, name = "XYZ"[k], len = Math.hypot(dirs[k][0], dirs[k][1]);
+			// Turn ring: a circle in the plane across axis k, only while it faces the viewer enough to drag.
+			if (Math.abs(view[k]) > 0.3) {
+				const u = (k + 1) % 3, v = (k + 2) % 3, pts = [], R = GIZ.ring / ppu;
+				for (let i = 0; i < 48; i++) {
+					const t = (i / 48) * Math.PI * 2, p = P.slice();
+					p[u] += Math.cos(t) * R; p[v] += Math.sin(t) * R;
+					const s = renderer.toScreen(p);
+					if (s) pts.push(s.join(","));
+				}
+				if (pts.length === 48) rings += `<polygon points="${pts.join(" ")}" fill="none" stroke="transparent" stroke-width="12" data-g="turn:${k}"><title>Turn about ${name}</title></polygon><polygon points="${pts.join(" ")}" fill="none" style="stroke:${col}" stroke-width="1.6" stroke-opacity="0.75" pointer-events="none"/>`;
+			}
+			// Arrow and box along axis k, unless it points too nearly at the viewer to have a direction on screen.
+			if (len < ppu * 32 * 0.25) continue;
+			const u = [dirs[k][0] / len, dirs[k][1] / len], a = at(u, 10), tip = at(u, GIZ.arrow), bx = at(u, GIZ.box), n = [-u[1], u[0]];
+			arrows += `<line x1="${a[0]}" y1="${a[1]}" x2="${tip[0]}" y2="${tip[1]}" stroke="transparent" stroke-width="12" data-g="move:${k}"><title>Move along ${name}</title></line>` +
+				`<line x1="${a[0]}" y1="${a[1]}" x2="${tip[0]}" y2="${tip[1]}" style="stroke:${col}" stroke-width="2" pointer-events="none"/>` +
+				`<polygon points="${tip.join(",")} ${tip[0] - u[0] * 11 + n[0] * 5},${tip[1] - u[1] * 11 + n[1] * 5} ${tip[0] - u[0] * 11 - n[0] * 5},${tip[1] - u[1] * 11 - n[1] * 5}" style="fill:${col}" pointer-events="none"/>`;
+			boxes += `<rect x="${bx[0] - 5}" y="${bx[1] - 5}" width="10" height="10" style="fill:${col}" stroke="rgba(0,0,0,0.6)" data-g="scale:${k}"><title>Scale along ${name}</title></rect>`;
+		}
+		svg.innerHTML = rings + arrows + boxes + `<circle cx="${s0[0]}" cy="${s0[1]}" r="6" fill="#fff" fill-opacity="0.85" stroke="rgba(0,0,0,0.6)" data-g="move:free"><title>Move freely (across the ground, or the view plane)</title></circle>`;
+	}
+	// A press on a gizmo handle begins the matching tool with the pointer captured by the view, so its moves and release drive it.
+	function bindGizmo() {
+		$("edit_gizmo").addEventListener("pointerdown", (e) => {
+			const g = e.target.closest && e.target.closest("[data-g]");
+			if (!g || e.button !== 0 || modal) return;
+			e.preventDefault(); e.stopPropagation();
+			const [tool, k] = g.dataset.g.split(":"), canvas = $("view");
+			canvas.focus();
+			try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
+			mouse = localPoint(e); lastEvent = e;
+			pointers.set(e.pointerId, mouse.slice());
+			beginModal({ move: "grab", scale: "scale", turn: "rotate" }[tool]);
+			if (!modal) return;
+			if (k !== "free") modal.axis = "xyz"[k];
+			modal.dragRelease = true;
+			updateModal(e);
+		});
+	}
+
 	// Draw the model view now (frame() calls it when something changed; a hidden tab gets no animation frames).
 	let lastGeometry = null, viewMoved = false; // viewMoved: only the camera changed, so the last geometry still holds
 	function drawNow(sameGeometry) {
@@ -2823,7 +2887,7 @@
 		lastGeometry = geometry;
 		dirty = false; viewMoved = false;
 		renderer.draw(geometry, { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
-		drawAxes(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
+		drawAxes(); drawGizmo(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {
 		if (anim) anim();
@@ -2855,6 +2919,7 @@
 			zoomin: () => zoomStep(...viewCentre(), 1), zoomout: () => zoomStep(...viewCentre(), -1),
 			pixel: () => zoomAt(...viewCentre(), Math.max(1, Math.round(renderer.cam.zoom))), frame: frameSelection,
 			stay3d: () => toggleStay3d(),
+			gizmo: () => { S.gizmo = !S.gizmo; document.querySelectorAll('[data-act="gizmo"]').forEach((b) => b.classList.toggle("on", S.gizmo)); dirty = true; status(S.gizmo ? "Gizmos on: drag an arrow to move, a box to scale, a ring to turn the selection." : "Gizmos off."); },
 			"view-front": (e) => setView(e && e.ctrlKey ? "back" : "front"), "view-right": (e) => setView(e && e.ctrlKey ? "left" : "right"), "view-top": (e) => setView(e && e.ctrlKey ? "bottom" : "top"), unlockview: unlockView, ortho: toggleOrtho,
 			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};

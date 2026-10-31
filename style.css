@@ -361,6 +361,9 @@ body.animating :is([data-act="add"], [data-act="scale"], [data-act="extrude"], [
 body.animating details.animonly { display: block; }
 body.animating .timeline.animonly { display: flex; }
 #b_animate.on { border-color: var(--accent); background: #3b2a16; }
+.editgizmo [data-g] { pointer-events: all; cursor: grab; }
+.editgizmo [data-g^="move"] { cursor: move; }
+.editgizmo [data-g]:hover { filter: brightness(1.5); }
 .boneoverlay .bonetip, .boneoverlay [data-part="body"], .boneoverlay [data-gizmo] { pointer-events: all; }
 .boneoverlay.painting * { pointer-events: none !important; } /* weight painting: the view underneath takes the brush */
 .animbody h4 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }

@@ -149,6 +149,7 @@
 			<div class="viewport">
 			<canvas id="view" tabindex="0"></canvas>
 			<svg id="bone_overlay" class="penciloverlay boneoverlay" aria-hidden="true"></svg>
+			<svg id="edit_gizmo" class="penciloverlay editgizmo" aria-label="Edit mode gizmos"></svg>
 			<svg id="pencil_overlay" class="penciloverlay" aria-hidden="true"></svg>
 			<canvas id="stamp_overlay" class="penciloverlay" aria-hidden="true"></canvas>
 			<div id="empty" class="empty">
@@ -186,7 +187,8 @@
 			<span class="gap"></span>
 			<button data-act="edit" title="Edit mode (Tab)">✎</button>
 			<div class="editonly">
-				<button data-act="vert" title="Vertices (1)">•</button>
+				<button data-act="gizmo" class="on" title="3D gizmos: drag an arrow to move, a box to scale, a ring to turn the selection along one axis (the centre dot moves it freely)">&#8982;</button>
+					<button data-act="vert" title="Vertices (1)">•</button>
 				<button data-act="edge" title="Edges (2)">╱</button>
 				<button data-act="face" title="Faces (3)">▰</button>
 				<button data-act="extrude" title="Extrude (E): faces push out; edges grow quads; vertices grow lines">⇡</button>
