@@ -2831,6 +2831,18 @@
 		requestAnimationFrame(frame);
 	}
 
+	// The model view can't start without WebGL2 and nothing else works without it, so say so over the half-built page (the error still reaches the console).
+	function noWebGL(err) {
+		const box = document.createElement("div"), card = document.createElement("div"), h = document.createElement("h2"), p = document.createElement("p"), list = document.createElement("ol"), detail = document.createElement("p");
+		box.className = "modal open"; box.setAttribute("role", "alertdialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "nowebgl_title");
+		card.className = "card";
+		h.id = "nowebgl_title"; h.textContent = "Tileset Studio can't start here";
+		p.textContent = "It draws with WebGL2, and this browser couldn't start it. Your projects aren't affected. Try these in order:";
+		for (const step of ["Close the browser completely and open it again.", "Turn on hardware acceleration in the browser's settings, then restart it.", "Restart or update your graphics driver.", "Open Tileset Studio in another browser."]) { const li = document.createElement("li"); li.textContent = step; list.append(li); }
+		detail.className = "dim"; detail.textContent = err.message;
+		card.append(h, p, list, detail); box.append(card); document.body.append(box);
+	}
+
 	function boot() {
 		S.tool = "select";
 		for (const b of document.querySelectorAll("[data-tool]"))
@@ -2884,7 +2896,7 @@
 		$("mb_fine").onclick = () => { S.fine = !S.fine; modalBar(); if (modal) updateModal(); };
 		$("mb_ok").onclick = () => { if (modal) confirmModal(); else if (knife) { knifeApply(); modalBar(); } };
 		$("mb_cancel").onclick = () => { if (knife && !modal) { knife = null; dirty = true; modalBar(); hint(); } else cancelModal(); };
-		renderer = new TS.Renderer($("view"));
+		try { renderer = new TS.Renderer($("view")); } catch (err) { noWebGL(err); throw err; }
 		renderer.fitInsets = () => [$("palette"), $("nav")].map((el) => el.offsetWidth ? el.offsetWidth + 16 : 0);
 		renderer.setArt(null, 256, 256);
 		syncProjection();
