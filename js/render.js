@@ -67,6 +67,8 @@
 			this.ref = this._program(RVS, RFS);
 			this.refTex = new Map();
 			this.buf = gl.createBuffer();
+			// The model faces and wires keep their own buffers, sent again only when the arrays change (not for a pan, zoom or orbit).
+			this.kept = { tris: { buf: gl.createBuffer(), data: null }, lines: { buf: gl.createBuffer(), data: null } };
 			this.backBuf = gl.createBuffer();
 			this.tex = gl.createTexture();
 			this.art = { w: 256, h: 256, has: false };
@@ -377,11 +379,11 @@
 				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.shade === "art" || free ? 2 : 1);
 				gl.uniform1f(gl.getUniformLocation(this.prog, "u_opacity"), opacity);
 				gl.depthMask(!opts.xray);
-				this._stream(geometry.tris, gl.TRIANGLES);
+				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris);
 			} else if (geometry.tris.length && !opts.xray) {
 				// Invisible faces still hide what's behind them (opacity 0 without X-ray).
 				gl.colorMask(false, false, false, false);
-				this._stream(geometry.tris, gl.TRIANGLES);
+				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris);
 				gl.colorMask(true, true, true, true);
 			}
 			// Reference models in 3D: their faces carry the reference's own art (the flat backdrop is hidden there), fading in with 3D.
@@ -408,7 +410,7 @@
 			if (geometry.ghostLines && geometry.ghostLines.length) this._stream(geometry.ghostLines, gl.LINES);
 			if (geometry.grid && geometry.grid.length) { gl.disable(gl.DEPTH_TEST); this._stream(geometry.grid, gl.LINES); gl.enable(gl.DEPTH_TEST); }
 			gl.depthFunc(opts.xray ? gl.ALWAYS : gl.LEQUAL);
-			if (geometry.lines.length) this._stream(geometry.lines, gl.LINES);
+			if (geometry.lines.length) this._stream(geometry.lines, gl.LINES, this.kept.lines);
 			gl.uniform1f(gl.getUniformLocation(this.prog, "u_point"), 5);
 			if (geometry.dots && geometry.dots.length) this._stream(geometry.dots, gl.POINTS);
 			gl.uniform1f(gl.getUniformLocation(this.prog, "u_point"), 7);
@@ -432,10 +434,13 @@
 			return new Float32Array(out);
 		}
 
-		_stream(data, mode) {
+		_stream(data, mode, kept) {
 			const gl = this.gl, stride = 40;
-			gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-			gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+			gl.bindBuffer(gl.ARRAY_BUFFER, kept ? kept.buf : this.buf);
+			if (!kept || kept.data !== data) {
+				gl.bufferData(gl.ARRAY_BUFFER, data, kept ? gl.DYNAMIC_DRAW : gl.STREAM_DRAW);
+				if (kept) kept.data = data;
+			}
 			const attrs = [["a_pos", 3, 0], ["a_nrm", 3, 12], ["a_col", 4, 24]];
 			const locs = attrs.map(([n, size, off]) => {
 				const loc = gl.getAttribLocation(this.prog, n);

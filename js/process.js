@@ -101,30 +101,37 @@
 			stats: { covered, holes, filled, unfilled: holes - filled, unused, over } };
 	};
 
+	// A typed array twice the size, with the same contents.
+	const grown = (a) => { const out = new a.constructor(a.length * 2); out.set(a); return out; };
+
 	// Scanline-free triangle raster over the canvas: calls put(index, z, depth, nx, ny, nz) per covered pixel centre (z = height,
 	// depth = proj.depth: what decides the nearer surface). Screen point of a world point: proj.toCanvas. Back faces (seen from
 	// behind) are skipped: on a closed model the surface seen along a line is always a front face. The signed screen area is
 	// dot(face normal, proj.dir) up to a positive factor in both projections, so "area < 0" is exactly "faces away from proj.viewer".
 	function rasterTri(proj, p, n, put, W, H) {
-		const s = p.map((q) => proj.toCanvas(q));
-		const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[1][1] - s[0][1]) * (s[2][0] - s[0][0]);
+		const s0 = proj.toCanvas(p[0]), s1 = proj.toCanvas(p[1]), s2 = proj.toCanvas(p[2]);
+		const ax = s0[0], ay = s0[1], bx = s1[0], by = s1[1], cx = s2[0], cy = s2[1];
+		const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 		if (Math.abs(area) < 1e-9) return;
 		// Faces facing the viewer come out with a positive signed area here (screen y down); skip the rest.
 		if (area < 0) return;
-		const dp = p.map((q) => proj.depth(q));
-		const x0 = Math.max(0, Math.floor(Math.min(s[0][0], s[1][0], s[2][0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(s[0][0], s[1][0], s[2][0])));
-		const y0 = Math.max(0, Math.floor(Math.min(s[0][1], s[1][1], s[2][1]))), y1 = Math.min(H - 1, Math.ceil(Math.max(s[0][1], s[1][1], s[2][1])));
+		const d0 = proj.depth(p[0]), d1 = proj.depth(p[1]), d2 = proj.depth(p[2]);
+		const z0 = p[0][2], z1 = p[1][2], z2 = p[2][2], n0 = n[0], n1 = n[1], n2 = n[2];
+		const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx))), x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx)));
+		const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy))), y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by, cy)));
 		const inv = 1 / area, eps = 1e-6;
+		// Runs per covered pixel, millions of times a process: plain numbers only, no arrays.
 		for (let y = y0; y <= y1; y++)
 			for (let x = x0; x <= x1; x++) {
 				const px = x + 0.5, py = y + 0.5;
-				const w0 = ((s[1][0] - px) * (s[2][1] - py) - (s[1][1] - py) * (s[2][0] - px)) * inv;
-				const w1 = ((s[2][0] - px) * (s[0][1] - py) - (s[2][1] - py) * (s[0][0] - px)) * inv;
+				const w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) * inv;
+				const w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) * inv;
 				const w2 = 1 - w0 - w1;
 				if (w0 < -eps || w1 < -eps || w2 < -eps) continue;
-				const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2], d = w0 * dp[0] + w1 * dp[1] + w2 * dp[2];
-				const nn = v3.norm([w0 * n[0][0] + w1 * n[1][0] + w2 * n[2][0], w0 * n[0][1] + w1 * n[1][1] + w2 * n[2][1], w0 * n[0][2] + w1 * n[1][2] + w2 * n[2][2]]);
-				put(y * W + x, z, d, nn[0], nn[1], nn[2]);
+				const z = w0 * z0 + w1 * z1 + w2 * z2, d = w0 * d0 + w1 * d1 + w2 * d2;
+				const nx = w0 * n0[0] + w1 * n1[0] + w2 * n2[0], ny = w0 * n0[1] + w1 * n1[1] + w2 * n2[1], nz = w0 * n0[2] + w1 * n1[2] + w2 * n2[2], l = Math.hypot(nx, ny, nz);
+				if (l > 1e-12) put(y * W + x, z, d, nx / l, ny / l, nz / l);
+				else put(y * W + x, z, d, 0, 0, 0);
 			}
 	}
 
@@ -135,6 +142,11 @@
 	// projection, W wide; in isometric the models can stand anywhere the canvas can show, so its rows come from the models' south edge.
 	// rule {step, body}: blocks[model index] lists the floor points where that model's own spans reach into [step, body] (the
 	// player's body), the floor it blocks in footprint collision mode.
+	//
+	// The spans and pairs live in flat arrays, not one array per floor point (millions of those are what made this slow):
+	// the spans of point i are spanData[spanStart[i]] .. spanData[spanStart[i + 1] - 1], as bottom, top, bottom, top...; its pairs
+	// (the spans before they merge, with the model that made each: the engine's per-piece maps read these) are pairA / pairB /
+	// pairObj [pairStart[i]] .. [pairStart[i + 1] - 1].
 	P.floorField = (objects, W, H, rule = P.bodyRule(), proj = TS.Proj.OBLIQUE) => {
 		let rows = H + 256;
 		if (proj.kind !== "oblique") {
@@ -142,79 +154,105 @@
 			for (const obj of objects) if (obj.faces.length) for (const v of obj.verts) if (v[1] > south) south = v[1];
 			rows = Math.max(H, Math.min(4096, Math.ceil(south) + 16));
 		}
-		const top = new Float32Array(W * rows).fill(-1), bottom = new Float32Array(W * rows).fill(1e9);
-		const spans = new Array(W * rows), blocks = [], owner = new Int32Array(W * rows).fill(-1);
-		// pairs[floor point] = [[a, b, model index], ...]: the solid spans before they merge, each with the model that made it (the
-		// engine's per-piece maps read these). covers[model index] = the floor points its footprint covers (flat indices).
-		const pairs = new Array(W * rows), covers = [];
+		const N = W * rows, top = new Float32Array(N).fill(-1), bottom = new Float32Array(N).fill(1e9);
+		const blocks = [], owner = new Int32Array(N).fill(-1);
+		// covers[model index] = the floor points its footprint covers (flat indices).
+		const covers = [];
 		// heights[model index] = {min, max}: lowest underside and highest top of the model's own solid spans (null: none on the plan).
 		const heights = [];
 		let used = H;
+		// One model's crossings: slot[floor point] = its place in keys (first seen first), each with a linked list through crossZ / crossNext.
+		const slot = new Int32Array(N).fill(-1);
+		let keys = new Int32Array(1024), heads = new Int32Array(1024), blocking = new Int32Array(1024), crossZ = new Float64Array(4096), crossNext = new Int32Array(4096);
+		// Every model's solid spans before they merge, in model order: floor point, bottom, top, model index.
+		let recI = new Int32Array(65536), recA = new Float64Array(65536), recB = new Float64Array(65536), recO = new Int32Array(65536), nRec = 0;
+		const pairStart = new Int32Array(N + 1), zs = [];
 		for (let oi = 0; oi < objects.length; oi++) {
 			const obj = objects[oi];
-			const blocking = [];
-			blocks.push(blocking);
-			const hits = new Map();
-			let hMin = Infinity, hMax = -Infinity;
+			let hMin = Infinity, hMax = -Infinity, nKeys = 0, nCross = 0, nBlock = 0;
 			for (const t of Mesh.triangles(obj)) {
-				const p = [obj.verts[t.a], obj.verts[t.b], obj.verts[t.c]];
-				const area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
+				const a = obj.verts[t.a], b = obj.verts[t.b], c = obj.verts[t.c];
+				const ax = a[0], ay = a[1], bx = b[0], by = b[1], cx = c[0], cy = c[1], az = a[2], bz = b[2], cz = c[2];
+				const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 				if (Math.abs(area) < 1e-9) continue;
-				const x0 = Math.max(0, Math.floor(Math.min(p[0][0], p[1][0], p[2][0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(p[0][0], p[1][0], p[2][0])));
-				const y0 = Math.max(0, Math.floor(Math.min(p[0][1], p[1][1], p[2][1]))), y1 = Math.min(rows - 1, Math.ceil(Math.max(p[0][1], p[1][1], p[2][1])));
+				const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx))), x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx)));
+				const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy))), y1 = Math.min(rows - 1, Math.ceil(Math.max(ay, by, cy)));
 				const inv = 1 / area;
 				for (let y = y0; y <= y1; y++)
 					for (let x = x0; x <= x1; x++) {
 						const px = x + 0.5, py = y + 0.5;
-						const w0 = ((p[1][0] - px) * (p[2][1] - py) - (p[1][1] - py) * (p[2][0] - px)) * inv;
-						const w1 = ((p[2][0] - px) * (p[0][1] - py) - (p[2][1] - py) * (p[0][0] - px)) * inv;
+						const w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) * inv;
+						const w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) * inv;
 						const w2 = 1 - w0 - w1;
 						if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
-						const z = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2], i = y * W + x;
+						const z = w0 * az + w1 * bz + w2 * cz, i = y * W + x;
 						if (z > top[i]) { top[i] = z; owner[i] = oi; }
 						if (z < bottom[i]) bottom[i] = z;
 						if (y >= used) used = y + 1;
-						if (!hits.has(i)) hits.set(i, []);
-						hits.get(i).push(z);
+						let s = slot[i];
+						if (s < 0) {
+							if (nKeys === keys.length) { keys = grown(keys); heads = grown(heads); blocking = grown(blocking); }
+							s = slot[i] = nKeys++;
+							keys[s] = i; heads[s] = -1;
+						}
+						if (nCross === crossZ.length) { crossZ = grown(crossZ); crossNext = grown(crossNext); }
+						crossZ[nCross] = z; crossNext[nCross] = heads[s]; heads[s] = nCross++;
 					}
 			}
-			covers.push([...hits.keys()]);
+			covers.push(keys.slice(0, nKeys));
 			// Pair the crossings into filled spans. Two triangles sharing an edge both report a point on it: drop near-duplicates.
-			for (const [i, zs] of hits) {
-				zs.sort((a, b) => a - b);
-				const clean = [];
-				for (const z of zs) if (!clean.length || z - clean[clean.length - 1] > 0.05) clean.push(z);
-				const list = spans[i] || (spans[i] = []);
+			for (let s = 0; s < nKeys; s++) {
+				const i = keys[s];
+				slot[i] = -1;
+				let nz = 0;
+				for (let c = heads[s]; c >= 0; c = crossNext[c]) {
+					const z = crossZ[c];
+					let at = nz++;
+					while (at > 0 && zs[at - 1] > z) { zs[at] = zs[at - 1]; at--; }
+					zs[at] = z;
+				}
+				let nClean = 1;
+				for (let k = 1; k < nz; k++) if (zs[k] - zs[nClean - 1] > 0.05) zs[nClean++] = zs[k];
 				// Height range from the real crossings, not the spans: a lone last crossing (touching parts of one model) gets an
 				// invented 0.5 px span below, which must not raise heightMax.
-				if (clean[0] < hMin) hMin = clean[0];
-				if (clean[clean.length - 1] > hMax) hMax = clean[clean.length - 1];
+				if (zs[0] < hMin) hMin = zs[0];
+				if (zs[nClean - 1] > hMax) hMax = zs[nClean - 1];
 				let hit = false;
-				for (let k = 0; k < clean.length; k += 2) {
-					const a = clean[k], b = k + 1 < clean.length ? clean[k + 1] : clean[k] + 0.5;
-					list.push(a, b);
-					(pairs[i] || (pairs[i] = [])).push([a, b, oi]);
+				for (let k = 0; k < nClean; k += 2) {
+					const a = zs[k], b = k + 1 < nClean ? zs[k + 1] : zs[k] + 0.5;
+					if (nRec === recI.length) { recI = grown(recI); recA = grown(recA); recB = grown(recB); recO = grown(recO); }
+					recI[nRec] = i; recA[nRec] = a; recB[nRec] = b; recO[nRec++] = oi;
+					pairStart[i + 1]++;
 					if (a < rule.body && b > rule.step) hit = true;
 				}
-				if (hit) blocking.push(i);
+				if (hit) blocking[nBlock++] = i;
 			}
+			blocks.push(blocking.slice(0, nBlock));
 			heights.push(hMin <= hMax ? { min: Math.max(0, hMin), max: hMax } : null);
 		}
+		for (let i = 0; i < N; i++) pairStart[i + 1] += pairStart[i];
+		const pairA = new Float64Array(nRec), pairB = new Float64Array(nRec), pairObj = new Int32Array(nRec), next = pairStart.slice(0, N);
+		for (let q = 0; q < nRec; q++) { const j = next[recI[q]]++; pairA[j] = recA[q]; pairB[j] = recB[q]; pairObj[j] = recO[q]; }
 		// Different models' spans that touch or overlap (a pillow on a mattress) are one solid; only real gaps stay open.
-		spans.forEach((list, i) => {
-			if (list.length <= 2) return;
-			const pairs = [];
-			for (let k = 0; k < list.length; k += 2) pairs.push([list[k], list[k + 1]]);
-			pairs.sort((a, b) => a[0] - b[0]);
-			const merged = [pairs[0]];
-			for (const p of pairs.slice(1)) {
-				const last = merged[merged.length - 1];
-				if (p[0] <= last[1] + 0.5) last[1] = Math.max(last[1], p[1]);
-				else merged.push(p);
+		const spanStart = new Int32Array(N + 1), spanData = new Float64Array(nRec * 2);
+		let nSpan = 0;
+		for (let i = 0; i < N; i++) {
+			const p0 = pairStart[i], p1 = pairStart[i + 1];
+			spanStart[i] = nSpan;
+			if (p1 === p0) continue;
+			if (p1 - p0 === 1) { spanData[nSpan++] = pairA[p0]; spanData[nSpan++] = pairB[p0]; continue; }
+			const list = [];
+			for (let j = p0; j < p1; j++) list.push([pairA[j], pairB[j]]);
+			list.sort((a, b) => a[0] - b[0]);
+			let lo = list[0][0], hi = list[0][1];
+			for (let k = 1; k < list.length; k++) {
+				if (list[k][0] <= hi + 0.5) hi = Math.max(hi, list[k][1]);
+				else { spanData[nSpan++] = lo; spanData[nSpan++] = hi; lo = list[k][0]; hi = list[k][1]; }
 			}
-			spans[i] = merged.flat();
-		});
-		return { top, bottom, spans, blocks, heights, owner, pairs, covers, rows, shown: Math.min(rows, used + 8) };
+			spanData[nSpan++] = lo; spanData[nSpan++] = hi;
+		}
+		spanStart[N] = nSpan;
+		return { top, bottom, spanStart, spanData: spanData.subarray(0, nSpan), blocks, heights, owner, pairStart, pairA, pairB, pairObj, covers, rows, shown: Math.min(rows, used + 8) };
 	};
 
 	// --- collision ---
@@ -486,15 +524,32 @@
 	P.mapNormal = (r, i, settings) => (r.proj || TS.Proj.of(settings, r.art)).toMapNormal(P.worldNormal(r, i, settings));
 
 	// The world normals (east, south, up) with the relief bump, per art pixel: what the Lit view shades with, so it matches the map.
-	P.litNormals = (r, settings) => {
-		const out = new Float32Array(r.w * r.h * 3);
-		for (let i = 0; i < r.w * r.h; i++) {
-			if (isNaN(r.height[i])) { out[i * 3 + 2] = 1; continue; }
+	// prev (optional): {result, normals, relief, cavity} from the last call. Only pixels near a change are worked out again.
+	P.litNormals = (r, settings, prev) => {
+		const N = r.w * r.h, dirty = prev ? litDirty(r, settings, prev) : null, out = dirty ? prev.normals.slice() : new Float32Array(N * 3);
+		for (let i = 0; i < N; i++) {
+			if (dirty && !dirty[i]) continue;
+			if (isNaN(r.height[i])) { out[i * 3] = 0; out[i * 3 + 1] = 0; out[i * 3 + 2] = 1; continue; }
 			const n = P.worldNormal(r, i, settings);
 			out[i * 3] = n[0]; out[i * 3 + 1] = n[1]; out[i * 3 + 2] = n[2];
 		}
 		return out;
 	};
+	// The art pixels whose lit normal can differ from prev's (relief reads 1 px round a pixel, cavity CAVITY_REACH), or null to do them all.
+	function litDirty(r, settings, prev) {
+		const q = prev.result, W = r.w, H = r.h, N = W * H;
+		if (q.art !== r.art || prev.relief !== settings.relief || prev.cavity !== settings.cavity || !q.proj || !r.proj || q.proj.kind !== r.proj.kind || String(q.proj.matrix) !== String(r.proj.matrix)) return null;
+		const R = CAVITY_REACH, dirty = new Uint8Array(N), limit = N >> 4;
+		let changed = 0;
+		for (let i = 0; i < N; i++) {
+			const a = r.height[i], b = q.height[i];
+			if ((a === b || (a !== a && b !== b)) && r.owner[i] === q.owner[i] && r.normal[i * 3] === q.normal[i * 3] && r.normal[i * 3 + 1] === q.normal[i * 3 + 1] && r.normal[i * 3 + 2] === q.normal[i * 3 + 2]) continue;
+			if (++changed > limit) return null; // too much moved for this to save anything
+			const x = i % W, y = (i / W) | 0, x0 = Math.max(0, x - R), x1 = Math.min(W - 1, x + R), y0 = Math.max(0, y - R), y1 = Math.min(H - 1, y + R);
+			for (let v = y0; v <= y1; v++) dirty.fill(1, v * W + x0, v * W + x1 + 1);
+		}
+		return dirty;
+	}
 
 	// Unit world vectors in the surface's tangent plane (normal n) that draw as canvas right and canvas up, or null when the surface
 	// is edge-on. The oblique relief and rim keep their own tangents (below); this is the same idea taken from the projection.
@@ -642,7 +697,9 @@
 			const o = (W * H + k) * 4;
 			// The solid runs here, bottom to top. Crossings merge into one run while they touch (within 0.5 px) and belong to one piece;
 			// a run is {a, b, piece}: its bottom, top and piece.
-			const prs = (floor.pairs[k] || []).slice().sort((p, q) => p[0] - q[0]), runs = [];
+			const prs = [], runs = [];
+			for (let j = floor.pairStart[k]; j < floor.pairStart[k + 1]; j++) prs.push([floor.pairA[j], floor.pairB[j], floor.pairObj[j]]);
+			prs.sort((p, q) => p[0] - q[0]);
 			for (const [a, b, oi] of prs) {
 				const piece = pieceOf(oi), last = runs[runs.length - 1];
 				if (last && last.piece === piece && a <= last.b + 0.5) last.b = Math.max(last.b, b);
@@ -838,8 +895,17 @@
 		const label = (it) => (typeof it.o.piece === "string" ? it.o.piece.trim() : "");
 		const firstNamed = new Map();
 		items.forEach((it, i) => { it.solo = solo(it); it.label = it.solo ? "" : label(it); if (it.label) { if (firstNamed.has(it.label)) root[find(i)] = find(firstNamed.get(it.label)); else firstNamed.set(it.label, i); } });
-		for (let a = 0; a < items.length; a++)
-			for (let b = a + 1; b < items.length; b++) if (!items[a].label && !items[b].label && !items[a].solo && !items[b].solo && polyDist(items[a].hull, items[b].hull) <= JOIN) root[find(b)] = find(a);
+		// Every pair of models: the floor boxes rule out nearly all of them before the exact distance.
+		for (const it of items) { it.x0 = Infinity; it.x1 = -Infinity; it.y0 = Infinity; it.y1 = -Infinity; for (const q of it.hull) { it.x0 = Math.min(it.x0, q[0]); it.x1 = Math.max(it.x1, q[0]); it.y0 = Math.min(it.y0, q[1]); it.y1 = Math.max(it.y1, q[1]); } }
+		for (let a = 0; a < items.length; a++) {
+			const A = items[a];
+			if (A.label || A.solo) continue;
+			for (let b = a + 1; b < items.length; b++) {
+				const B = items[b];
+				if (B.label || B.solo || A.x0 - B.x1 > JOIN || B.x0 - A.x1 > JOIN || A.y0 - B.y1 > JOIN || B.y0 - A.y1 > JOIN) continue;
+				if (polyDist(A.hull, B.hull) <= JOIN) root[find(b)] = find(a);
+			}
+		}
 		const groups = new Map();
 		items.forEach((it, i) => { const k = find(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); });
 		const pieceOf = new Int32Array(objects.length).fill(-1);
@@ -868,12 +934,13 @@
 		for (let i = 0; i < W * H; i++) if (r.alpha[i] > cut && r.owner[i] >= 0) artPiece[i] = pieceOf[r.owner[i]];
 		for (let k = 0; k < W * rows; k++) if (r.floor.top[k] >= 0 && r.floor.owner[k] >= 0) floorPiece[k] = pieceOf[r.floor.owner[k]];
 		const gw = Math.ceil(W / T), gh = Math.ceil((proj.kind === "oblique" ? rows : H) / T), grid = new Array(gw * gh);
-		const put = (x, y, p) => { if (pieces[p].flat) return; const c = (y >> 5) * gw + (x >> 5); (grid[c] || (grid[c] = new Set())).add(p); };
+		let lastC = -1, lastP = -1; // runs of one piece in one cell, the usual case: only the first needs the Set
+		const put = (x, y, p) => { const c = (y >> 5) * gw + (x >> 5); if (c === lastC && p === lastP) return; lastC = c; lastP = p; if (!pieces[p].flat) (grid[c] || (grid[c] = new Set())).add(p); };
 		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (artPiece[y * W + x] >= 0) put(x, y, artPiece[y * W + x]);
 		// Floor points count only for a model standing on the floor (its underside no higher than the step). A raised one (a
 		// tabletop, a rail) is drawn Y - height above its footprint, so its footprint lies a row below its art and anchor and would
 		// read as another piece's cell; its collision is judged separately, not here.
-		const grounded = (oi) => !r.roles || !r.roles[oi] || r.roles[oi].heightMin <= P.bodyRule(settings).step;
+		const groundStep = P.bodyRule(settings).step, grounded = (oi) => !r.roles || !r.roles[oi] || r.roles[oi].heightMin <= groundStep;
 		// Floor points sit in the cell they are drawn in (oblique: their own coordinates; isometric: through the projection).
 		for (let y = 0; y < rows; y++) for (let x = 0; x < W; x++) {
 			if (!(floorPiece[y * W + x] >= 0 && grounded(r.floor.owner[y * W + x]))) continue;

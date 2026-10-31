@@ -60,12 +60,18 @@
 	function redo() { if (redoStack.length) { undoStack.push(snapshot()); restore(redoStack.pop()); markUnsaved(); status(`Redo (${redoStack.length} more)`); } else status("Nothing to redo."); }
 
 	// The models changed: redraw, refresh the panels and (auto) reprocess.
-	let processTimer = 0;
+	let processTimer = 0, processMs = 0;
+	// Processing on the page blocks it, so it waits longer the longer that takes (a run of edits costs one run). Never starts mid-tool.
+	function processSoon() {
+		clearTimeout(processTimer);
+		processTimer = setTimeout(() => { if (modal) processSoon(); else processInBackground(); }, worker ? 250 : TS.clamp(processMs, 250, 1500));
+	}
 	function changed() {
+		processGen++;
 		dirty = true;
 		panels();
 		if (TS.AnimUI) TS.AnimUI.changed();
-		if (S.autoProcess && S.art) { clearTimeout(processTimer); processTimer = setTimeout(processNow, 250); }
+		if (S.autoProcess && S.art) processSoon();
 	}
 	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
 	function selChanged() { dirty = true; panels(); }
@@ -502,15 +508,49 @@
 
 	// --- processing ---
 
+	// The worker (js/process-worker.js) does the processing while the page stays usable. One job at a time: what is asked for meanwhile
+	// runs after it. A result is used only if nothing changed since it was asked for (processGen). Where there is no worker (a page
+	// opened from file://), or it fails, processing happens on the page.
+	let processGen = 0, worker = null, noWorker = false, workerBusy = false, workerAgain = false, workerArt = null, workerT0 = 0;
+	function startWorker() {
+		worker = new Worker("js/process-worker.js");
+		worker.onmessage = ({ data }) => {
+			workerBusy = false;
+			const fresh = data.gen === processGen && workerArt === S.art;
+			if (workerAgain) { workerAgain = false; processInBackground(); }
+			if (!fresh) return;
+			const r = data.result;
+			r.art = S.art; r.alpha = S.art.alpha; r.proj = TS.Proj.of(S.settings, S.art);
+			processed(r, workerT0, data.litNormal, data.checks);
+		};
+		worker.onerror = worker.onmessageerror = () => { noWorker = true; worker = null; workerBusy = false; workerAgain = false; processNow(); };
+	}
+	function processInBackground() {
+		if (!S.art) return;
+		if (workerBusy) { workerAgain = true; return; }
+		try {
+			if (!worker && !noWorker) startWorker();
+			if (!worker) return processNow();
+			workerT0 = performance.now();
+			worker.postMessage({ gen: processGen, objects: S.objects, settings: S.settings, newArt: workerArt === S.art ? null : S.art });
+			workerArt = S.art; workerBusy = true;
+		} catch (err) { noWorker = true; worker = null; processNow(); }
+	}
 	function processNow() {
 		if (!S.art) return;
+		processGen++;
 		const t0 = performance.now();
+		processed(TS.Process.run(S.objects, S.art, S.settings), t0);
+		processMs = performance.now() - t0;
+	}
+	// A new result: show it. From the worker it comes with its pieces, normals and checks, and its image is drawn without blocking.
+	function processed(result, t0, litNormal, checks) {
 		const roleSig = (r) => (r && r.roles ? r.roles.map((x) => `${x.kind}/${x.mode}/${x.heightMin}/${x.heightMax}`).join() : "");
 		const before = roleSig(S.result);
-		S.result = TS.Process.run(S.objects, S.art, S.settings);
+		S.result = result;
 		if (roleSig(S.result) !== before) panels(); // the properties / outliner show resolved kind, collision and heights
-		S.result.pieceMap = TS.Process.pieces(S.objects, S.result, S.settings);
-		output.set(S.result, S.settings);
+		if (!S.result.pieceMap) S.result.pieceMap = TS.Process.pieces(S.objects, S.result, S.settings);
+		output.set(S.result, S.settings, litNormal, !!litNormal);
 		pieceInfo();
 		const st = S.result.stats;
 		holeCells = null;
@@ -518,7 +558,7 @@
 			(st.unfilled ? `<button id="b_nexthole" title="Show the next uncovered spot in both views">next hole ›</button>` : "") +
 			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
-		tileProblems();
+		tileProblems(checks);
 		asepriteSoon();
 	}
 
@@ -651,10 +691,10 @@
 	// One warning for everything that makes the importer misread the tile cells: the Pieces view's conflicts and floating art,
 	// column clashes (the importer prints the same) and cells shared by separate pieces (the bundle's `clashes`). Cells shared
 	// within one piece are harmless and left out. The details are in the tooltip; clicking opens the Pieces view.
-	function tileProblems() {
+	function tileProblems(checks) {
 		const pm = S.result.pieceMap, name = (i) => S.objects[i].name;
-		const columns = TS.Process.clashes(pm);
-		const shared = TS.Process.cellOwnership(S.objects, S.result, S.settings).clashes.filter((c) => !c.samePiece);
+		const columns = checks ? checks.columns : TS.Process.clashes(pm);
+		const shared = checks ? checks.shared : TS.Process.cellOwnership(S.objects, S.result, S.settings).clashes.filter((c) => !c.samePiece);
 		const bad = pm.cells.filter((c) => c.status);
 		const parts = [], lines = [];
 		const count = (n, one, many) => `${n} ${n > 1 ? many : one}`;
@@ -1616,6 +1656,15 @@
 		for (const q of parts) { out.set(q, o); o += q.length; }
 		return out;
 	};
+	// The same array as last time when no part changed, so the renderer needn't send it to the GPU again.
+	const keptConcat = () => {
+		let parts = null, whole = null;
+		return (next) => {
+			if (!parts || parts.length !== next.length || next.some((q, i) => q !== parts[i])) { parts = next; whole = concatF32(next); }
+			return whole;
+		};
+	};
+	const concatTris = keptConcat(), concatLines = keptConcat();
 	// The tile grid as the projection draws it: the floor lattice (lines of constant X and constant Y every 32 world px) cut to the
 	// canvas rectangle, whose border is drawn stronger (cb).
 	function isoGrid(grid, proj, W, H, c, cb) {
@@ -1736,7 +1785,7 @@
 				}
 			}
 		}
-		return { tris: concatF32(triParts), lines: concatF32(lineParts), points: new Float32Array(points), dots: new Float32Array(dots), grid: new Float32Array(grid),
+		return { tris: concatTris(triParts), lines: concatLines(lineParts), points: new Float32Array(points), dots: new Float32Array(dots), grid: new Float32Array(grid),
 			ghosts: ghosts.map((g) => Object.assign(g, { tris: new Float32Array(g.tris) })), ghostLines: new Float32Array(ghostLines), overlay: new Float32Array(overlay), hover: { lines: new Float32Array(hov.lines), points: new Float32Array(hov.points) } };
 	}
 
@@ -1748,7 +1797,7 @@
 		anim = () => {
 			const t = Math.min(1, (performance.now() - t0) / ms), e = t * t * (3 - 2 * t);
 			for (const k in to) renderer.free[k] = from[k] + (to[k] - from[k]) * e;
-			dirty = true;
+			viewMoved = true;
 			if (t >= 1) { anim = null; if (done) done(); }
 		};
 	}
@@ -1847,7 +1896,7 @@
 		const f = renderer.free, z = renderer.cam.zoom;
 		const right = [Math.cos(f.yaw), -Math.sin(f.yaw)], fwd = [-Math.sin(f.yaw), -Math.cos(f.yaw)], k = 1 / Math.max(0.3, Math.abs(Math.sin(f.pitch)));
 		f.target = [f.target[0] - (right[0] * dx - fwd[0] * dy * k) / z, f.target[1] - (right[1] * dx - fwd[1] * dy * k) / z, f.target[2]];
-		dirty = true;
+		viewMoved = true;
 	}
 
 	// --- pencil: trace a simple outline, then create an ordinary editable mesh ---
@@ -2092,7 +2141,7 @@
 		renderer.cam.zoom = TS.clamp(zoom, ZOOMS[0], ZOOMS[ZOOMS.length - 1]);
 		const after = renderer.canvasPoint(px, py);
 		renderer.cam.x += before[0] - after[0]; renderer.cam.y += before[1] - after[1];
-		dirty = true;
+		viewMoved = true;
 		zoomLabel();
 	}
 	// Steps through pixel-friendly zoom levels (whole pixels per art pixel above 1).
@@ -2267,11 +2316,11 @@
 				if (renderer.free.up) { renderer.free.up = null; renderer.free.pitch = TS.clamp(renderer.free.pitch, -1.5, 1.5); }
 				renderer.free.yaw -= (mouse[0] - press.last[0]) * 0.008;
 				renderer.free.pitch = TS.clamp(renderer.free.pitch + (mouse[1] - press.last[1]) * 0.008, -1.5, 1.5);
-				press.last = mouse.slice(); dirty = true;
+				press.last = mouse.slice(); viewMoved = true;
 			} else if (press && press.kind === "pan") {
 				if (renderer.free.blend > 0) panFree(mouse[0] - press.last[0], mouse[1] - press.last[1]);
 				else { renderer.cam.x -= (mouse[0] - press.last[0]) / renderer.cam.zoom; renderer.cam.y -= (mouse[1] - press.last[1]) / renderer.cam.zoom; }
-				press.last = mouse.slice(); dirty = true;
+				press.last = mouse.slice(); viewMoved = true;
 			} else if (press && press.kind === "ref") {
 				const r = refById(press.id);
 				let ddx = NaN, ddy = NaN;
@@ -2357,7 +2406,7 @@
 			}
 			if (renderer.free.blend > 0) {
 				// 3D view: the wheel moves the eye in and out (the zoom sets its distance).
-				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); dirty = true; }
+				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); viewMoved = true; }
 				return;
 			}
 			const [px, py] = localPoint(e);
@@ -2365,7 +2414,7 @@
 			else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {                  // trackpad / shift: pan
 				renderer.cam.x += (e.shiftKey ? e.deltaY : e.deltaX) / renderer.cam.zoom;
 				if (!e.shiftKey) renderer.cam.y += e.deltaY / renderer.cam.zoom;
-				dirty = true;
+				viewMoved = true;
 			} else zoomStep(px, py, e.deltaY < 0 ? 1 : -1);
 		}, { passive: false });
 	}
@@ -2545,27 +2594,41 @@
 
 	// --- panels ---
 
+	let outlinerRows = null, outlinerSig = "";
 	function panels() {
 		document.body.classList.toggle("editing", S.edit);
 		document.body.classList.toggle("noart", !S.art);
 		document.querySelectorAll(".editonly [data-act]").forEach((b) => b.classList.toggle("on", b.dataset.act === S.elemMode));
 		// Outliner: click selects (Shift/Ctrl+click toggles), double-click renames, the eye hides / shows; the filter box narrows it.
 		const list = $("outliner"), filter = $("outfilter").value.trim().toLowerCase(), keepScroll = list.scrollTop;
-		list.innerHTML = "";
 		let activeLi = null;
 		const nHidden = S.objects.filter((o) => o.hidden).length;
 		$("models_h").textContent = `Models (${S.objects.length}${S.selected.size ? `, ${S.selected.size} selected` : ""}${nHidden ? `, ${nHidden} hidden` : ""})`;
 		const roles = S.result && S.result.roles && S.result.roles.length === S.objects.length ? S.result.roles : null;
-		for (const o of S.objects) {
-			if (filter && !o.name.toLowerCase().includes(filter)) continue;
+		const rowClass = (o) => (S.selected.has(o.id) ? "sel " : "") + (o.id === S.active ? "active " : "") + (o.hidden ? "hidden" : "");
+		const rowLabel = (o, role) => o.name + ({ none: "  (no collision)", footprint: "  (walk-behind)" }[TS.Process.collisionMode(o, role)] || "");
+		// The rows only need building when what they show changed; a new selection just moves the classes along.
+		const shown = [];
+		let sig = filter;
+		S.objects.forEach((o, oi) => {
+			if (filter && !o.name.toLowerCase().includes(filter)) return;
+			const role = roles ? roles[oi] : null;
+			shown.push(o);
+			sig += "|" + rowLabel(o, role) + (o.hidden ? "/h" : "") + (TS.Process.KINDS.includes(o.kind) ? "/" + o.kind : "") + "/" + (role ? role.kindInferred : "");
+		});
+		const same = outlinerRows && sig === outlinerSig && shown.length === outlinerRows.length && shown.every((o, i) => o === outlinerRows[i].o);
+		if (same) for (const { o, li } of outlinerRows) { const c = rowClass(o); if (li.className !== c) li.className = c; if (o.id === S.active) activeLi = li; }
+		else { list.innerHTML = ""; outlinerRows = []; outlinerSig = sig; }
+		if (!same) S.objects.forEach((o, oi) => {
+			if (filter && !o.name.toLowerCase().includes(filter)) return;
 			const li = document.createElement("li");
-			li.className = (S.selected.has(o.id) ? "sel " : "") + (o.id === S.active ? "active " : "") + (o.hidden ? "hidden" : "");
+			li.className = rowClass(o);
 			const eye = document.createElement("button");
 			eye.className = "eye"; eye.textContent = o.hidden ? "◌" : "●"; eye.title = o.hidden ? "Hidden (still exported): show" : "Hide (H); it still exports";
 			eye.onclick = (e) => { e.stopPropagation(); toggleHidden(o); };
 			const name = document.createElement("span");
-			const role = roles ? roles[S.objects.indexOf(o)] : null;
-			name.textContent = o.name + ({ none: "  (no collision)", footprint: "  (walk-behind)" }[TS.Process.collisionMode(o, role)] || "");
+			const role = roles ? roles[oi] : null;
+			name.textContent = rowLabel(o, role);
 			if (TS.Process.KINDS.includes(o.kind)) { const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = o.kind; badge.title = "Kind set by you (inferred: " + (role ? role.kindInferred : "?") + ")"; name.append(badge); }
 			li.title = "Click: select · Shift+click: range · Ctrl+click: add/remove · double-click: rename";
 			li.append(eye, name);
@@ -2586,13 +2649,14 @@
 				const input = document.createElement("input");
 				input.value = o.name; input.className = "rename";
 				name.replaceWith(input); input.focus(); input.select();
-				const done = (keep) => { if (keep && input.value.trim() && input.value !== o.name) { pushUndo(); o.name = input.value.trim(); } panels(); };
+				const done = (keep) => { if (keep && input.value.trim() && input.value !== o.name) { pushUndo(); o.name = input.value.trim(); } outlinerRows = null; panels(); };
 				input.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") done(true); else if (ev.key === "Escape") done(false); };
 				input.onblur = () => done(true);
 			};
 			list.appendChild(li);
+			outlinerRows.push({ o, li });
 			if (o.id === S.active) activeLi = li;
-		}
+		});
 		// Keep the list where it was, but bring the active model into sight (inside the list only).
 		list.scrollTop = keepScroll;
 		if (activeLi && (activeLi.offsetTop < list.scrollTop || activeLi.offsetTop + activeLi.offsetHeight > list.scrollTop + list.clientHeight))
@@ -2732,14 +2796,17 @@
 	}
 
 	// Draw the model view now (frame() calls it when something changed; a hidden tab gets no animation frames).
-	function drawNow() {
-		dirty = false;
-		renderer.draw(buildGeometry(), { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
+	let lastGeometry = null, viewMoved = false; // viewMoved: only the camera changed, so the last geometry still holds
+	function drawNow(sameGeometry) {
+		const geometry = sameGeometry === true && lastGeometry ? lastGeometry : buildGeometry();
+		lastGeometry = geometry;
+		dirty = false; viewMoved = false;
+		renderer.draw(geometry, { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
 		drawAxes(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {
 		if (anim) anim();
-		if (dirty && renderer) { if (knife || $("modalbar").classList.contains("open")) modalBar(); drawNow(); }
+		if ((dirty || viewMoved) && renderer) { if (knife || $("modalbar").classList.contains("open")) modalBar(); drawNow(!dirty); }
 		requestAnimationFrame(frame);
 	}
 
@@ -2907,9 +2974,9 @@
 				return;
 			}
 			if (output.mode === "heightfield") {
-				const f = r.floor, sp = f.spans[i];
+				const f = r.floor, spans = (f.spanStart[i + 1] - f.spanStart[i]) / 2;
 				$("probe").textContent = f.top[i] < 0 ? `floor ${x}, ${y} · open floor` :
-					`floor ${x}, ${y} · top ${f2(f.top[i])} px · bottom ${f2(f.bottom[i])} px` + (sp && sp.length > 2 ? ` · ${sp.length / 2} spans (gaps between parts)` : "");
+					`floor ${x}, ${y} · top ${f2(f.top[i])} px · bottom ${f2(f.bottom[i])} px` + (spans > 1 ? ` · ${spans} spans (gaps between parts)` : "");
 				return;
 			}
 			const owner = r.owner[i] >= 0 ? S.objects[r.owner[i]] : null, has = !isNaN(r.height[i]);
@@ -3022,7 +3089,7 @@
 	TS.api = {
 		state: S, get renderer() { return renderer; }, get output() { return output; },
 		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
-		addPrimitive, processNow, asepriteSend, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
+		addPrimitive, processNow, processInBackground, get workerBusy() { return workerBusy; }, get workerOn() { return !!worker; }, asepriteSend, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
 		select: (id) => { S.selected = new Set([id]); S.active = id; selChanged(); },
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get viewLock() { return S.viewLock; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },

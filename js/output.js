@@ -39,14 +39,17 @@
 		// The projection the result was processed in (oblique unless the project is isometric).
 		proj() { return (this.result && this.result.proj) || TS.Proj.of(this.settings, this.result && this.result.art); }
 
-		set(result, settings) {
+		// litNormal: already worked out (by the processing worker). sliced: draw the new image a little at a time, see _sliceImage.
+		set(result, settings, litNormal, sliced) {
+			const prev = this.result && this.litNormal && this._litFrom ? { result: this.result, normals: this.litNormal, relief: this._litFrom.relief, cavity: this._litFrom.cavity } : null;
 			this.result = result;
 			if(this.gpu)this.gpu.source=null;
 			this.settings = settings;
 			this._prisms = null;
-			this.litNormal = result ? TS.Process.litNormals(result, settings) : null;
+			this.litNormal = litNormal || (result ? TS.Process.litNormals(result, settings, prev) : null);
+			this._litFrom = result ? { relief: settings.relief, cavity: settings.cavity } : null;
 			if (result && !this.light.on) { const q = this.proj().toWorld(result.w * 0.25, result.h * 0.9, 0); this.light.x = q[0]; this.light.y = q[1]; this.light.on = true; }
-			this.render();
+			this.render(sliced);
 		}
 
 		floorPlan() { return this.mode === "heightfield" || this.mode === "collision" || this.mode === "pieces" || this.mode === "kind"; }
@@ -128,17 +131,18 @@
 
 		// Recompute the image for the current mode, then draw it. Animating, the Lit view shows the clip's current frame, processed
 		// like the rest pose (AnimUI.litResult); the rest pose comes back afterwards.
-		render() {
+		render(sliced) {
 			const rest = this.result, frame = this.mode === "lit" && rest && TS.AnimUI && TS.AnimUI.litResult ? TS.AnimUI.litResult() : null;
-			if (!frame) return this._renderImage();
+			if (!frame) return this._renderImage(sliced);
 			const saved = { result: rest, litNormal: this.litNormal, _prisms: this._prisms };
 			Object.assign(this, { result: frame.result, litNormal: frame.litNormal, _prisms: frame.prisms });
 			try { this._renderImage(); }
 			finally { frame.prisms = this._prisms; Object.assign(this, saved); }
 		}
 
-		_renderImage() {
-			const r = this.result;
+		_renderImage(sliced) {
+			const r = this.result, shown = this.off;
+			this._job = null;
 			this.off = null; this.gpuOff=null;
 			const activeGPU=this.mode==='lit' && this.rendererMode!=='current';
 			const status=document.getElementById('lit_renderer_status');
@@ -151,6 +155,11 @@
 				const img = new ImageData(Math.max(1, Math.ceil(r.w * scale)), Math.max(1, Math.ceil(rows * scale)));
 				// Animating: Normals shows the clip's current frame, so playback runs here too (Lit takes its frame in render()).
 				const anim = this.mode === "normals" && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(img, {width:r.w,height:rows});
+				if (!anim && sliced && shown && shown.width === img.width && shown.height === img.height && !["heightfield", "collision", "pieces", "kind"].includes(this.mode)) {
+					this.off = shown;
+					this._sliceImage(img);
+					return;
+				}
 				if (anim) { /* drawn */ }
 				else if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
@@ -164,10 +173,38 @@
 			this.draw();
 		}
 
+		// Work out the image a few rows at a time between the page's other work, with the last image on show until it is done. Another
+		// render replaces the job.
+		_sliceImage(img) {
+			const job = (this._job = { img, y: 0 });
+			const run = () => {
+				if (this._job !== job) return;
+				const t0 = performance.now();
+				while (job.y < img.height && performance.now() - t0 < 10) { this._pixels(img, job.y, Math.min(img.height, job.y + 8)); job.y += 8; }
+				if (job.y < img.height) setTimeout(run, 0); else this._showImage(img);
+			};
+			run();
+		}
+		_showImage(img) {
+			this._job = null;
+			this.off = document.createElement("canvas");
+			this.off.width = img.width; this.off.height = img.height;
+			this.off.getContext("2d").putImageData(img, 0, 0);
+			this.draw();
+		}
+		// A sliced image still being worked out: finish it now.
+		finishRender() {
+			const job = this._job;
+			if (!job) return;
+			if (job.y < job.img.height) this._pixels(job.img, job.y, job.img.height);
+			this._showImage(job.img);
+		}
+
 		// The current map at full resolution: one PNG pixel per image pixel, whatever the zoom and the Lit render scale (the on-screen
 		// canvas is only a view of it, with the background and the light marker drawn over).
 		async fullResBlob() {
 			if (!this.result) return null;
+			this.finishRender();
 			const saved = this.renderScale;
 			if (this.mode === "lit" && saved < 1) { // rendered again at full size, then the view comes back
 				try { this.renderScale = 1; this._renderImage(); return await new Promise((ok) => this.off.toBlob(ok, "image/png")); }
@@ -353,22 +390,22 @@
 			ctx.restore();
 		}
 
-		_pixels(img) {
+		_pixels(img, fromY = 0, toY = img.height) {
 			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut, flat = this.proj().toMapNormal([0, 0, 1]);
-			this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
-			for (let py = 0; py < img.height; py++)
+			if (fromY === 0) this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
+			for (let py = fromY; py < toY; py++)
 				for (let px = 0; px < img.width; px++) {
 					const x = Math.min(r.w-1, Math.floor((px+.5)*r.w/img.width)), y = Math.min(r.h-1, Math.floor((py+.5)*r.h/img.height));
 					const i = y * r.w + x, o = (py * img.width + px) * 4, source = i * 4;
 					if (r.alpha[i] <= cut) {
-						if (this.mode === "lit") { const f = this._floor(x + 0.5, y + 0.5, 0); d.set([f * 34, f * 34, f * 40, 255], o); }
+						if (this.mode === "lit") { const f = this._floor(x + 0.5, y + 0.5, 0); d[o] = d[o + 1] = f * 34; d[o + 2] = f * 40; d[o + 3] = 255; }
 						else d.set([22, 22, 27, 255], o);
 						continue;
 					}
+					if (this.mode === "lit") { this._lit(r, i, x, y, art[source], art[source + 1], art[source + 2], d, o); continue; }
 					const has = !isNaN(r.height[i]);
 					const a = [art[source], art[source + 1], art[source + 2]];
 					switch (this.mode) {
-						case "lit": d.set(this._lit(r, i, x, y, a), o); d[o + 3] = 255; break;
 						case "height": {
 							if (!has) { d.set([255, 0, 255, 255], o); break; }
 							const v = TS.clamp(r.height[i] / 128, 0, 1) * 255;
@@ -398,28 +435,24 @@
 			return 0.4 + 2 * att * att * (dz / dist);
 		}
 
-		_lit(r, i, x, y, albedo) {
-			const has = !isNaN(r.height[i]);
-			const h = has ? r.height[i] : 0;
-			const N = this.litNormal, n = has ? [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]] : [0, 0, 1];
-			const proj = this.proj(), p = proj.toWorld(x + 0.5, y + 0.5, h);
-			const toL = v3.sub([this.light.x, this.light.y, this.light.z], p), dist = v3.len(toL), l = v3.scale(toL, 1 / dist);
-			const att = Math.max(0, 1 - dist / this.light.radius) ** 2;
-			const ndl = Math.max(0, v3.dot(n, l));
-			let shade = ndl * att;
-			if (shade > 0 && this.shadows && this._shadowed(r, p, toL)) shade = 0;
-			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0;
-			const a = albedo.map((c) => c / 255);
-			const half = v3.norm(v3.add(l, proj.viewer));
+		// The lit colour of art pixel i into d at o. Runs per pixel: plain numbers, arrays only for a shadow test.
+		_lit(r, i, x, y, a0, a1, a2, d, o) {
+			const has = !isNaN(r.height[i]), h = has ? r.height[i] : 0, N = this.litNormal, light = this.light, proj = this.proj();
+			const nx = has ? N[i * 3] : 0, ny = has ? N[i * 3 + 1] : 0, nz = has ? N[i * 3 + 2] : 1;
+			const p = proj.toWorld(x + 0.5, y + 0.5, h);
+			const tx = light.x - p[0], ty = light.y - p[1], tz = light.z - p[2], dist = Math.hypot(tx, ty, tz), inv = 1 / dist, lx = tx * inv, ly = ty * inv, lz = tz * inv;
+			const att = Math.max(0, 1 - dist / light.radius) ** 2;
+			let shade = Math.max(0, nx * lx + ny * ly + nz * lz) * att;
+			if (shade > 0 && this.shadows && this._shadowed(r, p, [tx, ty, tz])) shade = 0;
+			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0, ambient = this.ambient, v = proj.viewer;
+			const hx = lx + v[0], hy = ly + v[1], hz = lz + v[2], hl = Math.hypot(hx, hy, hz), ndh = hl > 1e-12 ? nx * (hx / hl) + ny * (hy / hl) + nz * (hz / hl) : 0;
 			const shin = Math.max(2, 2 / Math.max(0.02, rough ** 4) - 2);
-			const spec = Math.pow(Math.max(0, v3.dot(n, half)), shin) * ((shin + 8) / (8 * Math.PI)) * 0.25;
-			const out = [0, 1, 2].map((k) => {
-				const f0 = 0.04 + (a[k] - 0.04) * metal;
-				const diffuse = a[k] * (1 - metal) * (this.ambient + 2.2 * shade);
-				const amb = a[k] * metal * this.ambient * 0.6;
-				return TS.clamp((diffuse + amb + f0 * spec * 2.2 * shade) * 255, 0, 255);
-			});
-			return out;
+			const spec = Math.pow(Math.max(0, ndh), shin) * ((shin + 8) / (8 * Math.PI)) * 0.25;
+			const channel = (c) => {
+				const a = c / 255, f0 = 0.04 + (a - 0.04) * metal;
+				return (a * (1 - metal) * (ambient + 2.2 * shade) + a * metal * ambient * 0.6 + f0 * spec * 2.2 * shade) * 255;
+			};
+			d[o] = channel(a0); d[o + 1] = channel(a1); d[o + 2] = channel(a2); d[o + 3] = 255;
 		}
 
 		// March from the surface point toward the light over the floor heightfield: blocked where a model spans that height.
@@ -432,9 +465,8 @@
 				const t = s / steps, x = Math.floor(p[0] + toL[0] * t), y = Math.floor(p[1] + toL[1] * t), z = p[2] + toL[2] * t;
 				if (x < 0 || y < 0 || x >= W || y >= f.rows) continue;
 				const k = y * W + x;
-				const sp = f.spans[k];
-				if (!sp) continue;
-				for (let j = 0; j < sp.length; j += 2) if (sp[j] < z - 0.25 && sp[j + 1] > z + 0.75) return true;
+				const sp = f.spanData;
+				for (let j = f.spanStart[k], end = f.spanStart[k + 1]; j < end; j += 2) if (sp[j] < z - 0.25 && sp[j + 1] > z + 0.75) return true;
 			}
 			return false;
 		}
@@ -448,7 +480,7 @@
 					const t = TS.clamp(f.top[k] / 96, 0, 1);
 					let c = [40 + 60 * t, 90 + 150 * t, 200 - 120 * t];
 					if (f.bottom[k] > 0.75 && (x + y) % 6 < 3) c = c.map((v) => v * 0.35);
-					else if (f.spans[k] && f.spans[k].length > 2 && (x - y) % 6 < 2) c = c.map((v) => v * 0.55 + 90);
+					else if (f.spanStart[k + 1] - f.spanStart[k] > 2 && (x - y) % 6 < 2) c = c.map((v) => v * 0.55 + 90);
 					d.set([c[0], c[1], c[2], 255], o);
 				}
 		}

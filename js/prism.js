@@ -1,6 +1,6 @@
 // Prisms: the coarse stage of the shadow test. A prism is an invisible box round a model: its floor footprint (convex hull) and its
 // height range. It only answers "should I look closer here?": a ray that passes over (or under, or beside) every prism can't be in
-// shadow, so only the stretches of a ray inside a prism are checked against the exact floor spans (floor.spans, "solid from height
+// shadow, so only the stretches of a ray inside a prism are checked against the exact floor spans (floor.spanData, "solid from height
 // A to B"). Gaps between table legs or under a lintel stay lit because the spans say so, not the box.
 //   TS.Prism.build(result)            one prism per model: {id (piece id), oi, hull, z0, z1}
 //   TS.Prism.table(prisms, light)     the light's-eye table: for each of BINS directions round the light, the prisms a ray that way
@@ -129,9 +129,8 @@
 				if (z > pr.z1 || z < pr.z0) continue;
 				const x = Math.floor(p[0] + toL[0] * t), y = Math.floor(p[1] + toL[1] * t);
 				if (x < 0 || y < 0 || x >= W || y >= f.rows) continue;
-				const sp = f.spans[y * W + x];
-				if (!sp) continue;
-				for (let j = 0; j < sp.length; j += 2) if (sp[j] < z - 0.25 && sp[j + 1] > z + 0.75) return true;
+				const k = y * W + x, sp = f.spanData;
+				for (let j = f.spanStart[k], end = f.spanStart[k + 1]; j < end; j += 2) if (sp[j] < z - 0.25 && sp[j + 1] > z + 0.75) return true;
 			}
 		}
 		return false;
