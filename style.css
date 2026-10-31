@@ -146,6 +146,11 @@ footer { padding: 5px 12px; font-size: 12px; background: var(--panel); border-to
 .modal.open { display: flex; }
 .modal .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; max-width: 760px; max-height: calc(100vh - 32px); overflow: auto; }
 .modal h2 { margin: 0 0 8px; color: var(--accent); }
+.modal .card:focus { outline: none; }
+.helpbar { position: sticky; top: -16px; margin: -16px 0 8px; padding: 16px 0 8px; background: var(--panel); align-items: center; }
+.helpbar h2 { margin: 0; }
+.narrownote { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; margin: 0; padding: 8px 12px; background: #3b2a16; border-bottom: 1px solid var(--accent); }
+@media (max-width: 759px) { .narrownote { display: block; } }
 .modal table { border-collapse: collapse; margin: 8px 0; }
 .modal td { padding: 2px 10px 2px 0; vertical-align: top; }
 .modal td:nth-child(odd) { color: var(--accent); white-space: nowrap; }
@@ -197,6 +202,9 @@ input.ax-x { border-left-color: var(--ax-x); } input.ax-y { border-left-color: v
 .restore { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; align-items: center; padding: 6px 10px; background: rgba(28, 28, 34, 0.96); border: 1px solid var(--accent); border-radius: 8px; z-index: 5; max-width: calc(100% - 140px); }
 .restore.open { display: flex; }
 .marquee { position: absolute; display: none; border: 1px dashed var(--accent); background: rgba(240, 140, 46, 0.08); pointer-events: none; }
+/* Short windows: smaller tool buttons keep one column, so the tools cover less of the art. */
+@media (max-height: 860px) and (pointer: fine) { .palette button:not(.fold), .nav button:not(.fold) { width: 28px; height: 28px; font-size: 15px; } }
+@media (max-height: 790px) and (pointer: fine) { .palette button:not(.fold), .nav button:not(.fold) { width: 24px; height: 24px; font-size: 14px; } }
 @media (pointer: coarse) { .palette button, .nav button { width: 44px; height: 44px; font-size: 20px; } .palette .fold, .nav .fold { height: 28px; } }
 /* Small windows: narrower side panels so the model view keeps room. */
 @media (max-width: 1100px) { main { grid-template-columns: 220px 1fr minmax(240px, 30%); } }

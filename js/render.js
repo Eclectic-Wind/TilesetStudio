@@ -123,11 +123,14 @@
 		dropRefArt(id) { if (this.refTex.has(id)) { this.gl.deleteTexture(this.refTex.get(id)); this.refTex.delete(id); } }
 
 		fit() {
-			const r = this.canvas.getBoundingClientRect();
-			this.cam.x = this.art.w / 2;
+			const r = this.canvas.getBoundingClientRect(), [left, right] = this.fitInsets ? this.fitInsets() : [0, 0]; // px the toolbars cover
+			this.cam.zoom = Math.max(0.25, Math.floor(Math.min(Math.max(1, r.width - left - right) / this.art.w, r.height / this.art.h) * 0.9 * 4) / 4);
+			this.cam.x = this.art.w / 2 - (left - right) / 2 / this.cam.zoom;
 			this.cam.y = this.art.h / 2;
-			this.cam.zoom = Math.max(0.25, Math.floor(Math.min(r.width / this.art.w, r.height / this.art.h) * 0.9 * 4) / 4);
+			this.fitted = [this.cam.x, this.cam.y, this.cam.zoom];
 		}
+		// Is the camera still where fit() left it (not panned or zoomed since)? Then a resized view can fit again.
+		isFitted() { const f = this.fitted, c = this.cam; return !!f && f[0] === c.x && f[1] === c.y && f[2] === c.zoom; }
 
 		size() {
 			const dpr = window.devicePixelRatio || 1, r = this.canvas.getBoundingClientRect();

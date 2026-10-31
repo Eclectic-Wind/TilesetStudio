@@ -877,7 +877,7 @@
 			return;
 		}
 		if (e.key !== "l" && e.key !== "L") return;
-		if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "")) return;
+		if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector(".modal.open") || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "")) return;
 		open();
 	}, true);
 })();

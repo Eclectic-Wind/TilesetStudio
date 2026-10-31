@@ -9,6 +9,7 @@
 </head>
 <body>
 <div class="splash" aria-hidden="true"><img src="assets/logo.png" alt="" width="480" height="192"></div>
+<p class="narrownote" role="status">Tileset Studio needs a window at least 760 px wide. Widen it, or open it on a larger screen.</p>
 <header>
 	<a class="logo" href="./" title="Tileset Studio: MCS internal tooling"><img src="assets/logo.png" alt="Tileset Studio, MCS internal tooling" width="100" height="40"></a>
 	<div class="menuwrap" data-click>
@@ -160,7 +161,7 @@
 					</div>
 					<div class="cta-row"><button id="e_sample" class="link" title="Open the built-in BasicSample project">Try the sample</button><span class="dim">·</span><button id="e_learn" class="link" title="Short visual lessons (L)">Take the quick lesson</button></div>
 					<div class="cta-row"><button id="e_blank" class="link" title="Start a blank 512 × 512 px tileset with no art; model on the grid and open art later">New empty tileset</button></div>
-						<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Process</li><li><b>4</b>Export</li></ol>
+						<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Check the maps</li><li><b>4</b>Export</li></ol>
 				</div>
 			</div>
 		<div id="coords" class="coords"></div>
@@ -177,7 +178,7 @@
 			<button data-tool="ref" title="Move reference: drag to slide the active reference across the floor (X, Y). Its height stays locked. Add one under References.">⤧</button>
 			<button data-tool="cursor" title="3D cursor (C): tap where the next piece goes (on a top to stack)">⊕</button>
 
-			<button data-tool="pencil" title="Free Draw (P): add a rounded shape, cut through a closed solid, or carve a recess. Works in the held 3D camera. Click corners or drag an outline.">&#9998;</button>
+			<button data-tool="pencil" title="Free Draw (P): add a rounded shape, cut through a closed solid, or carve a recess. Works in the held 3D camera. Click corners or drag an outline.">∿</button>
 			<span class="gap"></span>
 			<button data-act="grab" title="Move (G)">✥</button>
 			<button data-act="scale" title="Scale (S)">⤢</button>
@@ -322,10 +323,10 @@
 	<p id="obj_export_error" class="bad" aria-live="polite"></p>
 	<div class="sourcebar"><button id="obj_download" class="primary">Download</button><button id="obj_close">Cancel</button></div>
 </div></div>
-<div id="help" class="modal">
-	<div class="card">
-		<h2>Tileset Studio</h2>
-		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → Process → check the output → Export.
+<div id="help" class="modal" role="dialog" aria-modal="true" aria-labelledby="help_title">
+	<div class="card" id="help_card" tabindex="-1">
+		<div class="sourcebar helpbar"><h2 id="help_title">Tileset Studio</h2><span class="grow"></span><span class="dim">Esc closes</span><button id="help_close">Close</button></div>
+		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → check the output (it updates as you work while "auto" is on) → Export.
 		Axes: <b class="ax-x">X across</b> (east-west), <b class="ax-y">Y depth</b> (north-south on the ground, bigger = nearer you), <b class="ax-z">Z height</b> (up).
 		The view is the tileset's own projection (File > Projection). Top-down: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up. Isometric: X runs down-right, Y down-left, height up; the axis key at the bottom right of the view shows the directions.
 		Model what the art shows: fronts stand on the floor line, tops sit at their height. Holes (art no model covers) show in magenta.</p>

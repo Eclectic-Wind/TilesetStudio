@@ -852,8 +852,10 @@
 		} else {
 			if (!S.selected.size) return;
 			pushUndo();
+			const gone = S.objects.filter((o) => S.selected.has(o.id));
 			S.objects = S.objects.filter((o) => !S.selected.has(o.id));
 			S.selected.clear(); S.active = null;
+			toast(`Deleted ${gone.length === 1 ? gone[0].name : gone.length + " models"}. Ctrl+Z brings ${gone.length === 1 ? "it" : "them"} back.`);
 		}
 		changed();
 	}
@@ -2559,7 +2561,7 @@
 		if (ctrl) return;
 		if (k === "escape") {
 			if (S.loopCut) { S.loopCut = false; loopHover = null; hint(); dirty = true; }
-			$("help").classList.remove("open"); toggleAddMenu(false);
+			toggleAddMenu(false);
 			return;
 		}
 		if (e.shiftKey && k === "a") { toggleAddMenu(true); e.preventDefault(); return; }
@@ -2771,7 +2773,14 @@
 	}
 
 	function toggleAddMenu(show) { $("addmenu").classList.toggle("open", show); }
-	function toggleHelp() { $("help").classList.toggle("open"); }
+	// The rest of the page goes inert while Help is open, so Tab and clicks stay in it; focus goes back where it was on closing.
+	let helpReturn = null;
+	function toggleHelp() {
+		const open = $("help").classList.toggle("open");
+		for (const el of document.querySelectorAll("header, main, footer")) el.inert = open;
+		if (open) { helpReturn = document.activeElement; $("help_card").focus(); }
+		else if (helpReturn) { helpReturn.focus(); helpReturn = null; }
+	}
 
 	// --- boot ---
 
@@ -2876,6 +2885,7 @@
 		$("mb_ok").onclick = () => { if (modal) confirmModal(); else if (knife) { knifeApply(); modalBar(); } };
 		$("mb_cancel").onclick = () => { if (knife && !modal) { knife = null; dirty = true; modalBar(); hint(); } else cancelModal(); };
 		renderer = new TS.Renderer($("view"));
+		renderer.fitInsets = () => [$("palette"), $("nav")].map((el) => el.offsetWidth ? el.offsetWidth + 16 : 0);
 		renderer.setArt(null, 256, 256);
 		syncProjection();
 		output = new TS.Output($("out"));
@@ -2885,7 +2895,7 @@
 		window.addEventListener("keydown", onKey);
 		window.addEventListener("blur", () => { spaceDown = false; if (exchange?.draft) exchange.draft.pointer = null; if (pencil) { if (pencil.pointer !== null) clearPencil(); pointers.clear(); pinch = null; press = null; marquee(null); } });
 		window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; if (modal && (e.key === "Shift" || e.key === "Control")) updateModal(e); });
-		window.addEventListener("resize", () => { dirty = true; if (S.result) output.render(); });
+		window.addEventListener("resize", () => { if (renderer.isFitted()) { renderer.fit(); zoomLabel(); } dirty = true; if (S.result) output.render(); });
 		$("f_tileset").onchange = (e) => e.target.files[0] && openTilesetFile(e.target.files[0]);
 		$("f_project").onchange = async (e) => e.target.files[0] && openProject(await readFile(e.target.files[0], true));
 		$("f_ref").onchange = async (e) => {
@@ -2924,7 +2934,9 @@
 		};
 		$("exportname").onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") { $("exportname").onchange(); exportMaps("bundle"); } else if (e.key === "Escape") $("exportname").blur(); };
 		$("b_help").onclick = toggleHelp;
-		$("help").onclick = toggleHelp;
+		$("help_close").onclick = toggleHelp;
+		$("help").onclick = (e) => { if (e.target === $("help")) toggleHelp(); };
+		$("help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || e.key === "F1") { toggleHelp(); e.preventDefault(); } }); // no shortcuts reach the models behind it
 		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
 			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };

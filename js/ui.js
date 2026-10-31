@@ -59,7 +59,8 @@
 			const t = el.getAttribute("title");
 			el.removeAttribute("title");
 			if (t) el.dataset.tip = t;
-			if (t && !el.getAttribute("aria-label") && !el.textContent.trim()) el.setAttribute("aria-label", t.split(/[:.;(]/)[0].trim());
+			// Taking the title away must not leave an icon button named by its glyph ("⟳") or abbreviation ("Fr").
+			if (t && !el.getAttribute("aria-label") && el.textContent.trim().length <= 3) el.setAttribute("aria-label", t.split(/[:.;(]/)[0].trim());
 		}
 		const text = el.dataset.tip;
 		if (!text) return;
