@@ -48,8 +48,9 @@ above the floor". The origin `(ox, oy)` is the top centre of the art (saved in t
 diamond lattice, the normal map is in screen space (R right, G up, B toward the viewer) and the lighting engine's view direction is
 (1, 1, 2·sin(tilt)). The **Tilt** setting next to Projection is the camera's elevation: any value from 10° to 80° (typed in; values outside are clamped), 26° the default, 30° the 2:1 pixel-art look, 35.26° true isometric, saved as `isoTilt`; projects without it are 30°. Switching the projection or
 the tilt on a project that has models keeps their 3D positions, so they stop lining up with the art until you move them;
-Ctrl+Z switches back. A chip at the top left of the view says which projection is active. In isometric the floor plan is as wide as
-the art, so keep models in the world X range 0 to the art width.
+Ctrl+Z switches back. A chip at the top left of the view says which projection is active. In isometric the floor plan is world X 0 to the art
+width and Y from 0, which is less than the canvas shows: orange lines in the grid mark its edges, and the output statistics name
+any model past them. Such a model still draws and gets canvas maps, but the part past the edge has no footprint or collision.
 
 **Look round:** hold Alt (or the middle button) and drag, or drag with the eye tool. The view swings into perspective (east
 stays on the right; dragging right turns the model the way you drag, like Blender's turntable) so you can check depth and

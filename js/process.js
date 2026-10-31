@@ -135,6 +135,10 @@
 			}
 	}
 
+	// Isometric: the models that reach past the floor plan (world X 0 to W, Y from 0). They still draw and get canvas maps, but the
+	// part past the edge has no footprint or collision. In oblique the plan is the canvas, so there is nothing to name.
+	P.offPlan = (objects, W, proj) => proj.kind === "oblique" ? [] : objects.filter((o) => o.faces.length && o.verts.some((v) => v[0] < 0 || v[0] > W || v[1] < 0 || v[1] > 4096));
+
 	// Floor-plan heightfield: per floor point, the highest (top) and lowest (bottom) model height above it, and the solid spans
 	// in between: each model's surfaces crossing that point pair up into the heights it fills (entering, leaving), so a gap
 	// between two stacked parts (a cart's shelves, a top over a lower part) stays open to light. A floor point can be south of
@@ -286,7 +290,7 @@
 	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
 	P.wallHeight = (settings = {}) => settings.wallHeight ?? 48;
 	P.wallThickness = (settings = {}) => settings.wallThickness ?? 24;
-	P.defaultSettings = () => ({ projection: "oblique", isoTilt: 26, alphaCut: 13, fill: 2, relief: 0.5, cavity: 1, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
+	P.defaultSettings = () => ({ projection: "oblique", alphaCut: 13, fill: 2, relief: 0.5, cavity: 1, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
 
 	// Kinds that are no longer valid map on every load: deco and solid -> furn, wall -> wall_h, side -> wall_v (the old names of the
 	// same things, from versions 1-3 and from projects saved before furn existed). Mutates the objects; -> how many changed.

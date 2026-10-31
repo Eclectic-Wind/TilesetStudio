@@ -137,7 +137,7 @@
 		}
 
 		// The tileset view's matrix, built from the projection: canvas (cx, cy) = M * world + offset puts the camera's canvas point at
-		// the centre, and the depth (clip z) is the distance along the view (oblique Y + Z, iso X + Y + Z), larger = nearer.
+		// the centre, and the depth (clip z) is the distance along the view (oblique Y + Z, iso X + Y + 2 sin(tilt) Z), larger = nearer.
 		tilesetMatrix() {
 			const { w, h } = this.size(), z = this.cam.zoom, k = 1 / 16384, [a, b, c, ox, d, e, f, oy] = this.proj.matrix, v = this.proj.dir;
 			return new Float32Array([

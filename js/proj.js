@@ -95,6 +95,7 @@
 		let worst = 0;
 		for (const n of [[0, 0, 1], [1, 0, 0], [0, 1, 0], v3.norm([1, 2, 3]), v3.norm([-1, 0.5, 0.2])]) worst = Math.max(worst, v3.dist(I.toMapNormal(n), old(n)));
 		ok("iso 30° matches the old 2:1 normal, pitch and dir (" + worst.toExponential(1) + ")", worst < 1e-9 && Math.abs(I.pitch - Math.asin(1 / Math.sqrt(3))) < 1e-12 && I.dir.join() === "1,1,1");
+		ok("an iso project with no tilt is 30", Proj.of({ projection: "iso" }).tilt === 30 && TS.Process.defaultSettings().isoTilt === undefined);
 		ok("a tilt that is not a number is 30; any other is clamped to 10-80", Proj.tilt(NaN) === 30 && Proj.tilt(undefined) === 30 && Proj.tilt("45") === 45 && Proj.tilt(31) === 31 && Proj.tilt(5) === 10 && Proj.tilt(90) === 80);
 		return out;
 	};

@@ -47,6 +47,8 @@
 		if (s.projection && (s.projection !== S.settings.projection || String(s.isoOrigin) !== String(S.settings.isoOrigin) || s.isoTilt !== S.settings.isoTilt)) {
 			S.settings.projection = s.projection; S.settings.isoOrigin = s.isoOrigin; S.settings.isoTilt = s.isoTilt;
 			syncProjection(); renderer.fit(); zoomLabel();
+			changed(); clearTimeout(processTimer); processNow(); // the output must not keep showing the other projection
+			return;
 		}
 		changed();
 	}
@@ -133,7 +135,7 @@
 		renderer.setArt(img, img.width, img.height);
 		if (S.settings.projection === "iso") S.settings.isoOrigin = TS.Proj.defaultOrigin(img.width);
 		syncProjection();
-		renderer.fit();
+		renderer.fit(); zoomLabel();
 		S.cursor = [Math.round(img.width / 2 / 32) * 32, Math.round(img.height / 2 / 32) * 32, 0];
 		$("exportname").placeholder = S.name;
 		setUnsaved(unsaved);
@@ -195,7 +197,8 @@
 		} else throw new Error("That file is not a Tileset Studio project (.studio.json) or Godot bundle (.export.json).");
 		if (!atlas) throw new Error("That file has no tileset image to show.");
 		const img = await loadImage(atlas);
-		return { id: newRefId(), name: p.name || "reference", w: img.width, h: img.height, atlas, meshes, approx, dx: 0, dy: 0, opacity: 0.5, showArt: true, showModels: true, visible: true };
+		const drawn = p.format === "tileset-studio" ? TS.Proj.of(p.settings) : p.projection && p.projection.type === "iso" ? TS.Proj.iso([0, 0], TS.Proj.tilt(p.projection.tilt)) : TS.Proj.OBLIQUE;
+		return { id: newRefId(), name: p.name || "reference", drawnIn: TS.Proj.chip(drawn), w: img.width, h: img.height, atlas, meshes, approx, dx: 0, dy: 0, opacity: 0.5, showArt: true, showModels: true, visible: true };
 	}
 
 	async function loadRefArt(ref) { renderer.setRefArt(ref.id, await loadImage(ref.atlas)); dirty = true; }
@@ -206,6 +209,8 @@
 		await loadRefArt(ref);
 		refPanel(); markUnsaved(); dirty = true;
 		status(`Added reference "${ref.name}"${ref.approx ? " (from a bundle: models show as outlines)" : ""}. Press ✥ Move under References and drag in the view: it slides across the floor, its height stays locked.`);
+		// Its art is a flat picture in the projection it was drawn in; its models take this project's.
+		if (ref.drawnIn !== TS.Proj.chip(renderer.proj)) toast(`"${ref.name}" was drawn in ${ref.drawnIn} and this project is ${TS.Proj.chip(renderer.proj)}, so its models won't line up with its picture.`, "bad");
 		return ref;
 	}
 
@@ -285,6 +290,7 @@
 		const migrated = TS.Process.migrateKinds(S.objects) > 0;
 		S.cursor = p.cursor || S.cursor; S.snap = typeof p.snap === "number" ? p.snap : 1;
 		S.exportName = p.exportName || ""; $("exportname").value = S.exportName; $("exportname").placeholder = S.name;
+		delete S.settings.isoOrigin; delete S.settings.isoTilt; // the last project's: this one's own, or none (an old iso project is 30°)
 		Object.assign(S.settings, defaultSettings(), p.settings || {});
 		S.bundleId = typeof p.bundleId === "string" && p.bundleId ? p.bundleId : newUUID();
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
@@ -318,6 +324,8 @@
 		if (!S.settings.projection) S.settings.projection = "oblique";
 		TS.Proj.ensure(S.settings, S.art);
 		const p = TS.Proj.of(S.settings, S.art);
+		// The lit preview's light stays over the same spot of the canvas (it lives in world px, which now draw elsewhere).
+		if (renderer && output && output.light.on && String(renderer.proj.matrix) !== String(p.matrix)) { const l = output.light, c = renderer.proj.toCanvas([l.x, l.y, 0]), q = p.toWorld(c[0], c[1], 0); l.x = q[0]; l.y = q[1]; }
 		if (renderer) renderer.proj = p;
 		TS.Shape.proj = p;
 		if ($("s_proj")) $("s_proj").value = p.kind;
@@ -350,7 +358,7 @@
 		pushUndo();
 		S.settings.projection = kind;
 		if (kind === "iso") { S.settings.isoOrigin = TS.Proj.defaultOrigin(S.art ? S.art.w : 256); S.settings.isoTilt = S.settings.isoTilt == null ? TS.Proj.DEFAULT_TILT : TS.Proj.tilt(S.settings.isoTilt); }
-		else { delete S.settings.isoOrigin; delete S.settings.isoTilt; }
+		else delete S.settings.isoOrigin; // the tilt stays: coming back to Isometric finds it
 		syncProjection();
 		renderer.fit(); zoomLabel();
 		changed(); clearTimeout(processTimer); processNow();
@@ -554,9 +562,10 @@
 		pieceInfo();
 		const st = S.result.stats;
 		holeCells = null;
+		const off = TS.Process.offPlan(S.objects, S.result.w, S.result.proj);
 		$("stats").innerHTML = `covered ${st.covered} px · <b class="${st.unfilled ? "bad" : ""}">holes ${st.unfilled}</b> (+${st.filled} filled)` +
 			(st.unfilled ? `<button id="b_nexthole" title="Show the next uncovered spot in both views">next hole ›</button>` : "") +
-			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
+			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""}${off.length ? ` · <b class="bad" title="${esc(off.map((o) => o.name).join(", "))}: past the floor plan (the orange lines in the view). The part past it draws and has maps, but no footprint or collision.">${off.length} model${off.length > 1 ? "s" : ""} off the floor plan</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
 		tileProblems(checks);
 		asepriteSoon();
@@ -1686,6 +1695,9 @@
 		for (let x = x0; x <= x1; x += 32) seg([x, y0, 0], [x, y1, 0], c);
 		for (let y = y0; y <= y1; y += 32) seg([x0, y, 0], [x1, y, 0], c);
 		for (let i = 0; i < 4; i++) seg(corner[i], corner[(i + 1) % 4], cb);
+		// The floor plan's edges (world X 0 and W, Y 0): past them a model has no footprint or collision.
+		const plan = [1, 0.6, 0.2, 0.6], far = Math.max(y1, 32);
+		seg([0, 0, 0], [0, far, 0], plan); seg([W, 0, 0], [W, far, 0], plan); seg([0, 0, 0], [W, 0, 0], plan);
 	}
 	function buildGeometry() {
 		const triParts = [], lineParts = [], points = [], dots = [], grid = [], overlay = [], hov = { lines: [], points: [] };
