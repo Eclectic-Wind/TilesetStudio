@@ -2817,17 +2817,18 @@
 		svg.innerHTML = html;
 	}
 
-	// Edit-mode gizmos at the middle of the selected elements (where Move / Scale / Turn pivot): an arrow per axis moves, a box on it
+	// Gizmos (models and edit mode) at the middle of the selected elements (where Move / Scale / Turn pivot): an arrow per axis moves, a box on it
 	// scales along it, a ring turns about it, the centre dot moves freely. Each press starts the ordinary modal tool with the axis
 	// locked, so snapping, Esc, undo and the status line all behave as they do from the keys.
 	const GIZ = { arrow: 78, box: 50, ring: 60 };
 	function gizmoPivot() {
-		const o = S.edit && activeObj();
-		if (!o || !S.elemSel.size) return null;
-		const pts = selVerts(o).map((i) => o.verts[i]);
+		// The tools' own pivot: the middle of the selected elements; for whole models, the middle of them at their base.
+		if (S.edit && !S.elemSel.size) return null;
+		const pts = [];
+		for (const o of editTargets()) for (const i of selVerts(o)) pts.push(o.verts[i]);
 		if (!pts.length) return null;
 		const b = pointBounds(pts);
-		return [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+		return [0, 1, 2].map((k) => (k === 2 && !S.edit ? b.min[k] : (b.min[k] + b.max[k]) / 2));
 	}
 	function drawGizmo() {
 		const svg = $("edit_gizmo");
