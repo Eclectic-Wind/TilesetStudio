@@ -15,7 +15,7 @@ anim: {
     collision: "static",                 // always the base frame's
     targets: [{
       piece,                             // the animated piece: its number in footprints.pieces (1-based), as pieceIndex
-      rect: [x, y, w, h],                // atlas px, multiples of 32: the piece's art rect. Every frame is drawn here, in place of the piece
+      rect: [x, y, w, h],                // atlas px, multiples of 32: holds the piece's art and everything its frames paint. Every frame is drawn here, in place of the piece
       cols, rows,                        // the frames are packed cols per row, left to right then down, each w x h (frame f at ((f % cols) * w, floor(f / cols) * h))
       source: "flipbook",                // "rig" reserved
       color: "<base64 PNG>",             // cols*w x rows*h RGBA: the frames' albedo, as painted (transparent pixels show what is behind)
@@ -27,7 +27,7 @@ anim: {
 }
 ```
 
-- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame. A frame can be smaller than `rect`: it is transparent where the piece's art is not.
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame. A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
 - The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
 - `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
 - A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame has no art (height and normal are flat there); a rect reaching south of the piece's base row (oblique), which the game sorts by.

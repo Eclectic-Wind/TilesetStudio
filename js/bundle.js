@@ -62,6 +62,15 @@
 					if (r.alpha[i] > cut && r.owner[i] >= 0 && pm.pieceOf[r.owner[i]] === piece) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
 				}
 				if (x1 < 0) { warnings.push(`clip "${clip.name}" / ${names}: no art on the canvas, not animated`); continue; }
+					// A frame can paint past the base art (a door swinging open), so the rect grows to hold it. Pixels over another piece's
+					// art are that piece's in the sheet, and don't count.
+					for (let f = 0; f < frames; f++) {
+						const [ox, oy] = Rig.cellOrigin(lay, f);
+						for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+							const own = r.owner[y * W + x];
+							if (sheet.data[((oy + y) * sheet.width + ox + x) * 4 + 3] > cut && !(own >= 0 && pm.pieceOf[own] !== piece)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+						}
+					}
 				const rx = Math.floor(x0 / T) * T, ry = Math.floor(y0 / T) * T, rw = Math.min(W, Math.ceil((x1 + 1) / T) * T) - rx, rh = Math.min(H, Math.ceil((y1 + 1) / T) * T) - ry;
 				// A rect reaching south of the piece's sort row (oblique: its lowest floor row) would sort wrongly.
 				if (oblique) {
