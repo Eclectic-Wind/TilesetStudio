@@ -797,11 +797,12 @@
 					zs.push(b.min[2], b.max[2]);
 					if (KIND_RANK[roles[oi].kind] > KIND_RANK[kind]) kind = roles[oi].kind;
 				}
-				const rowsOf = [...floorPoints].map((i) => (i / r.w) | 0);
+				let rowMax = 0, rowMin = Infinity; // loops, not Math.max(...list): a large piece has too many floor points for the argument list
+				for (const i of floorPoints) { const y = (i / r.w) | 0; if (y > rowMax) rowMax = y; if (y < rowMin) rowMin = y; }
 				return {
 					names: p.names, models: p.objs.map((oi) => idx.get(oi)), kind,
 					z: [round2(Math.min(...zs)), round2(Math.max(...zs))],
-					base: rowsOf.length ? Math.max(...rowsOf) : 0, back: rowsOf.length ? Math.min(...rowsOf) : 0,
+					base: floorPoints.size ? rowMax : 0, back: floorPoints.size ? rowMin : 0,
 					outline: outlineOf([...floorPoints], r.w), cells: [...cells.values()],
 				};
 			}),
