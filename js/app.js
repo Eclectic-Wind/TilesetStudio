@@ -497,10 +497,15 @@
 	// plugin unpacks it next to itself into name.png, name_height.png, name_normal.png, name_pbr.png, name_footprints.json and
 	// builds name_tileset.tres.
 	// The envelope itself is TS.Bundle.build (js/bundle.js), shared with tools/export_project.js.
-	function bundleJSON() {
+	let lastAnimReport = null; // the last bundle's anim table (clips, warnings), for the export message
+	async function bundleJSON() {
 		processNow();
-		return JSON.stringify(TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
-			settings: S.settings, result: S.result, now: new Date().toISOString() }));
+		const images = await TS.AnimUI.albedoImages();
+		const bundle = TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
+			settings: S.settings, result: S.result, now: new Date().toISOString(), anim: S.anim,
+			albedoOf: (clip) => images.get(clip.id) || null, encodePNG: (rgba, w, h) => imageDataURL(new ImageData(rgba, w, h)).split(",")[1] });
+		lastAnimReport = bundle.anim || null;
+		return JSON.stringify(bundle);
 	}
 
 	// The Godot bundle (one .export.json). The loose png / height / normal / pbr / footprints files are gone: the bundle holds them all.
@@ -508,9 +513,10 @@
 		if (!S.art) return toast("Open a tileset first.", "bad");
 		const name = exportName(), st = () => S.result.stats;
 		if (which !== "bundle") return;
-		const text = bundleJSON();
+		const text = await bundleJSON();
 		download(`${name}.export.json`, text);
-		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}`, st().unfilled ? "" : "ok");
+		const an = lastAnimReport, anNote = an ? ` · ${an.clips.length} animated clip${an.clips.length === 1 ? "" : "s"}${an.warnings.length ? `, ${an.warnings.length} animation warning${an.warnings.length === 1 ? "" : "s"} (Animate panel)` : ""}` : "";
+		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}${anNote}`, st().unfilled || (an && an.warnings.length) ? "" : "ok");
 		status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 	}
 

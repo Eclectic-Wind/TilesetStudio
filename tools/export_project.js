@@ -1,14 +1,15 @@
-// Exports a saved project (.studio.json) headless: the same Godot bundle (version 5) that Export ▸ Godot bundle writes, built by the
+// Exports a saved project (.studio.json) headless: the same Godot bundle (version 6) that Export ▸ Godot bundle writes, built by the
 // Studio's own Process and Bundle code run in a vm. Usage: node tools/export_project.js <in.studio.json> <out.export.json>
 // The tileset is decoded from the project's own PNG (zlib), so the atlas in the bundle is the project's PNG bytes; the browser
 // re-encodes it. Everything else matches, bar exportedAt.
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), zlib = require("zlib"), crypto = require("crypto");
 const root = path.join(__dirname, "..");
+const { encodePNG } = require("./png");
 const ctx = { console, Math, JSON, Map, Set, Float32Array, Uint8Array, Int32Array, Int16Array, Uint8ClampedArray, btoa };
 ctx.window = ctx;
 vm.createContext(ctx);
-for (const f of ["math", "proj", "shape", "mesh", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
+for (const f of ["math", "proj", "shape", "mesh", "rig", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
 const TS = ctx.TS, P = TS.Process;
 
 // Decodes a non-interlaced 8-bit PNG (any colour type) to RGBA8. Throws on anything else.
@@ -75,9 +76,17 @@ P.migrateKinds(objects);
 const result = P.run(objects, art, settings);
 result.pieceMap = P.pieces(objects, result, settings);
 
+// Animated tiles: each clip's Albedo sheet (a data URL in the project, as Aseprite sent it), decoded for TS.Bundle.anim.
+const anim = project.anim || null, sheets = new Map();
+for (const c of (anim && anim.clips) || []) {
+	const url = c.albedo || (c.id === anim.clip ? anim.albedo : null);
+	if (url && (c.models || []).length) { const s = decodePNG(Buffer.from(url.replace(/^data:image\/png;base64,/, ""), "base64")); sheets.set(c.id, { width: s.w, height: s.h, data: s.data }); }
+}
+
 const name = TS.Bundle.exportName(project.name, project.exportName);
 const bundle = TS.Bundle.build({
 	name, bundleId: project.bundleId || crypto.randomUUID(), atlas: project.tileset, art, objects, settings, result, now: new Date().toISOString(),
+	anim, albedoOf: (clip) => sheets.get(clip.id) || null, encodePNG: (rgba, w, h) => encodePNG(rgba, w, h).toString("base64"),
 });
 const text = JSON.stringify(bundle);
 fs.writeFileSync(outPath, text);
@@ -93,4 +102,12 @@ if (fp.walk) {
 		console.log(`    low seam -> ${JSON.stringify(sf.seams[0].to)} ${JSON.stringify(st.low)}; high seam -> ${JSON.stringify(sf.seams[1].to)} ${JSON.stringify(st.high)}; ${sf.blockers.length} blocker + ${sf.around.length} around polygon(s)`);
 	}
 	for (const w of fp.walk.warnings) console.log("  warning: " + w);
+}
+if (bundle.anim) {
+	console.log(`anim: ${bundle.anim.clips.length} clip(s)`);
+	for (const c of bundle.anim.clips) {
+		console.log(`  ${c.name}: ${c.frames} frames at ${c.fps} fps, ${c.loop}, shadow ${c.shadow}, collision ${c.collision}`);
+		for (const t of c.targets) console.log(`    piece ${t.piece} (${fp.pieces[t.piece - 1].names.join(" + ")}) ${t.source} rect [${t.rect}] ${t.cols}x${t.rows} frames per sheet, color ${Math.round(t.color.length / 1024)} KB${t.data ? ", data " + Math.round(t.data.length / 1024) + " KB" : ", no data (base frame's height and normal)"}`);
+	}
+	for (const w of bundle.anim.warnings) console.log("  warning: " + w);
 }

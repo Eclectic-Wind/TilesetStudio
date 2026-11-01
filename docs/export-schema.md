@@ -1,4 +1,57 @@
-# Godot bundle schema, version 5 (`<name>.export.json`)
+# Godot bundle schema, version 6 (`<name>.export.json`)
+
+Version 6 only **adds** to version 5 (below): every version 5 field keeps its shape, and a reader that ignores `anim` gets the base frame of every animated piece as an ordinary still tile (the atlas, `maps.data`, `maps.pieces` and the piece table are unchanged: no frame lives in the atlas grid, no cell moves, frames add no pieces and no paintable tiles).
+
+New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about. First version: **flipbooks** (frames painted in Aseprite, geometry unchanged), **static shadow and collision**. `source: "rig"` (bone-animated frames with their own height / normal data) is reserved and not written yet.
+
+## `anim`
+
+```
+anim: {
+  clips: [{
+    name, fps, frames,
+    loop: "loop" | "once" | "pingpong",   // what happens at the last frame. Playback itself (auto-play, from code) is the game's
+    shadow: "static",                    // the base frame's: "frames" is reserved
+    collision: "static",                 // always the base frame's
+    targets: [{
+      piece,                             // the animated piece: its number in footprints.pieces (1-based), as pieceIndex
+      rect: [x, y, w, h],                // atlas px, multiples of 32: the piece's art rect. Every frame is drawn here, in place of the piece
+      cols, rows,                        // the frames are packed cols per row, left to right then down, each w x h (frame f at ((f % cols) * w, floor(f / cols) * h))
+      source: "flipbook",                // "rig" reserved
+      color: "<base64 PNG>",             // cols*w x rows*h RGBA: the frames' albedo, as painted (transparent pixels show what is behind)
+      data?: "<base64 zlib>"             // reserved (rig): per-frame height / normal / material in maps.data's art-row layout.
+                                         // Absent = every frame reuses the base frame's height, normal and material: read maps.data at `rect`
+    }]
+  }],
+  warnings: [string]                     // for the artist, as the Animate panel shows them
+}
+```
+
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame. A frame can be smaller than `rect`: it is transparent where the piece's art is not.
+- The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
+- `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
+- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame has no art (height and normal are flat there); a rect reaching south of the piece's base row (oblique), which the game sorts by.
+
+## Making one in the Studio
+
+1. Model and paint the base frame as usual; the animated thing should be its own piece (its models joined by footprint, or one `piece` name).
+2. Animate mode: pick or add a clip, set the frame count and fps. Paint each frame in Aseprite's **Albedo** group (the link sends the sheet), or load an Albedo sheet.
+3. In the clip's **Game export** section: select the models the flipbook animates, press **Use selected models**; set **Loop**. The section lists what is exported and any warnings; **Export** unticks a clip that should not go into the bundle.
+4. Export ▸ Godot bundle. `node tools/export_project.js in.studio.json out.export.json` does the same headless and prints the targets and their sizes (each clip's `albedo` sheet is a data URL in the project).
+
+The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.json` and `samples/AnimSample.export.json` (a TV box with an 8-frame static clip, a flat puddle with a 6-frame ripple, painted headless).
+
+## Not in this round
+
+`source: "rig"` and `data`, `shadow: "frames"` and per-frame floor spans, animated collision, frame de-duplication, isometric (untested; the rect is in canvas px either way).
+
+---
+
+## Version 5 (earlier)
+
+> Describes version 5; version 6 above adds to it.
+
+### Godot bundle schema, version 5 (`<name>.export.json`)
 
 Version 5 only **adds** to version 4 (below): every version 4 field keeps its shape, so a version 4 reader still reads the file. What is new:
 
