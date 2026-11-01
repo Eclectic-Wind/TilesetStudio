@@ -315,8 +315,8 @@
 			const kindInferred = flat ? "floor" : h && heightMax >= wallH && Math.min(ew, ns) <= wallT ? (ew >= ns ? "wall_h" : "wall_v") : "furn";
 			const kindOverridden = P.KINDS.includes(o.kind);
 			const requested = P.collisionRequested(o);
-			const mode = requested !== "auto" ? requested : "footprint";
-			return { heightMin, heightMax, flat, kindInferred, kind: kindOverridden ? o.kind : kindInferred, kindOverridden, requested, mode,
+			const walkKind = P.walkOf(o), mode = requested !== "auto" ? requested : walkKind === "stairs" ? "none" : "footprint"; // a flight blocks through its walk polygons (P.walk)
+			return { heightMin, heightMax, flat, walk: walkKind, kindInferred, kind: kindOverridden ? o.kind : kindInferred, kindOverridden, requested, mode,
 				hull: hull(vi.map((i) => [o.verts[i][0], o.verts[i][1]])) };
 		});
 	};
@@ -742,6 +742,8 @@
 	// shape of version 2 (name, solid, z, footprint, roughness, metallic, collision.mode / polygons) is unchanged. The index of a
 	// model in `objects` below is what cells / cellOwners / clashes refer to.
 	//
+	// Bundle version 5 adds the model property `walk` and footprints.walk (see P.walk and docs/export-schema.md).
+	//
 	// Bundle version 4 (see addons/studio_import/BUNDLE_V4.md) adds: wallHeight / wallThickness (here and at the top level), per model
 	// pieceIndex (its piece's number, 1-based) and outline (its exact floor outline), and footprints.pieces, the piece table: one entry
 	// per piece, in order, its number being its position + 1. The kinds are now floor, wall_h, wall_v and furn.
@@ -754,6 +756,7 @@
 		const exported = objects.map((o, oi) => oi).filter((oi) => objects[oi].faces.length);
 		const idx = new Map(exported.map((oi, k) => [oi, k]));
 		const own = P.cellOwnership(objects, r, settings);
+		const walk = P.walk(objects, r, settings);
 		const bounds = (oi) => Mesh.bounds(objects[oi], Mesh.faceVerts(objects[oi]));
 		return {
 			version: 2,
@@ -775,7 +778,7 @@
 					footprint: hull(vi.map((i) => [round2(o.verts[i][0]), round2(o.verts[i][1])])),
 					roughness: o.mat.roughness, metallic: o.mat.metallic,
 					collision: Object.assign({ mode: c.mode, requested: role.requested }, c.mode === "footprint" ? { polygons: c.polygons } : {}),
-					kind: role.kind, kindInferred: !role.kindOverridden,
+					kind: role.kind, kindInferred: !role.kindOverridden, walk: role.walk,
 					heightMin: role.heightMin, heightMax: role.heightMax, flat: role.flat,
 					tags: typeof o.tags === "string" ? o.tags : "",
 					piece: typeof o.piece === "string" ? o.piece.trim() : "",
@@ -809,7 +812,144 @@
 			// Every occupied atlas cell and the models in it, then the cells two or more models share (one entry per pair).
 			cellOwners: own.owners.map((e) => ({ cell: e.cell, models: e.models.map((oi) => idx.get(oi)) })),
 			clashes: own.clashes.map((e) => ({ cell: e.cell, models: e.models.map((oi) => idx.get(oi)), samePiece: e.samePiece })),
+			...(walk.surfaces.length || walk.warnings.length ? { walk: { step: rule.step, body: rule.body, surfaces: walk.surfaces, warnings: walk.warnings } } : {}),
 		};
+	};
+
+	// --- walk (bundle version 5) ---
+	// Model property o.walk: "auto" (default, no walk behaviour) | "stairs". Reserved for later rounds: "top", "none".
+	// A stairs model is part of a flight; the flights are the stairs models of one piece (name flights apart with the piece name).
+	// Each flight becomes a surface: a plane fitted through its tread tops (the actor glides along it instead of popping one riser
+	// at a time; a single plane is at best half a riser off the treads), its two end edges (low / high) as seams, and two sets of
+	// collision polygons made like collision.polygons (floor px, the 24x12 feet box):
+	//   blockers  stop an actor standing ON the surface: a frame just outside its outline, open at the seams;
+	//   around    stop an actor on the ground (the surface below): the flight's footprint pulled in like a furn's, with a gate
+	//             cut into the low edge so the feet can reach the seam line.
+	// Ground is implicit (z = 0 where no surface). A seam leads to "ground", to a surface id, or to null: nothing in this asset
+	// (the game's level portal). Here a flight's low seam leads to "ground" when it starts within `step` of the ground, every
+	// other seam to null.
+	P.WALKS = ["auto", "stairs"];
+	P.walkOf = (o) => (o.walk === "stairs" ? "stairs" : "auto");
+	const WALK_FRAME = 16, WALK_GATE = COLLIDE_SOUTH + COLLIDE_MIN, WALK_GATE_INSET = 4;
+	// -> {surfaces: [...], warnings: [string]}; needs r.pieceMap (P.pieces). Cached on the result.
+	P.walk = (objects, r, settings) => {
+		if (r.walk) return r.walk;
+		const pm = r.pieceMap || (r.pieceMap = P.pieces(objects, r, settings));
+		const rule = P.bodyRule(settings), fl = r.floor, W = fl.top.length / fl.rows;
+		const idx = new Map();
+		objects.forEach((o, oi) => { if (o.faces.length) idx.set(oi, idx.size); });
+		const flights = new Map();
+		objects.forEach((o, oi) => {
+			if (!o.faces.length || P.walkOf(o) !== "stairs" || pm.pieceOf[oi] < 0) return;
+			if (!flights.has(pm.pieceOf[oi])) flights.set(pm.pieceOf[oi], []);
+			flights.get(pm.pieceOf[oi]).push(oi);
+		});
+		const surfaces = [], warnings = [], r2 = round2, r4 = (v) => Math.round(v * 10000) / 10000;
+		for (const [piece, members] of flights) {
+			const names = members.map((oi) => objects[oi].name).join(", "), own = new Set(members);
+			// The flight's cells: floor point -> top of the flight's own solid there (not what stands on it), and its lowest underside.
+			const cells = new Map();
+			let bottom = Infinity;
+			for (const oi of members)
+				for (const i of fl.covers[oi]) {
+					if (cells.has(i)) continue;
+					let t = -Infinity, b = Infinity;
+					for (let j = fl.pairStart[i]; j < fl.pairStart[i + 1]; j++) if (own.has(fl.pairObj[j])) { if (fl.pairB[j] > t) t = fl.pairB[j]; if (fl.pairA[j] < b) b = fl.pairA[j]; }
+					if (t === -Infinity) continue;
+					cells.set(i, t);
+					if (b < bottom) bottom = b;
+				}
+			if (cells.size < 2) { warnings.push(`stairs ${names}: no floor area, skipped`); continue; }
+			// Plane z = a + gx x + gy y through the tread tops (least squares at the cell centres).
+			let n = 0, mx = 0, my = 0, mz = 0;
+			for (const [i, z] of cells) { mx += (i % W) + 0.5; my += ((i / W) | 0) + 0.5; mz += z; n++; }
+			mx /= n; my /= n; mz /= n;
+			let sxx = 0, sxy = 0, syy = 0, sxz = 0, syz = 0;
+			for (const [i, z] of cells) { const x = (i % W) + 0.5 - mx, y = ((i / W) | 0) + 0.5 - my, dz = z - mz; sxx += x * x; sxy += x * y; syy += y * y; sxz += x * dz; syz += y * dz; }
+			const det = sxx * syy - sxy * sxy;
+			let gx, gy;
+			if (Math.abs(det) > 1e-9 * (sxx * syy + 1)) { gx = (sxz * syy - syz * sxy) / det; gy = (syz * sxx - sxz * sxy) / det; }
+			else if (sxx >= syy) { gx = sxx ? sxz / sxx : 0; gy = 0; }
+			else { gx = 0; gy = syy ? syz / syy : 0; }
+			const grad = Math.hypot(gx, gy);
+			if (grad < 0.05) { warnings.push(`stairs ${names}: the treads do not rise across the footprint (flat), skipped`); continue; }
+			// Direction low -> high (floor XY, unit). Within 3 degrees of an axis it snaps to it, then the slope is refitted along it.
+			let dx = gx / grad, dy = gy / grad;
+			if (Math.abs(dx) < 0.0523) { dx = 0; dy = Math.sign(dy) || -1; } else if (Math.abs(dy) < 0.0523) { dy = 0; dx = Math.sign(dx) || 1; }
+			let ss = 0, sz2 = 0;
+			for (const [i, z] of cells) { const s = ((i % W) + 0.5 - mx) * dx + (((i / W) | 0) + 0.5 - my) * dy; ss += s * s; sz2 += s * (z - mz); }
+			const k = ss ? sz2 / ss : grad, a = mz - k * (mx * dx + my * dy);
+			const planeAt = (x, y) => a + k * (x * dx + y * dy);
+			let fit = 0, top = -Infinity;
+			const treads = new Set();
+			for (const [i, z] of cells) {
+				const e = Math.abs(z - planeAt((i % W) + 0.5, ((i / W) | 0) + 0.5));
+				if (e > fit) fit = e;
+				if (z > top) top = z;
+				treads.add(Math.round(z * 2));
+			}
+			// Extent in (s along dir, t across): the corners of every cell.
+			let sMin = Infinity, sMax = -Infinity, tMin = Infinity, tMax = -Infinity;
+			for (const i of cells.keys()) {
+				const cx = i % W, cy = (i / W) | 0;
+				for (let q = 0; q < 4; q++) {
+					const x = cx + (q & 1), y = cy + (q >> 1), s = x * dx + y * dy, t = -x * dy + y * dx;
+					if (s < sMin) sMin = s; if (s > sMax) sMax = s; if (t < tMin) tMin = t; if (t > tMax) tMax = t;
+				}
+			}
+			const at = (s, t) => [r2(s * dx - t * dy), r2(s * dy + t * dx)];
+			const low = [at(sMin, tMin), at(sMin, tMax)], high = [at(sMax, tMin), at(sMax, tMax)];
+			const zLow = Math.max(0, bottom), zHigh = top, rise = zHigh - zLow, riser = rise / treads.size;
+			if (fit > Math.max(riser, rule.step)) warnings.push(`stairs ${names}: not one straight flight (the treads are up to ${r2(fit)} px off their plane, a tread is ${r2(riser)} px): name each flight with its own piece`);
+			if (tMax - tMin < FEET.w + 2 * WALK_GATE_INSET) warnings.push(`stairs ${names}: ${r2(tMax - tMin)} px wide, too narrow for the ${FEET.w} px feet box`);
+			if (zLow > rule.step) warnings.push(`stairs ${names}: start ${r2(zLow)} px above the ground, so the low seam is a portal too`);
+			// Masks on a local grid: the flight, then the frame outside it and the pulled-in footprint.
+			const M = WALK_FRAME + WALK_GATE + 2;
+			let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+			for (const i of cells.keys()) { const x = i % W, y = (i / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+			const ox = Math.max(0, x0 - M), oy = Math.max(0, y0 - M), w = x1 + 1 + M - ox, h = y1 + 1 + M - oy;
+			const m = new Uint8Array(w * h);
+			for (const i of cells.keys()) m[(((i / W) | 0) - oy) * w + (i % W) - ox] = 1;
+			const sOf = (x, y) => (x + ox + 0.5) * dx + (y + oy + 0.5) * dy, tOf = (x, y) => -(x + ox + 0.5) * dy + (y + oy + 0.5) * dx;
+			// around: the footprint without a gate at the low edge (full width but the corner stubs, which keep the sides shut).
+			const foot = m.slice();
+			for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+				if (!foot[y * w + x]) continue;
+				const t = tOf(x, y);
+				if (sOf(x, y) - sMin < WALK_GATE && t > tMin + WALK_GATE_INSET && t < tMax - WALK_GATE_INSET) foot[y * w + x] = 0;
+			}
+			const around = P.trace(bodyMask(foot, w, h), w, h).map((poly) => poly.map(([x, y]) => [x + ox, y + oy]));
+			// blockers: the ring WALK_FRAME px wide round the outline (Chebyshev), minus the cells beyond the two end edges.
+			const wide = new Uint8Array(w * h), ring = new Uint8Array(w * h), R = WALK_FRAME;
+			for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+				if (!m[y * w + x]) continue;
+				for (let q = Math.max(0, x - R); q <= Math.min(w - 1, x + R); q++) wide[y * w + q] = 1;
+			}
+			for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) {
+				if (!wide[y * w + x]) continue;
+				for (let q = Math.max(0, y - R); q <= Math.min(h - 1, y + R); q++) if (!m[q * w + x]) ring[q * w + x] = 1;
+			}
+			for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+				if (!ring[y * w + x]) continue;
+				const s = sOf(x, y), t = tOf(x, y);
+				if (t > tMin && t < tMax && (s < sMin || s > sMax)) ring[y * w + x] = 0;
+			}
+			const blockers = P.trace(ring, w, h).map((poly) => poly.map(([x, y]) => [x + ox, y + oy]));
+			const outline = outlineOf([...cells.keys()], W);
+			surfaces.push({
+				id: surfaces.length, models: members.map((oi) => idx.get(oi)), pieces: [piece + 1],
+				plane: [r4(a), r4(k * dx), r4(k * dy)],
+				fit: { max: r2(fit), treads: treads.size, riser: r2(riser) },
+				z: [r2(zLow), r2(zHigh)],
+				outline, blockers, around,
+				seams: [
+					{ end: "low", edge: low, z: r2(zLow), to: zLow <= rule.step ? "ground" : null },
+					{ end: "high", edge: high, z: r2(zHigh), to: null },
+				],
+				stairs: { dir: [r4(dx), r4(dy)], low, high, zLow: r2(zLow), zHigh: r2(zHigh), rise: r2(rise), run: r2(sMax - sMin), width: r2(tMax - tMin), slope: r4(k) },
+			});
+		}
+		return (r.walk = { surfaces, warnings });
 	};
 
 	// The exact outline of a set of floor points (flat indices into a grid W wide): the traced (P.trace) mask of them, in floor-plan px.

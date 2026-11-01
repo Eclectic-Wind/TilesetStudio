@@ -1,4 +1,4 @@
-// Exports a saved project (.studio.json) headless: the same Godot bundle (version 4) that Export ▸ Godot bundle writes, built by the
+// Exports a saved project (.studio.json) headless: the same Godot bundle (version 5) that Export ▸ Godot bundle writes, built by the
 // Studio's own Process and Bundle code run in a vm. Usage: node tools/export_project.js <in.studio.json> <out.export.json>
 // The tileset is decoded from the project's own PNG (zlib), so the atlas in the bundle is the project's PNG bytes; the browser
 // re-encodes it. Everything else matches, bar exportedAt.
@@ -85,3 +85,12 @@ const st = result.stats, fp = bundle.footprints;
 console.log(`wrote ${outPath} (${Math.round(text.length / 1024)} KB): ${fp.objects.length} models, ${fp.pieces.length} pieces, ` +
 	`${st.unfilled} art px uncovered`);
 for (const o of fp.objects) console.log(`  ${o.name.padEnd(12)} ${o.kind.padEnd(7)} ${o.kindInferred ? "inferred" : "set     "} piece ${o.pieceIndex}  h ${o.heightMin}-${o.heightMax}`);
+if (fp.walk) {
+	console.log(`walk: ${fp.walk.surfaces.length} surface(s)`);
+	for (const sf of fp.walk.surfaces) {
+		const st = sf.stairs;
+		console.log(`  surface ${sf.id} stairs [${sf.models.map((m) => fp.objects[m].name).join(", ")}] piece ${sf.pieces}: ${sf.fit.treads} treads of ${sf.fit.riser} px, rise ${st.rise} (z ${st.zLow}-${st.zHigh}) over ${st.run} going [${st.dir}], ${st.width} wide, plane [${sf.plane}] fit ±${sf.fit.max}`);
+		console.log(`    low seam -> ${JSON.stringify(sf.seams[0].to)} ${JSON.stringify(st.low)}; high seam -> ${JSON.stringify(sf.seams[1].to)} ${JSON.stringify(st.high)}; ${sf.blockers.length} blocker + ${sf.around.length} around polygon(s)`);
+	}
+	for (const w of fp.walk.warnings) console.log("  warning: " + w);
+}

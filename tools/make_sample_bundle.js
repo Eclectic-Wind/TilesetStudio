@@ -1,4 +1,4 @@
-// Builds samples/sample.export.json: a version 4 Godot bundle for a small scene (flat rug, table, back wall, side wall) by running the
+// Builds samples/sample.export.json: a version 5 Godot bundle for a small scene (flat rug, table, back wall, side wall) by running the
 // Studio's own Process and Bundle code headless. Usage: node tools/make_sample_bundle.js [out.json]
 // The envelope is TS.Bundle.build (js/bundle.js), the same one Export ▸ Godot bundle and tools/export_project.js write; the atlas is a
 // flat-coloured stand-in drawn here.

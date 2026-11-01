@@ -1,4 +1,71 @@
-# Godot bundle schema, version 4 (`<name>.export.json`)
+# Godot bundle schema, version 5 (`<name>.export.json`)
+
+Version 5 only **adds** to version 4 (below): every version 4 field keeps its shape, so a version 4 reader still reads the file. What is new:
+
+- A model property `walk` (`footprints.objects[].walk`): `"auto"` (default, nothing) or `"stairs"`. `"top"` and `"none"` are reserved for a later round; a reader should treat any value it does not know as `"auto"`.
+- `footprints.walk`, written only when the project has a stairs model (or a warning about one): the **surfaces** the stairs models make.
+- A model with `walk: "stairs"` and no explicit collision choice resolves to `collision.mode: "none"` (its blocking comes from the surface polygons below). An explicit `strip` / `footprint` is still honoured.
+
+`kind` is unchanged: a stairs model is `furn` (or whatever the artist set) and renders, shadows and sorts as such. `walk` is separate because a piece's kind is the strongest of its models' kinds: a flight touching a wall would otherwise lose its stairs.
+
+Coordinates as in version 4: floor-plan px (X east, Y south, Z up), world XY in both projections, so everything below is projection independent. Heights are absolute model z, with the asset modelled at local z = 0 (the game offsets a storey).
+
+## Making a flight
+
+Set **Walk ▸ stairs** on every tread model of the flight. A flight is the stairs models of one **piece** (models whose footprints come within 2 px join; give separate flights different `piece` names). Other models in the piece (side walls, a landing) are not part of the flight and are not touched. A flight is at its best axis-aligned, 16 px treads and risers; the direction is a free unit vector.
+
+## `footprints.walk`
+
+| field | type | meaning |
+|---|---|---|
+| `step`, `body` | px | the rule the walk data was made with (the Processing settings; same as `collision.step`/`body`) |
+| `surfaces` | `[surface]` | one per flight; `id` is the position |
+| `warnings` | `[string]` | for the artist: a flight that is not one straight run, too narrow for the feet box, raised, skipped |
+
+A surface:
+
+| field | type | meaning |
+|---|---|---|
+| `id` | int | position in `surfaces` |
+| `models` | `[int]` | indices into `footprints.objects` of the flight's tread models |
+| `pieces` | `[int]` | piece numbers (1-based, as `pieceIndex`) holding them. **Draw rule for the game**: an actor standing on this surface draws in front of these pieces (everything south of the feet on a rising flight is lower than the feet, everything north is behind them) |
+| `plane` | `[a, b, c]` | surface height at floor point (x, y): `z = a + b*x + c*y`, from a least-squares fit through the tread tops at the cell centres. Clamp to `z` below. **Not** an edge-to-edge ramp: a straight line is at best half a riser off a staircase (+-8.4 px for 16 px treads), where a ramp from the low edge to the high edge would leave the tread up to a riser above the feet |
+| `fit` | `{max, treads, riser}` | worst `|tread top - plane|` (px), number of distinct tread heights, `rise / treads` |
+| `z` | `[low, high]` | height at the foot of the flight / top of the highest tread. Clamp `plane` to it |
+| `outline` | `[[[x, y], ...], ...]` | the flight's exact floor outline, as `pieces[].outline` |
+| `blockers` | `[[[x, y], ...], ...]` | polygons (floor px) that stop an actor **standing on the surface**: a frame 16 px wide just outside the outline, open across both end edges (the seams). The feet box collides with them as with `collision.polygons` |
+| `around` | `[[[x, y], ...], ...]` | polygons that stop an actor on the **ground** (the surface below / around): the flight's footprint pulled in like a footprint-mode collision (sides 3 px, south edge 8 px), with a gate cut into the low edge so the feet can reach the low seam; the corner stubs keep the sides shut. Replaces the flight's own `collision.polygons` |
+| `seams` | `[seam]` | the flight's two ends |
+| `stairs` | object | the stairs table |
+
+A seam: `{end: "low" | "high", edge: [[x, y], [x, y]], z, to}`. `edge` is the end edge as a floor-plan line; `z` its height. `to` is where it leads: `"ground"` (the low seam, when the flight starts within `step` of the ground), a surface id (reserved), or `null`: nothing in this asset, i.e. the game's level portal (the high seam, and a raised low seam).
+
+`stairs`: `{dir: [dx, dy], low, high, zLow, zHigh, rise, run, width, slope}`. `dir` is the unit vector low -> high in floor XY (it snaps to an axis within 3 degrees); `low` / `high` are the seams' edges; `rise = zHigh - zLow`; `run` the extent along `dir`, `width` across; `slope` = dz per floor px along `dir`.
+
+### What the game does with it
+
+1. Standing on the ground: collide with `around` (and the rest of `collision.polygons`). Feet cross the low seam line (inside `low`'s span) -> the actor is on the surface.
+2. On the surface: collide with `blockers`; feet height = `clamp(plane(x, y), z[0], z[1])`. At the low seam the plane is up to half a riser from the ground (9.3 px for the 16 px sample), so blend over a few px.
+3. Feet cross the high seam: `to: null` -> level portal; the game moves the actor up a storey, z continuous.
+4. Draw an actor on the surface in front of `pieces` (see above).
+
+The headless dump `node tools/export_project.js in.studio.json out.export.json` prints the surfaces and warnings.
+
+### Measured on the TwoStorey flight (6 treads, 16 x 16 px, 64 wide, rising north)
+
+`plane [196.0152, 0, -0.9723]` (the slope is 35/36 of 1: a least-squares line through a staircase), `fit.max 8.4`, `z [0, 96]`, `dir [0, -1]`, low seam `[[224,192],[288,192]]` to `"ground"`, high seam `[[224,96],[288,96]]` to `null`; `blockers` two 16 px side strips `[[208,80],[224,80],[224,208],[208,208]]` and its mirror; `around` the pulled-in footprint 227..285 x 96..172 plus two 2 px corner stubs at y 180..184.
+
+### Not in this round
+
+Raised flat surfaces (porch, balcony tops, rails on them), `walk: top | none`, surfaces that connect to each other, a Walk output view, `piece.overhead`, a `storeyHeight` check. A project without stairs changes only in two ways: the bundle `version` is 5 and `footprints.objects[].walk` is `"auto"` and there is no `footprints.walk`.
+
+---
+
+## Version 4 (earlier)
+
+> Describes version 4; version 5 above adds to it.
+
+### Godot bundle schema, version 4 (`<name>.export.json`)
 
 Version 4 only **adds** to version 3 (below): every version 3 field keeps its shape, so a version 3 reader still reads the file. Four things change:
 

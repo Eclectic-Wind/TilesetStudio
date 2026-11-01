@@ -1,10 +1,10 @@
-// The Godot bundle (`name.export.json`, version 4; docs/export-schema.md). One envelope for Export ▸ Godot bundle (js/app.js) and the
+// The Godot bundle (`name.export.json`, version 5; docs/export-schema.md). One envelope for Export ▸ Godot bundle (js/app.js) and the
 // headless tool (tools/export_project.js), so the two can't drift. Needs TS.Process (process.js) and a processed result whose
 // pieceMap is set (Process.pieces).
 "use strict";
 (function () {
 	const Bundle = (TS.Bundle = {});
-	Bundle.VERSION = 4;
+	Bundle.VERSION = 5;
 	// The Studio had no version number yet: this is the one written to bundles (bump it by hand per release).
 	Bundle.STUDIO_VERSION = "1.0.0";
 	Bundle.cleanName = (s) => String(s || "").trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "");
