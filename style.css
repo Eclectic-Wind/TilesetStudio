@@ -88,9 +88,23 @@ body.noart #b_process, body.noart .export > button, body.noart #b_save { opacity
 .linkstate { color: var(--dim); overflow-wrap: anywhere; }
 .linkstate.warn { color: var(--bad); }
 .linkstate.ok { color: var(--good); }
-.asrow { display: flex; align-items: center; gap: 4px; }
-.asrow #as_online { flex: 1; }
-.asrow .round { width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 50%; flex: none; margin-right: 6px; text-align: center; }
+.aseprite-menu button small { display: block; font-weight: normal; color: var(--dim); }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.assteps { list-style: none; margin: 4px 0; padding: 0 8px; }
+.assteps li { position: relative; padding: 3px 0 5px 20px; color: var(--dim); }
+.assteps li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--dim); box-sizing: border-box; }
+.assteps li b { font-weight: normal; }
+.assteps li small { display: block; overflow-wrap: anywhere; }
+.assteps li.now { color: var(--text); }
+.assteps li.now b { font-weight: 600; }
+.assteps li.now::before { border-color: var(--accent); background: var(--accent); }
+.assteps li.done::before { border-color: var(--good); background: var(--good); }
+.assteps li.bad { color: var(--text); }
+.assteps li.bad small { color: var(--bad); }
+.assteps li.bad::before { border-color: var(--bad); background: var(--bad); }
+.asroom { display: flex; gap: 4px; margin-top: 4px; }
+.asroom input { flex: 1; min-width: 0; }
+.aseprite-menu .asroom button { width: auto; flex: none; border: 1px solid var(--line); }
 #as_roomrow { flex-wrap: wrap; align-items: center; white-space: nowrap; }
 #as_roomrow input { flex: 1 1 150px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
 #as_roomrow button { display: inline-block; width: auto; flex: none; white-space: nowrap; padding: 3px 8px; border: 1px solid var(--line); }

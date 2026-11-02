@@ -209,8 +209,12 @@
 
 	// --- the Aseprite link ---
 
+	let linkedShown = false;
 	function setLink(state, text) {
+		const wasLinked = linkedShown;
+		linkedShown = Link.linked();
 		linkState = [state, text];
+		if (on && wasLinked !== linkedShown) render(); // the buttons follow
 		const el = $("an_linkstate");
 		if (el) { el.textContent = text; el.className = "linkstate " + state; }
 		const bar = $("an_linkdot");
@@ -393,9 +397,8 @@
 		h += section("weights", "Weights", weightsPanel(a, bone));
 		h += section("sheet", "Preview &amp; Aseprite", `<div class="arow"><label title="What the preview below shows. The big Lit / Normals tab on the right plays the same frames.">Preview <select id="an_pmode"><option value="lit"${previewMode === "lit" ? " selected" : ""}>Lit</option><option value="normal"${previewMode === "normal" ? " selected" : ""}>Normal</option><option value="albedo"${previewMode === "albedo" ? " selected" : ""}>Albedo</option></select></label></div><canvas id="an_prev" class="prev" title="This frame, lit by the normal map and your Albedo. Move the pointer over it to move the light."></canvas>
 			<p id="an_sheetinfo" class="dim">${sheetText()}</p>
-			<div class="arow"><button id="an_link" title="Pick the folder the Aseprite extension saves into. Studio writes normal.png there and reads albedo.png from it.">${Link.linked() ? "Re-link folder…" : "Link Aseprite folder…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
+			<div class="arow"><button id="an_link" title="Link to Aseprite online or through a shared folder, and see each step of the link">${Link.linked() ? "Link status…" : "Link Aseprite…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
 			<p class="linkline"><span id="an_linkdot" class="dot ${linkState[0]}"></span><span id="an_linkstate" class="linkstate ${linkState[0]}">${esc(linkState[1])}</span></p>
-			${Link.supported ? "" : '<p class="dim">This browser can\'t watch a folder; use the buttons below (Chrome or Edge can link live).</p>'}
 			<div class="arow"><button id="an_dl" title="Download the normal-map sheet as a PNG to put in Aseprite">Download normal sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`);
 		h += section("export", `Game export${warned ? ` <span class="warn">⚠ ${warned}</span>` : ""}`, gameExport);
 		// The panel is rebuilt on every edit: keep its scroll, and let Tab reach the next field though the one it left is gone.
@@ -588,9 +591,7 @@
 			q("an_keydel").onclick = () => edit(() => Rig.deleteKey(c, bone.id, a.frame));
 			q("an_keyrest").onclick = () => edit(() => Rig.setKey(c, bone.id, a.frame, [0, 0, 0], [0, 0, 0]));
 		}
-		q("an_link").onclick = async () => {
-			try { await Link.connect(); await renderSheet(); render(); } catch (e) { if (e.name !== "AbortError") api().toast(e.message, "bad"); }
-		};
+		q("an_link").onclick = (e) => { e.stopPropagation(); $("b_aseprite").nextElementSibling.classList.add("open"); }; // one place to link, from the panel or the top bar
 		if (q("an_unlink")) q("an_unlink").onclick = () => { Link.disconnect(); render(); };
 		q("an_dl").onclick = downloadSheet;
 		q("an_ld").onclick = loadAlbedoFile;

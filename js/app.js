@@ -611,11 +611,38 @@
 			asepriteState("ok", `Sent normal.png (${w}x${h}) at ${new Date().toLocaleTimeString()}.`);
 		} catch (e) { asepriteState("warn", "Could not write to the folder: " + e.message); }
 	}
+	// Green only means Aseprite is really there and nothing is wrong on its side.
+	function linkHealth(state) {
+		const Link = TS.Link;
+		if (!Link.linked() || state === "warn") return state;
+		if (!Link.peer) return "wait";
+		return Link.peer.problem ? "warn" : "ok";
+	}
 	function asepriteState(state, text) {
-		$("as_state").textContent = text; $("as_state").className = "linkstate " + state; $("as_dot").className = "dot " + state;
-		const linked = TS.Link.linked();
-		$("as_link").textContent = linked ? "Re-link folder…" : "Link Aseprite folder…";
-		$("as_send").hidden = $("as_unlink").hidden = !linked;
+		const Link = TS.Link, linked = Link.linked(), p = Link.peer, health = linkHealth(state);
+		$("as_state").textContent = text; $("as_state").className = "linkstate " + state; $("as_dot").className = "dot " + health;
+		$("as_b_tip").textContent = !linked ? "" : health === "ok" ? "Aseprite is live" : health === "warn" ? "Aseprite link needs a look" : "Waiting for Aseprite";
+		$("as_idle").hidden = linked;
+		$("as_steps").hidden = !linked;
+		$("as_unlink").hidden = !linked;
+		$("as_send").hidden = !linked || Link.adoptPending; // nothing goes out until Studio has taken Aseprite's file
+		$("as_newroom").hidden = !Link.relayRoom();
+		$("as_roomrow").hidden = !Link.relayRoom();
+		$("as_mode").textContent = !linked ? "" : Link.adoptPending ? (S.art ? "Starting from the Aseprite file: it overwrites this tileset's art." : "Starting from the Aseprite file.") : Link.origin === "studio" ? "Started from this tileset." : "Started from the Aseprite file.";
+		if (!linked) return;
+		const step = (n, cls, title, detail) => {
+			$("as_s" + n).className = cls;
+			$(`as_s${n}t`).textContent = title;
+			if (n > 1) $(`as_s${n}d`).textContent = detail || "";
+		};
+		const online = !!Link.relayRoom(), adopting = Link.adoptPending;
+		step(1, !online || (Link.relayOpen() && p) ? "done" : "now", online ? (!Link.relayOpen() ? "Connecting to the relay…" : p ? "Room code" : "Copy this room code") : "Folder linked");
+		step(2, p ? "done" : "now", p ? `Aseprite joined: ${p.file}` : "Join from Aseprite",
+			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : `File ▸ Scripts ▸ Tileset Studio Link${online ? " (online)…, paste the code, press Link" : "…, and pick any file in this folder"}.`);
+		if (adopting) step(3, p ? "now" : "", "Normal map arrives", "After Studio has taken the Aseprite file.");
+		else step(3, p && p.normal ? "done" : p ? "now" : "", p && p.normal ? "Normal map is in Aseprite" : "Normal map arrives", p && p.normal ? "Locked layer Normal (Studio)." : "");
+		const sent = Link.lastAlbedo ? `Last picture received at ${new Date(Link.lastAlbedo).toLocaleTimeString()}.` : "";
+		step(4, p && p.problem ? "bad" : Link.lastAlbedo ? "done" : p ? "now" : "", "Paint in the group named Albedo", p && p.problem ? p.problem : sent);
 	}
 	function firstTile(img) {
 		if (!S.art || (img.width === S.art.w && img.height === S.art.h) || img.width < S.art.w || img.height < S.art.h) return img;
@@ -684,12 +711,24 @@
 	function asepriteInit() {
 		const Link = TS.Link, animAlbedo = Link.onAlbedo, animStatus = Link.onStatus;
 		Link.onAlbedo = (img) => (TS.AnimUI && TS.AnimUI.on && !Link.adoptPending ? animAlbedo(img) : asepriteAlbedo(img));
-		Link.onStatus = (state, text) => { if (animStatus) animStatus(state, text); asepriteState(state, text); };
+		Link.onStatus = (state, text) => { if (animStatus) animStatus(linkHealth(state), text); asepriteState(state, text); };
+		const menu = $("b_aseprite").nextElementSibling;
+		// Choosing the starting point happens in a dialog, which closes the menu: open it again to show the steps.
 		$("as_link").onclick = async () => {
 			if (!(await askImport())) return;
-			try { await Link.connect(); asepriteSend(); } catch (e) { if (e.name !== "AbortError") toast(e.message, "bad"); }
+			try { await Link.connect(); asepriteSend(); menu.classList.add("open"); } catch (e) { if (e.name !== "AbortError") toast(e.message, "bad"); }
 		};
-		$("as_unlink").onclick = () => { Link.disconnect(); $("as_roomrow").hidden = true; $("as_mode").textContent = ""; };
+		$("as_unlink").onclick = () => Link.disconnect();
+		// Aseprite joining, leaving or running into a problem is news when the menu is closed: the user is probably painting.
+		let peerProblem = null;
+		Link.onPeer = (p, was) => {
+			const quiet = menu.classList.contains("open"), problem = p ? p.problem : null; // an open menu already shows all of it
+			if (!quiet && p && !was) toast(`Aseprite joined: ${p.file}`, "ok");
+			else if (!quiet && !p && was && Link.linked()) toast("Aseprite left the link.", "bad");
+			if (!quiet && problem && problem !== peerProblem) toast(problem, "bad");
+			peerProblem = problem;
+			Link.onStatus(p ? (problem ? "warn" : "ok") : "wait", p ? (problem ? "Aseprite needs attention." : p.text || "Aseprite is live.") : Link.linked() ? "Waiting for Aseprite." : "Not linked.");
+		};
 		// Online: the room code is kept in this browser so Aseprite's saved code keeps working.
 		Link.onRelayOpen = asepriteSend;
 		$("as_online").onclick = async () => {
@@ -697,13 +736,16 @@
 			let room = TS.store.get("tsLinkRoom"); // storage blocked: a new code each time
 			if (!room) { room = Link.newRoom(); TS.store.set("tsLinkRoom", room); }
 			try { Link.connectRelay(room); } catch (e) { return toast(e.message, "bad"); }
-			$("as_room").value = room; $("as_roomrow").hidden = false;
+			$("as_room").value = room;
+			asepriteState("wait", "Connecting to the relay…");
+			menu.classList.add("open");
 		};
 		// A fresh code: whoever holds the old one (Aseprite included) is cut off until they are given the new one.
 		$("as_newroom").onclick = (e) => {
 			e.preventDefault();
 			const room = Link.newRoom();
 			TS.store.set("tsLinkRoom", room);
+			if (Link.origin === "studio" && S.art) Link.artPending = new ImageData(new Uint8ClampedArray(S.art.data), S.art.w, S.art.h); // whoever joins the new room still gets it
 			try { Link.connectRelay(room); } catch (err) { return toast(err.message, "bad"); }
 			$("as_room").value = room;
 			toast("New room code. The old one no longer reaches you; copy this one into Aseprite to link again.", "ok");
@@ -711,12 +753,12 @@
 		$("as_copy").onclick = (e) => { e.preventDefault(); navigator.clipboard.writeText($("as_room").value).then(() => toast("Room code copied. Paste it in Aseprite.", "ok"), () => $("as_room").select()); };
 		if (!Link.supported) $("as_link").hidden = true;
 		const help = (open) => $("as_help").classList.toggle("open", open);
-		$("as_help_btn").onclick = (e) => { e.stopPropagation(); $("b_aseprite").nextElementSibling.classList.remove("open"); help(true); $("as_help_close").focus(); };
+		$("as_help_btn").onclick = (e) => { e.stopPropagation(); menu.classList.remove("open"); help(true); $("as_help_close").focus(); };
 		$("as_help_close").onclick = () => help(false);
 		$("as_help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") help(false); });
 		$("as_help").addEventListener("click", (e) => { if (e.target === $("as_help")) help(false); });
 		$("as_send").onclick = asepriteSend;
-		if (!Link.supported) asepriteState("off", "Not linked. This browser can't watch a folder, so use “Link online”.");
+		asepriteState("off", Link.supported ? "Not linked." : "Not linked. This browser can't watch a folder, so use “Link online”.");
 	}
 
 	// One warning for everything that makes the importer misread the tile cells: the Pieces view's conflicts and floating art,

@@ -12,6 +12,9 @@
 --
 -- Two ways to link: a shared folder (Chrome / Edge in Studio), or "Tileset Studio Link (online)...", where both programs dial out to a
 -- small relay with a shared room code, so Studio can run in any browser. Needs Aseprite 1.3 or newer (WebSocket support).
+--
+-- Presence: Studio only takes pictures from an extension that proves it is there now. Online we answer its pings; in the folder we keep
+-- rewriting aseprite_status.json. Both carry this file's name and size and anything wrong here, so Studio can show them.
 
 local ALBEDO_GROUP = "albedo"
 local NORMAL_LAYER = "Normal (Studio)"
@@ -75,6 +78,7 @@ local function parseMeta(text)
     art = text:find('"art"%s*:%s*true') ~= nil,
     adopt = text:find('"adopt"%s*:%s*true') ~= nil,
     origin = text:match('"origin"%s*:%s*"(%a+)"'),
+    session = text:match('"session"%s*:%s*"(%w+)"'),
     clip = text:match('"clip"%s*:%s*"(%w+)"'), clipName = text:match('"clipName"%s*:%s*"([^"]*)"'),
   }
 end
@@ -109,7 +113,45 @@ end
 local function say(text, problem)
   if not state then return end
   if problem then state.problem = text elseif state.problem then return end
+  state.text = text
   if state.dlg then state.dlg:modify{ id = "status", text = text } end
+end
+
+-- Something here is stopping the Albedo from going out. Studio shows it too; the next picture sent clears it.
+local function blocked(text)
+  state.issue = text
+  say(text)
+end
+
+local function jsonText(s)
+  return '"' .. (tostring(s):gsub('[%c"\\]', " ")) .. '"'
+end
+
+-- What Studio shows about this side.
+local function statusFields()
+  local sprite = state.sprite
+  local name = (sprite.filename and sprite.filename ~= "") and app.fs.fileName(sprite.filename) or "(unsaved sprite)"
+  local problem = state.problem or state.issue
+  return string.format('"file":%s,"w":%d,"h":%d,"frames":%d,"normal":%s,"problem":%s,"text":%s',
+    jsonText(name), sprite.width, sprite.height, #sprite.frames, tostring(state.normal == true),
+    problem and jsonText(problem) or "null", jsonText(state.text or ""))
+end
+
+local function writeHeartbeat()
+  state.beat = (state.beat or (os.time() % 100000) * 10) + 1
+  local f = io.open(join(state.folder, "aseprite_status.json"), "w")
+  if not f then return end
+  f:write(string.format('{"t":"status","beat":%d,"started":%d,%s}', state.beat, state.started, statusFields()))
+  f:close()
+end
+
+-- A new link from Studio (it may be the same Studio, re-linked): the once-per-link work starts over.
+local function noteSession(meta)
+  if meta.session == state.session then return end
+  state.session = meta.session
+  state.artDone, state.artPath, state.fitted, state.artWait, state.lastSent, state.normal = nil, nil, nil, nil, nil, nil
+  state.problem = nil
+  state.dirty = true
 end
 
 -- The link is bound to ONE sprite: the one active when it was started. Other open files are never read or changed. Edits made by the
@@ -152,12 +194,23 @@ local function relayReceive(mt, data, err)
     say("Online in room " .. state.room .. ". Waiting for Studio.")
   elseif mt == WebSocketMessageType.CLOSE or mt == WebSocketMessageType.ERROR then
     state.online = false
+    state.pingAt = nil
     say("Relay not connected" .. ((err and err ~= "") and (": " .. err) or "") .. ". Retrying...")
   elseif mt == WebSocketMessageType.TEXT then
+    if data:find('"t"%s*:%s*"ping"') then
+      local token = data:match('"token"%s*:%s*"(%w+)"')
+      if token ~= state.studioToken then -- Studio (re)connected: it ignores what came before, so send it the picture again
+        state.studioToken, state.lastSent, state.dirty = token, nil, true
+      end
+      state.pingAt = os.time()
+      local ok, fields = pcall(statusFields)
+      if ok and token then state.ws:sendText(string.format('{"t":"pong","token":"%s",%s}', token, fields)) end
+      return
+    end
     -- Older Studio builds sent the layout without a "t" tag, so anything that parses as a layout and is not a frames message counts.
     if not data:find('"t"%s*:%s*"frames"') then
       local meta = parseMeta(data)
-      if meta then state.meta = meta end
+      if meta then noteSession(meta) state.meta = meta end
     end
   elseif mt == WebSocketMessageType.BINARY and #data >= 3 and data:byte(1) == 3 then
     -- kind 3: the tileset's art, sent once when linking
@@ -195,8 +248,8 @@ local sendFrames
 local function exportAlbedo()
   local sprite = state.sprite
   local group = findGroup(sprite.layers, ALBEDO_GROUP)
-  if not group then say("No group named Albedo. Create one and paint inside it.") return end
-  if sprite.colorMode ~= ColorMode.RGB then say("Use RGB colour mode (Sprite > Color Mode).") return end
+  if not group then blocked("This file has no group named Albedo. Press \"Set up file\" in Aseprite's link window.") return end
+  if sprite.colorMode ~= ColorMode.RGB then blocked("This file is not in RGB colour. Press \"Set up file\" in Aseprite's link window.") return end
   local meta = state.meta
   local anim = meta and meta.anim
   local first, n = 1, 1
@@ -206,6 +259,7 @@ local function exportAlbedo()
   end
   local cw, ch = sprite.width, sprite.height
   local function deliver(sheet)
+    state.issue = nil
     if state.ws then return relaySendAlbedo(sheet) end
     sheet:saveAs(join(state.folder, "albedo.png"))
     return true
@@ -222,7 +276,7 @@ local function exportAlbedo()
   if anim then
     if meta.frames ~= n then say("Waiting for Studio to catch up on the frame count...") return end
     if meta.cw ~= cw or meta.ch ~= ch then
-      say("Studio's tiles are " .. tostring(meta.cw) .. "x" .. tostring(meta.ch) .. " but this canvas is " .. cw .. "x" .. ch .. ". Resize the canvas (Sprite > Canvas Size) to one tile.")
+      blocked("Studio's tiles are " .. tostring(meta.cw) .. "x" .. tostring(meta.ch) .. " but this canvas is " .. cw .. "x" .. ch .. ". Press \"Fit canvas\" in Aseprite's link window.")
       return
     end
   end
@@ -234,7 +288,11 @@ local function exportAlbedo()
     drawLayer(img, group, first + f - 1)
     sheet:drawImage(img, Point(((f - 1) % cols) * cw, ((f - 1) // cols) * ch))
   end
+  -- Changing a layer's name or visibility counts as an edit too: a picture that came out the same is not sent again.
+  local key = table.concat({ tostring(meta and meta.clip), tostring(cols), tostring(rows), sheet.bytes })
+  if key == state.lastSent then return end
   if not deliver(sheet) then return end
+  state.lastSent = key
   if anim and not (isPow2(sheet.width) and isPow2(sheet.height)) then
     say("Sent, but the " .. sheet.width .. "x" .. sheet.height .. " sheet is not a power of two: Studio will refuse it. Use a power-of-two tile size.")
   else
@@ -383,6 +441,7 @@ local function importNormal(path)
     return false
   end
   state.problem, state.pending = nil, nil
+  state.normal = true
   local framesChanged, fresh = false, false
   if anim then framesChanged, fresh = ensureFrames(meta.frames, meta.fps, meta) end
   local first, count = 1, 1
@@ -469,6 +528,34 @@ local function fitCanvas()
   state.dirty = true
 end
 
+-- One press to make a file ready: RGB colour, and a group named Albedo holding the layers already here (one undo step each).
+local function setUpFile()
+  onSprite(function()
+    local sprite = state.sprite
+    if sprite.colorMode ~= ColorMode.RGB then app.command.ChangePixelFormat{ format = "rgb" } end
+    if findGroup(sprite.layers, ALBEDO_GROUP) then return end
+    state.ignore = true
+    app.transaction("Tileset Studio set up file", function()
+      local art = {}
+      for _, l in ipairs(sprite.layers) do
+        if l.name ~= NORMAL_LAYER then art[#art + 1] = l end
+      end
+      local group = sprite:newGroup()
+      group.name = "Albedo"
+      if #art == 0 then
+        local layer = sprite:newLayer()
+        layer.name = "Paint here"
+        layer.parent = group
+      end
+      for _, l in ipairs(art) do l.parent = group end
+    end)
+    state.ignore = false
+  end)
+  state.issue, state.lastSent, state.dirty = nil, nil, true
+  app.refresh()
+  say("File set up. Paint in the group named Albedo.")
+end
+
 local function stop()
   if not state then return end
   if state.timer then state.timer:stop() end
@@ -479,10 +566,15 @@ end
 
 local function start(folder, relay)
   local sprite = app.sprite
-  if not sprite then app.alert("Open the spritesheet first.") return end
+  if not sprite then
+    local choice = app.alert{ title = "Tileset Studio Link", text = "No file is open. Make a new one to link? Studio can resize it to its tile size.", buttons = { "New sprite", "Cancel" } }
+    if choice ~= 1 then return end
+    sprite = Sprite(32, 32, ColorMode.RGB)
+  end
   stop()
-  state = { sprite = sprite, folder = folder, dirty = true, rev = 0, framesRev = os.time() * 100 }
+  state = { sprite = sprite, folder = folder, dirty = true, rev = 0, framesRev = os.time() * 100, started = os.time() }
   snapshotFrames()
+  if not relay then writeHeartbeat() end
   if relay then
     state.room = relay.room
     state.ws = WebSocket{ url = relay.url .. "/r/" .. relay.room, deflate = false, onreceive = function(mt, data, err)
@@ -496,8 +588,10 @@ local function start(folder, relay)
     state.dlg = Dialog{ title = "Tileset Studio Link", onclose = stop }
     state.dlg:label{ text = "File: " .. ((sprite.filename and sprite.filename ~= "") and app.fs.fileName(sprite.filename) or "(unsaved sprite)") .. "  (only this file is linked)" }
     state.dlg:label{ id = "folder", text = relay and ("Room: " .. relay.room) or ("Folder: " .. folder) }
+    state.dlg:label{ id = "studio", text = relay and "Studio: not seen yet" or "Studio: reads this folder" }
     state.dlg:label{ id = "status", text = "Linked. Paint in the group named Albedo." }
     state.dlg:button{ text = "Send now", onclick = function() local ok, err = pcall(exportAlbedo) if not ok then say("Error: " .. tostring(err)) end end }
+    state.dlg:button{ text = "Set up file", onclick = function() local ok, err = pcall(setUpFile) if not ok then say("Error: " .. tostring(err)) end end }
     state.dlg:button{ text = "Fit canvas", onclick = function() local ok, err = pcall(fitCanvas) if not ok then say("Error: " .. tostring(err), true) end end }
     state.dlg:button{ text = "Stop", onclick = function() state.dlg:close() end }
     state.dlg:show{ wait = false }
@@ -513,6 +607,18 @@ local function start(folder, relay)
         if dlg then dlg:close() else stop() end
         app.alert("Tileset Studio Link stopped: the linked file was closed.")
         return
+      end
+      if state.folder then
+        if not state.beatAt or os.clock() >= state.beatAt then
+          state.beatAt = os.clock() + 1
+          writeHeartbeat()
+        end
+      elseif state.dlg then -- a background tab may ping only once a minute, hence the long wait
+        local seen = state.pingAt and os.time() - state.pingAt < 90
+        if seen ~= state.studioSeen then
+          state.studioSeen = seen
+          state.dlg:modify{ id = "studio", text = seen and "Studio: connected" or "Studio: not connected" }
+        end
       end
       -- Studio -> Aseprite
       local m = state.meta
@@ -551,6 +657,7 @@ local function start(folder, relay)
       else
         local meta = readMeta(state.folder)
         if meta then
+          noteSession(meta)
           state.meta = meta
           if meta.rev ~= state.rev then
             state.rev = meta.rev
@@ -583,7 +690,9 @@ local function relayCommand(plugin)
   dlg:show()
   local data = dlg.data
   local room = data.room and data.room:lower():gsub("%s", "") or ""
-  if data.ok and room ~= "" then
+  if data.ok and not (#room >= 16 and #room <= 64 and room:match("^[a-z0-9]+$")) then
+    app.alert("That is not a room code. In Studio open the Aseprite menu, choose Link online and press Copy.")
+  elseif data.ok then
     plugin.preferences.room, plugin.preferences.relay = room, data.url
     local url = data.url:gsub("/+$", ""):gsub("^wss://", "ws://") -- no TLS in Aseprite's WebSocket
     start(nil, { room = room, url = url })
@@ -626,7 +735,7 @@ end
 if rawget(_G, "TSL_TEST") then
   TSL_TEST.api = {
     layoutFor = layoutFor, parseMeta = parseMeta, frameOps = frameOps, frameBytes = frameBytes,
-    start = start, tick = function() state.tick() end, fitCanvas = fitCanvas, setState = function(v) state = v end, getState = function() return state end,
+    start = start, tick = function() state.tick() end, fitCanvas = fitCanvas, setUpFile = setUpFile, relayReceive = relayReceive, writeHeartbeat = writeHeartbeat, statusFields = statusFields, setState = function(v) state = v end, getState = function() return state end,
     exportAlbedo = exportAlbedo, importNormal = importNormal, syncFrames = syncFrames, ensureFrames = ensureFrames, snapshotFrames = snapshotFrames,
   }
 end

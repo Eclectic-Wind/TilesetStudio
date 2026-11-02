@@ -71,14 +71,21 @@ Both programs watch one folder. This works from a GitHub Pages / https page; the
 | Direction | File | Content |
 |---|---|---|
 | Studio → Aseprite | `normal.png`, `studio_link.json` | the normal sheet; the json (written last) has `rev` and the sheet size |
-| Aseprite → Studio | `albedo.png` | the flattened group named **Albedo**, saved on every edit |
+| Aseprite → Studio | `albedo.png` | the flattened group named **Albedo**, saved on every edit that changes it |
+| Aseprite → Studio | `aseprite_status.json` | the extension's heartbeat: file name, size, frames, anything wrong |
+
+**Presence.** The *Aseprite ▾* menu ticks off each step of the link and shows anything wrong on Aseprite's side (no Albedo group, wrong
+colour mode, wrong canvas size); a toast says when Aseprite joins or leaves, and the dot is green only while Aseprite is really there.
+Studio takes pictures only from an extension that is there now, so an `albedo.png` or a relay picture left from an earlier session can
+never overwrite the tileset art. An older extension is told to update (its pictures are ignored).
 
 **Setup**
 1. Install `tools/aseprite/TilesetStudioLink.aseprite-extension` (double-click it, or Edit ▸ Preferences ▸ Extensions ▸ Add Extension). Needs Aseprite 1.3+.
-2. In Studio: *Animate ▸ Link Aseprite folder…* and pick an empty folder. Studio writes `normal.png` and `studio_link.json` into it.
-3. In Aseprite, create a sprite **one tile** big (the tileset's size, RGB), then *File ▸ Scripts ▸ Tileset Studio Link…* and
+2. In Studio: *Aseprite ▾ ▸ Link a shared folder…* (*Link Aseprite…* in the Animate panel opens the same menu) and pick an empty folder. Studio writes `normal.png` and `studio_link.json` into it.
+3. In Aseprite, open your file (with none open, the extension offers a new one), then *File ▸ Scripts ▸ Tileset Studio Link…* and
    pick any file in that folder. A layer **Normal (Studio)** appears (locked, kept up to date as you change the rig).
-4. Make a group called **Albedo** and draw in it. Each edit is flattened and sent; Studio shows it in the preview.
+4. Press **Set up file** in the link window: it switches the file to RGB and puts the layers already there into a group called **Albedo**
+   (one undo step). Draw in that group. Each edit is flattened and sent; Studio shows it in the preview.
 
 **Canvas rule.** The Aseprite canvas must be exactly one tile (Studio's tileset size), and the sheet it builds must be a power of two
 (16, 32, 64, 128 ... per cell; 2^n columns and rows). If it is not, Studio shows a red warning and **keeps the previous page**; the extension
@@ -88,7 +95,7 @@ warns too. Fix the canvas and the next edit goes through.
 
 The folder picker is Chromium-only, so there is a second transport that needs no folder access. Studio (in the browser) and the
 extension (in Aseprite) both **dial out** to a tiny relay (`tools/relay`, a Cloudflare Worker) and share a random room code. The relay
-only forwards the two PNGs and keeps the latest in memory; it stores nothing.
+only forwards the PNGs and keeps the latest in memory until everyone has left; it stores nothing.
 
 1. **Requirements:** Aseprite **1.3 or newer** (the extension uses its Lua `WebSocket` API) and the extension
    [`TilesetStudioLink.aseprite-extension`](../tools/aseprite/TilesetStudioLink.aseprite-extension) (double-click to install, or
@@ -98,7 +105,7 @@ only forwards the two PNGs and keeps the latest in memory; it stores nothing.
    **Normal (Studio)**, group **Albedo**).
 
 The room code is the only secret: anyone with it can read and send pictures in that room, so treat it like a password. It is kept
-in the browser between visits; **New code** (next to Copy) swaps it for a fresh random one at once, cutting off the old code, and you
+in the browser between visits; **Use a new room code** swaps it for a fresh random one at once, cutting off the old code, and you
 paste the new one into Aseprite. Deploying your
 own relay: `cd tools/relay && npx wrangler login && npx wrangler deploy`, then put its address in `L.RELAY` (js/aseprite.js) and `RELAY`
 (the extension's plugin.lua).
@@ -108,6 +115,6 @@ Aseprite's `albedo.png` back as the tileset art.
 
 **No link at all:** use *Download normal sheet* and *Load albedo sheet…* (same size checks).
 
-Not covered yet: the extension can't be tested headless, so it follows the documented Aseprite 1.3 API; report any API differences.
+Tests: `node tools/test_link.js` covers Studio's side of the link and `tools/aseprite/test_headless.lua` runs the extension in Aseprite's batch mode. Aseprite's WebSocket and dialogs don't run in batch mode, so those follow the documented 1.3 API.
 glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex) and its whole skeleton; a skinned model imported from glTF stays one model and keeps its weights as painted ones. The Albedo preview is the whole
 sheet cell, not re-skinned onto the pose.

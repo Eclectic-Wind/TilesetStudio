@@ -38,18 +38,30 @@
 	</div>
 	<button id="b_animate" class="ghost" title="Animation mode: rig the models with bones, pose them on a timeline, and send the frames to Aseprite as a normal-map spritesheet">Animate</button>
 	<div class="menuwrap" data-click>
-		<button id="b_aseprite" class="ghost" title="Link a folder shared with the Aseprite extension: Studio writes normal.png there, and can take albedo.png back as the tileset art"><span id="as_dot" class="dot"></span> Aseprite ▾</button>
+		<button id="b_aseprite" class="ghost" title="Paint in Aseprite and see it here live: link status and setup"><span id="as_dot" class="dot"></span> Aseprite ▾<span id="as_b_tip" class="vh" role="status"></span></button>
 		<div class="menu aseprite-menu">
-			<div class="asrow"><button id="as_online" title="Works in any browser, Firefox and Zen included: Studio and the Aseprite extension both connect to a small relay and share a room code">Link online (any browser)</button><button id="as_help_btn" class="round" title="How to link, and is it private?">?</button></div>
-			<label id="as_roomrow" class="aschk" hidden>Room code <input id="as_room" readonly spellcheck="false" title="Paste this into Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…"> <button id="as_copy">Copy</button> <button id="as_newroom" title="Make a fresh random code and switch to it. Anyone holding the old code (Aseprite included) is cut off; paste the new one into Aseprite to link again.">New code</button></label>
-			<button id="as_link" title="Pick the folder the Aseprite extension saves into (Chrome and Edge only)">Link Aseprite folder…</button>
-			<button id="as_learn" title="Short visual lessons: how Studio and Aseprite share pictures, the one-time setup, bones and keys, sheets and sizes">Learn: connecting to Aseprite</button>
-			<button id="as_send" title="Write normal.png to the linked folder now" hidden>Send normal map now</button>
-			<button id="as_unlink" hidden>Unlink</button>
-			<hr>
-			<span class="linkstate" id="as_mode"></span>
+			<div id="as_idle">
+				<p class="linkstate">Paint in Aseprite and see it here live. Choose how the two programs talk:</p>
+				<button id="as_online" class="primary-item" title="Works in any browser, Firefox and Zen included: Studio and the Aseprite extension both connect to a small relay and share a room code">Link online<small>Any browser. Paste a code into Aseprite.</small></button>
+				<button id="as_link" title="Pick a folder both programs can see (Chrome and Edge only)">Link a shared folder…<small>Chrome and Edge. Nothing leaves this computer.</small></button>
+			</div>
+			<ol id="as_steps" class="assteps" hidden>
+				<li id="as_s1"><b id="as_s1t"></b>
+					<div id="as_roomrow" class="asroom" hidden><input id="as_room" readonly spellcheck="false" aria-label="Room code" title="Paste this into Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…"><button id="as_copy">Copy</button></div>
+				</li>
+				<li id="as_s2"><b id="as_s2t"></b><small id="as_s2d"></small></li>
+				<li id="as_s3"><b id="as_s3t"></b><small id="as_s3d"></small></li>
+				<li id="as_s4"><b id="as_s4t"></b><small id="as_s4d"></small></li>
+			</ol>
 			<p id="as_state" class="linkstate">Not linked.</p>
-			<p class="linkstate"><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the Aseprite extension</a> · needs Aseprite 1.3 or newer (Steam, itch or built from source)</p>
+			<span class="linkstate" id="as_mode"></span>
+			<hr>
+			<button id="as_send" title="Send the normal map to Aseprite again now" hidden>Send normal map now</button>
+			<button id="as_newroom" title="Make a fresh random code and switch to it. Anyone holding the old code (Aseprite included) is cut off; paste the new one into Aseprite to link again." hidden>Use a new room code</button>
+			<button id="as_unlink" hidden>Unlink</button>
+			<button id="as_learn" title="Short visual lessons: how Studio and Aseprite share pictures, the one-time setup, bones and keys, sheets and sizes">Learn: connecting to Aseprite</button>
+			<button id="as_help_btn" title="How to link, and is it private?">Setup and privacy</button>
+			<p class="linkstate"><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the Aseprite extension</a> · needs Aseprite 1.3 or newer</p>
 		</div>
 	</div>
 	<span id="tileinfo" class="dim">no tileset</span>
@@ -293,17 +305,17 @@
 	<ol>
 		<li><b>Install once.</b> Download the extension from the Aseprite menu and double-click it. Aseprite adds it.</li>
 		<li><b>Get a code.</b> In the Aseprite menu click <b>Link online</b>, then <b>Copy</b>.</li>
-		<li><b>Open Aseprite.</b> Make a new sprite the same size as your tileset, in RGB colour.</li>
-		<li><b>Paste the code.</b> In Aseprite go to <b>File ▸ Scripts ▸ Tileset Studio Link (online)</b>, paste the code and press <b>Link</b>.</li>
+		<li><b>Open Aseprite.</b> Open the file you want to link. With nothing open, the extension offers to make one.</li>
+		<li><b>Paste the code.</b> In Aseprite go to <b>File ▸ Scripts ▸ Tileset Studio Link (online)</b>, paste the code and press <b>Link</b>. Aseprite keeps the code for next time.</li>
 	</ol>
-	<p>Now Studio's normal map shows up in Aseprite as a locked layer. Draw inside a group called <b>Albedo</b> and your art goes back to Studio. The dot by the Aseprite menu turns green when it works.</p>
+	<p>Now Studio's normal map shows up in Aseprite as a locked layer. Draw inside a group called <b>Albedo</b> (the <b>Set up file</b> button in Aseprite's link window makes it) and your art goes back to Studio. The Aseprite menu ticks off each step, says what is wrong if something is, and its dot turns green once Aseprite has really joined.</p>
 	<h3>Is it private?</h3>
 	<ul>
 		<li><b>Only you can see it.</b> Your code is random and made just for your browser. Nobody can see your pictures without it, and nobody can guess it.</li>
 		<li><b>Nothing is saved.</b> Your pictures pass through and are never written to a disk, a database or a log.</li>
-		<li><b>If you join late:</b> say you open Aseprite after Studio. The relay holds the newest picture for a short while so Aseprite can still get it. It forgets it once everyone has left and it goes quiet.</li>
+		<li><b>If you join late:</b> say you open Aseprite after Studio. The relay holds the newest picture for a short while so Aseprite can still get it. It forgets it once everyone has left.</li>
 		<li><b>The catch.</b> Your pictures travel through Cloudflare's servers, like any online service, and anyone you give the code to can see them.</li>
-		<li><b>Change it any time.</b> Your code stays the same between visits so Aseprite remembers it. If you shared it, showed it on a stream or just want a clean start, press <b>New code</b>: the old one stops reaching you at once. Paste the new code into Aseprite to link again.</li>
+		<li><b>Change it any time.</b> Your code stays the same between visits so Aseprite remembers it. If you shared it, showed it on a stream or just want a clean start, press <b>Use a new room code</b>: the old one stops reaching you at once. Paste the new code into Aseprite to link again.</li>
 		<li><b>Aseprite's side is not locked.</b> Studio talks to the relay over a secure connection, but Aseprite cannot, so its half travels as plain text. Someone on your own network (shared Wi-Fi, say) could in theory read the code and the pictures. Fine at home, not great on a public network. For art that must stay private, use the folder link in Chrome or Edge.</li>
 	</ul>
 	<div class="sourcebar"><button id="as_help_close" class="primary">Close</button></div>

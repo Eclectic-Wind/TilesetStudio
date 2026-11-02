@@ -4,7 +4,8 @@
 //
 // Frames (the same in the page and the extension):
 //   text   {"t":"meta",...}                     Studio's sheet layout (cached); {"t":"frames",...} Aseprite's timeline changes (not cached)
-//   binary [kind][index][count][png bytes...]  kind 1 = normal.png, 2 = albedo.png, sent as `count` chunks of <= 60 KB
+//          {"t":"ping",...} / {"t":"pong",...}  who is there now; the newest ping is cached so a late Aseprite answers at once
+//   binary [kind][index][count][png bytes...]  kind 1 = normal.png, 2 = albedo.png, 3 = the tileset's art, sent as `count` chunks of <= 60 KB
 // The relay never looks inside; it only keys its cache on kind (binary) or the text's "t" (text) and restarts a kind when index 0 arrives.
 
 export class Room {
@@ -24,7 +25,7 @@ export class Room {
 			if (typeof m === "string") {
 				let t = "";
 				try { t = JSON.parse(m).t || ""; } catch (err) { /* plain text */ }
-				if (t !== "frames") this.cache.set("t:" + t, [m]); // frame changes are events: only the peers there now get them
+				if (t !== "frames" && t !== "pong") this.cache.set("t:" + t, [m]); // frame changes are events: only the peers there now get them
 			}
 			else if (m.byteLength >= 3) {
 				const b = new Uint8Array(m, 0, 3), key = b[0];
@@ -33,7 +34,7 @@ export class Room {
 			} else return;
 			for (const p of this.peers) if (p !== server) { try { p.send(m); } catch (err) { this.peers.delete(p); } }
 		});
-		const drop = () => this.peers.delete(server);
+		const drop = () => { this.peers.delete(server); if (!this.peers.size) this.cache.clear(); }; // everyone left: forget the pictures
 		server.addEventListener("close", drop);
 		server.addEventListener("error", drop);
 		return new Response(null, { status: 101, webSocket: client });

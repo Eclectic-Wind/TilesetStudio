@@ -643,9 +643,9 @@
 		caps: [
 			{ t: 0, say: "Four steps, once.", sub: "After that Studio and Aseprite find each other again on their own." },
 			{ t: 3, say: "1. Install the extension.", sub: "Aseprite ▾ in Studio's top bar has the download. Double-click the file (Aseprite 1.3 or newer)." },
-			{ t: 7, say: "2. Link: get a room code.", sub: "Aseprite ▾ ▸ Link online works in any browser; Link Aseprite folder is Chrome and Edge. Copy the room code." },
-			{ t: 11.5, say: "3. One tile, in Aseprite.", sub: "New sprite exactly the size of your tileset (a power of two, RGB). File ▸ Scripts ▸ Tileset Studio Link (online)…, paste the code." },
-			{ t: 16, say: "4. Paint in a group called Albedo.", sub: "The locked Normal (Studio) layer shows up by itself. The dot by the Aseprite menu turns green." },
+			{ t: 7, say: "2. Link: get a room code.", sub: "Aseprite ▾ ▸ Link online works in any browser; a shared folder is Chrome and Edge. Copy the room code." },
+			{ t: 11.5, say: "3. One tile, in Aseprite.", sub: "Open your file, then File ▸ Scripts ▸ Tileset Studio Link (online)…, paste the code. Studio sizes the canvas if it starts the project." },
+			{ t: 16, say: "4. Paint in a group called Albedo.", sub: "Set up file makes the group. The locked Normal (Studio) layer shows up by itself, and the dot by the Aseprite menu turns green." },
 		],
 		extra: `<ol class="todo">
 			<li style="--d:0s"><span>1</span><div><b>Install the extension.</b><br><small>Studio → Aseprite ▾ → Download the Aseprite extension, then double-click it.</small></div></li>
@@ -653,7 +653,7 @@
 			<li style="--d:.24s"><span>3</span><div><b>A sprite one tile big, then the script.</b><br><small>Same size as your tileset, RGB, a power of two (64, 128, 256…). File → Scripts → Tileset Studio Link (online)… and paste the code.</small></div></li>
 			<li style="--d:.36s"><span>4</span><div><b>Paint inside the group named Albedo.</b><br><small>Each edit is sent to Studio. Locked layer Normal (Studio) is your guide.</small></div></li>
 		</ol>
-		<p><small><b>Privacy:</b> the room code is the only secret, so treat it like a password. Press <b>New code</b> in the Aseprite menu any time to swap it for a fresh one; the old code stops working at once.</small></p>
+		<p><small><b>Privacy:</b> the room code is the only secret, so treat it like a password. Press <b>Use a new room code</b> in the Aseprite menu any time to swap it for a fresh one; the old code stops working at once.</small></p>
 		<div class="row"><button id="l_animate" class="primary">Open the sample and start Animate</button></div>`,
 		make() {
 			const stations = [["⬇", "Extension", 90], ["🔗", "Link", 270], ["▣", "One tile", 450], ["✎", "Albedo", 630]], CODE = "k3j9q7mx2c5v8b4n6d";
