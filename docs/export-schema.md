@@ -1,4 +1,124 @@
-# Godot bundle schema, version 4 (`<name>.export.json`)
+# Godot bundle schema, version 6 (`<name>.export.json`)
+
+Version 6 only **adds** to version 5 (below): every version 5 field keeps its shape, and a reader that ignores `anim` gets the base frame of every animated piece as an ordinary still tile (the atlas, `maps.data`, `maps.pieces` and the piece table are unchanged: no frame lives in the atlas grid, no cell moves, frames add no pieces and no paintable tiles).
+
+New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about. First version: **flipbooks** (frames painted in Aseprite, geometry unchanged), **static shadow and collision**. `source: "rig"` (bone-animated frames with their own height / normal data) is reserved and not written yet.
+
+## `anim`
+
+```
+anim: {
+  clips: [{
+    name, fps, frames,
+    loop: "loop" | "once" | "pingpong",   // what happens at the last frame. Playback itself (auto-play, from code) is the game's
+    shadow: "static",                    // the base frame's: "frames" is reserved
+    collision: "static",                 // always the base frame's
+    targets: [{
+      piece,                             // the animated piece: its number in footprints.pieces (1-based), as pieceIndex
+      rect: [x, y, w, h],                // atlas px, multiples of 32: holds the piece's art and everything its frames paint. Every frame is drawn here, in place of the piece
+      cols, rows,                        // the frames are packed cols per row, left to right then down, each w x h (frame f at ((f % cols) * w, floor(f / cols) * h))
+      source: "flipbook",                // "rig" reserved
+      color: "<base64 PNG>",             // cols*w x rows*h RGBA: the frames' albedo, as painted (transparent pixels show what is behind)
+      data?: "<base64 zlib>"             // reserved (rig): per-frame height / normal / material in maps.data's art-row layout.
+                                         // Absent = every frame reuses the base frame's height, normal and material: read maps.data at `rect`
+    }]
+  }],
+  warnings: [string]                     // for the artist, as the Animate panel shows them
+}
+```
+
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame. A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
+- The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
+- `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
+- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame has no art (height and normal are flat there); a rect reaching south of the piece's base row (oblique), which the game sorts by.
+
+## Making one in the Studio
+
+1. Model and paint the base frame as usual; the animated thing should be its own piece (its models joined by footprint, or one `piece` name).
+2. Animate mode: pick or add a clip, set the frame count and fps. Paint each frame in Aseprite's **Albedo** group (the link sends the sheet), or load an Albedo sheet.
+3. In the clip's **Game export** section: select the models the flipbook animates, press **Use selected models**; set **Loop**. The section lists what is exported and any warnings; **Export** unticks a clip that should not go into the bundle.
+4. Export ▸ Godot bundle. `node tools/export_project.js in.studio.json out.export.json` does the same headless and prints the targets and their sizes (each clip's `albedo` sheet is a data URL in the project).
+
+The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.json` and `samples/AnimSample.export.json` (a TV box with an 8-frame static clip, a flat puddle with a 6-frame ripple, painted headless).
+
+## Not in this round
+
+`source: "rig"` and `data`, `shadow: "frames"` and per-frame floor spans, animated collision, frame de-duplication, isometric (untested; the rect is in canvas px either way).
+
+---
+
+## Version 5 (earlier)
+
+> Describes version 5; version 6 above adds to it.
+
+### Godot bundle schema, version 5 (`<name>.export.json`)
+
+Version 5 only **adds** to version 4 (below): every version 4 field keeps its shape, so a version 4 reader still reads the file. What is new:
+
+- A model property `walk` (`footprints.objects[].walk`): `"auto"` (default, nothing) or `"stairs"`. `"top"` and `"none"` are reserved for a later round; a reader should treat any value it does not know as `"auto"`.
+- `footprints.walk`, written only when the project has a stairs model (or a warning about one): the **surfaces** the stairs models make.
+- A model with `walk: "stairs"` and no explicit collision choice resolves to `collision.mode: "none"` (its blocking comes from the surface polygons below). An explicit `strip` / `footprint` is still honoured.
+
+`kind` is unchanged: a stairs model is `furn` (or whatever the artist set) and renders, shadows and sorts as such. `walk` is separate because a piece's kind is the strongest of its models' kinds: a flight touching a wall would otherwise lose its stairs.
+
+Coordinates as in version 4: floor-plan px (X east, Y south, Z up), world XY in both projections, so everything below is projection independent. Heights are absolute model z, with the asset modelled at local z = 0 (the game offsets a storey).
+
+## Making a flight
+
+Set **Walk ▸ stairs** on every tread model of the flight. A flight is the stairs models of one **piece** (models whose footprints come within 2 px join; give separate flights different `piece` names). Other models in the piece (side walls, a landing) are not part of the flight and are not touched. A flight is at its best axis-aligned, 16 px treads and risers; the direction is a free unit vector.
+
+## `footprints.walk`
+
+| field | type | meaning |
+|---|---|---|
+| `step`, `body` | px | the rule the walk data was made with (the Processing settings; same as `collision.step`/`body`) |
+| `surfaces` | `[surface]` | one per flight; `id` is the position |
+| `warnings` | `[string]` | for the artist: a flight that is not one straight run, too narrow for the feet box, raised, skipped |
+
+A surface:
+
+| field | type | meaning |
+|---|---|---|
+| `id` | int | position in `surfaces` |
+| `models` | `[int]` | indices into `footprints.objects` of the flight's tread models |
+| `pieces` | `[int]` | piece numbers (1-based, as `pieceIndex`) holding them. **Draw rule for the game**: an actor standing on this surface draws in front of these pieces (everything south of the feet on a rising flight is lower than the feet, everything north is behind them) |
+| `plane` | `[a, b, c]` | surface height at floor point (x, y): `z = a + b*x + c*y`, from a least-squares fit through the tread tops at the cell centres. Clamp to `z` below. **Not** an edge-to-edge ramp: a straight line is at best half a riser off a staircase (+-8.4 px for 16 px treads), where a ramp from the low edge to the high edge would leave the tread up to a riser above the feet |
+| `fit` | `{max, treads, riser}` | worst `|tread top - plane|` (px), number of distinct tread heights, `rise / treads` |
+| `z` | `[low, high]` | height at the foot of the flight / top of the highest tread. Clamp `plane` to it |
+| `outline` | `[[[x, y], ...], ...]` | the flight's exact floor outline, as `pieces[].outline` |
+| `blockers` | `[[[x, y], ...], ...]` | polygons (floor px) that stop an actor **standing on the surface**: a frame 16 px wide just outside the outline, open across both end edges (the seams). The feet box collides with them as with `collision.polygons` |
+| `around` | `[[[x, y], ...], ...]` | polygons that stop an actor on the **ground** (the surface below / around): the flight's footprint pulled in like a footprint-mode collision (sides 3 px, south edge 8 px), with a gate cut into the low edge so the feet can reach the low seam; the corner stubs keep the sides shut. Replaces the flight's own `collision.polygons` |
+| `seams` | `[seam]` | the flight's two ends |
+| `stairs` | object | the stairs table |
+
+A seam: `{end: "low" | "high", edge: [[x, y], [x, y]], z, to}`. `edge` is the end edge as a floor-plan line; `z` its height. `to` is where it leads: `"ground"` (the low seam, when the flight starts within `step` of the ground), a surface id (reserved), or `null`: nothing in this asset, i.e. the game's level portal (the high seam, and a raised low seam).
+
+`stairs`: `{dir: [dx, dy], low, high, zLow, zHigh, rise, run, width, slope}`. `dir` is the unit vector low -> high in floor XY (it snaps to an axis within 3 degrees); `low` / `high` are the seams' edges; `rise = zHigh - zLow`; `run` the extent along `dir`, `width` across; `slope` = dz per floor px along `dir`.
+
+### What the game does with it
+
+1. Standing on the ground: collide with `around` (and the rest of `collision.polygons`). Feet cross the low seam line (inside `low`'s span) -> the actor is on the surface.
+2. On the surface: collide with `blockers`; feet height = `clamp(plane(x, y), z[0], z[1])`. At the low seam the plane is up to half a riser from the ground (9.3 px for the 16 px sample), so blend over a few px.
+3. Feet cross the high seam: `to: null` -> level portal; the game moves the actor up a storey, z continuous.
+4. Draw an actor on the surface in front of `pieces` (see above).
+
+The headless dump `node tools/export_project.js in.studio.json out.export.json` prints the surfaces and warnings.
+
+### Measured on the TwoStorey flight (6 treads, 16 x 16 px, 64 wide, rising north)
+
+`plane [196.0152, 0, -0.9723]` (the slope is 35/36 of 1: a least-squares line through a staircase), `fit.max 8.4`, `z [0, 96]`, `dir [0, -1]`, low seam `[[224,192],[288,192]]` to `"ground"`, high seam `[[224,96],[288,96]]` to `null`; `blockers` two 16 px side strips `[[208,80],[224,80],[224,208],[208,208]]` and its mirror; `around` the pulled-in footprint 227..285 x 96..172 plus two 2 px corner stubs at y 180..184.
+
+### Not in this round
+
+Raised flat surfaces (porch, balcony tops, rails on them), `walk: top | none`, surfaces that connect to each other, a Walk output view, `piece.overhead`, a `storeyHeight` check. A project without stairs changes only in two ways: the bundle `version` is 5 and `footprints.objects[].walk` is `"auto"` and there is no `footprints.walk`.
+
+---
+
+## Version 4 (earlier)
+
+> Describes version 4; version 5 above adds to it.
+
+### Godot bundle schema, version 4 (`<name>.export.json`)
 
 Version 4 only **adds** to version 3 (below): every version 3 field keeps its shape, so a version 3 reader still reads the file. Four things change:
 

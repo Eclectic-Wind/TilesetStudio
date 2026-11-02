@@ -411,6 +411,73 @@
 		},
 	});
 
+	// 5b --------------------------------------------------------------------------------------------------------------
+	// Stairs (bundle version 5): six boxes become one flight. Property Walk ▸ stairs; the Studio fits a ramp through the tread tops
+	// (the numbers of P.walk: tread k is 16 px deep and 16 px higher than the last, rising north).
+	L.push({
+		title: "Stairs", dur: 26,
+		caps: [
+			{ t: 0, say: "Stairs are just boxes, one per tread.", sub: "Six boxes, each 16 px deep and 16 px higher than the one before." },
+			{ t: 3.4, say: "Tell the Studio they are stairs.", sub: "Select the treads, then Properties → Walk → stairs. Kind stays what it was (furn)." },
+			{ t: 7.6, say: "It fits a ramp through the tread tops.", sub: "A straight line is at best half a riser off the treads: the walker glides instead of popping 16 px." },
+			{ t: 12.4, say: "The two ends become seams.", sub: "Low end: meets the ground. High end: leads nowhere in this asset, so the game makes it a level change." },
+			{ t: 17, say: "The sides keep you on the flight.", sub: "Blocking polygons are made for you: no hand-placed walls, and the gate at the bottom stays open." },
+			{ t: 21.4, say: "Name each flight with its own piece.", sub: "The stairs models of one piece are one flight. Properties → Piece. The Collision of a stairs model is none." },
+		],
+		show: [["kind", "Kind view"], ["collision", "Collision view"]],
+		extra: `<p class="kindnote"><b>Needs:</b> Walk ▸ stairs on every tread of the flight. <b>Gives the game:</b> <code>footprints.walk.surfaces[]</code> (bundle version 5): the ramp <code>plane</code>, <code>seams</code> (low / high edge), <code>blockers</code> and <code>around</code> polygons, and the stairs table (direction, rise, run, width). Straight, axis-aligned flights of 16 px treads work best.</p>`,
+		make() {
+			const X0 = 58, X1 = 122, Y1 = 196, N = 6, T = 16;
+			const models = [];
+			for (let k = 0; k < N; k++) models.push(boxModel("tread" + k, X0, Y1 - T * (k + 1), 0, X1, Y1 - T * k, T * (k + 1), "#9a7a52", Y1 - T * k));
+			// the fitted ramp: z at y (a straight line through the tread tops: 8 px high at the foot, 104 at the head)
+			const ramp = (y) => 8 + (Y1 - y) * 1.0;
+			const path = (g, pts, col, a, w = 3, dash = []) => {
+				if (a <= 0.01) return;
+				g.save(); g.globalAlpha = a; g.strokeStyle = col; g.lineWidth = w; g.lineCap = "round"; g.setLineDash(dash);
+				g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.stroke(); g.restore();
+			};
+			return (g, t) => {
+				bg(g);
+				const cam = camAt({ yaw: rad(48), el: ISO.el, sigma: 1 }, 2.1, W / 2 + 10, H / 2 + 52);
+				ground(g, cam, 1, 10, 170, 70, 230);
+				const marked = seg(t, 4.2, 5.4), kindA = seg(t, 12.4, 13);
+				const sideA = seg(t, 17.2, 18);
+				for (const [xa, xb] of [[X0 - 16, X0], [X1, X1 + 16]]) {
+					const q = [[xa, Y1 + 16, 0], [xb, Y1 + 16, 0], [xb, Y1 - 112, 0], [xa, Y1 - 112, 0]].map((p) => project(p, cam));
+					g.save(); g.globalAlpha = 0.55 * sideA; g.fillStyle = C.bad; g.beginPath(); q.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath(); g.fill(); g.restore();
+				}
+				drawWorld(g, cam, models, () => ({ tint: marked > 0 ? { rgb: hex(C.amber), a: 0.28 * marked + (t > 4.2 && t < 6 ? 0.12 * Math.sin(t * 7) : 0) } : undefined }));
+				if (marked > 0) pill(g, W - 130, 40, "Walk: stairs", C.amber, marked, 16);
+				// 7.6: the ramp line along the middle of the flight, with the +/- half-riser band
+				const fit = sege(t, 7.8, 10.4), fx = (X0 + X1) / 2;
+				const pts = [];
+				for (let i = 0; i <= 24; i++) { const y = Y1 - (i / 24) * 96 * fit; pts.push(project([fx, y, ramp(y)], cam)); }
+				path(g, pts, C.amber, fit > 0 ? 1 : 0, 4);
+				if (fit > 0.99) {
+					const a1 = project([fx, 120, ramp(120) + 8], cam), a2 = project([fx, 120, ramp(120) - 8], cam);
+					path(g, [a1, a2], C.ink, sege(t, 10.4, 11), 2);
+					pill(g, a1[0] + 78, (a1[1] + a2[1]) / 2, "±8 px: half a riser", C.ink, sege(t, 10.6, 11.4), 12);
+				}
+				// 12.4: the two seams
+				const low = [project([X0, Y1, 0], cam), project([X1, Y1, 0], cam)], high = [project([X0, Y1 - 96, 96], cam), project([X1, Y1 - 96, 96], cam)];
+				path(g, low, C.ok, kindA, 5); path(g, high, C.bad, kindA, 5);
+				pill(g, low[1][0] + 62, low[1][1] + 6, "low seam → ground", C.ok, sege(t, 12.8, 13.6), 13);
+				pill(g, high[0][0] - 20, high[0][1] - 26, "high seam → next level", C.bad, sege(t, 14.2, 15), 13);
+				// 17: blocking sides (a frame outside the outline, open across both ends)
+				pill(g, 78, 70, "blockers: the sides", C.bad, sege(t, 17.6, 18.4), 13);
+				// a walker: up the ramp from t = 18.6, then off the top
+				const walk = sege(t, 18.6, 24);
+				if (walk > 0) {
+					const y = Y1 + 12 - walk * 118, z = clamp(ramp(y), 0, 96), p = project([fx, y, z], cam), top = project([fx, y, z + 30], cam);
+					path(g, [p, top], C.ink, 1, 8);
+					g.save(); g.fillStyle = C.ok; g.beginPath(); g.arc(p[0], p[1], 4, 0, Math.PI * 2); g.fill(); g.restore();
+					if (walk > 0.97) pill(g, p[0] - 78, p[1] + 14, "level change ↑", C.amber, 1, 13);
+				}
+			};
+		},
+	});
+
 	// 6 ---------------------------------------------------------------------------------------------------------------
 	let cellData = null;
 	function cellOwners() {

@@ -498,10 +498,15 @@
 	// plugin unpacks it next to itself into name.png, name_height.png, name_normal.png, name_pbr.png, name_footprints.json and
 	// builds name_tileset.tres.
 	// The envelope itself is TS.Bundle.build (js/bundle.js), shared with tools/export_project.js.
-	function bundleJSON() {
+	let lastAnimReport = null; // the last bundle's anim table (clips, warnings), for the export message
+	async function bundleJSON() {
 		processNow();
-		return JSON.stringify(TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
-			settings: S.settings, result: S.result, now: new Date().toISOString() }));
+		const images = await TS.AnimUI.albedoImages();
+		const bundle = TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
+			settings: S.settings, result: S.result, now: new Date().toISOString(), anim: S.anim,
+			albedoOf: (clip) => images.get(clip.id) || null, encodePNG: (rgba, w, h) => imageDataURL(new ImageData(rgba, w, h)).split(",")[1] });
+		lastAnimReport = bundle.anim || null;
+		return JSON.stringify(bundle);
 	}
 
 	// The Godot bundle (one .export.json). The loose png / height / normal / pbr / footprints files are gone: the bundle holds them all.
@@ -509,9 +514,10 @@
 		if (!S.art) return toast("Open a tileset first.", "bad");
 		const name = exportName(), st = () => S.result.stats;
 		if (which !== "bundle") return;
-		const text = bundleJSON();
+		const text = await bundleJSON();
 		download(`${name}.export.json`, text);
-		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}`, st().unfilled ? "" : "ok");
+		const an = lastAnimReport, anNote = an ? ` · ${an.clips.length} animated clip${an.clips.length === 1 ? "" : "s"}${an.warnings.length ? `, ${an.warnings.length} animation warning${an.warnings.length === 1 ? "" : "s"} (Animate panel)` : ""}` : "";
+		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}${anNote}`, st().unfilled || (an && an.warnings.length) ? "" : "ok");
 		status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 	}
 
@@ -554,7 +560,7 @@
 	}
 	// A new result: show it. From the worker it comes with its pieces, normals and checks, and its image is drawn without blocking.
 	function processed(result, t0, litNormal, checks) {
-		const roleSig = (r) => (r && r.roles ? r.roles.map((x) => `${x.kind}/${x.mode}/${x.heightMin}/${x.heightMax}`).join() : "");
+		const roleSig = (r) => (r && r.roles ? r.roles.map((x) => `${x.kind}/${x.mode}/${x.walk}/${x.heightMin}/${x.heightMax}`).join() : "");
 		const before = roleSig(S.result);
 		S.result = result;
 		if (roleSig(S.result) !== before) panels(); // the properties / outliner show resolved kind, collision and heights
@@ -2606,6 +2612,18 @@
 	// --- panels ---
 
 	let outlinerRows = null, outlinerSig = "";
+	// What the Studio made of a stairs model's flight (TS.Process.walk), as a line under its Walk setting; "" for anything else.
+	function walkNote(o, multi) {
+		const r = S.result;
+		if (multi || TS.Process.walkOf(o) !== "stairs" || !r || !r.pieceMap) return "";
+		try {
+			const w = TS.Process.walk(S.objects, r, S.settings), mine = S.objects.slice(0, S.objects.indexOf(o)).filter((x) => x.faces.length).length;
+			const sf = w.surfaces.find((q) => q.models.includes(mine)), bad = w.warnings.filter((t) => t.includes(" " + o.name) || t.includes(o.name + ","));
+			if (!sf) return `<p class="dim">${esc(bad.join(" · ") || "No flight made: the stairs models need floor area that rises.")}</p>`;
+			const st = sf.stairs, way = st.dir[0] === 0 ? (st.dir[1] < 0 ? "north" : "south") : st.dir[1] === 0 ? (st.dir[0] > 0 ? "east" : "west") : "diagonally";
+			return `<p class="dim" title="Fitted ramp through the tread tops: the tread is up to ${sf.fit.max} px off it. Seams: low ${sf.seams[0].to === "ground" ? "meets the ground" : "is a portal"}, high is a portal.">Flight: ${sf.fit.treads} treads of ${sf.fit.riser} px, rise ${st.rise} px over ${st.run} px going ${way}, ${st.width} px wide${bad.length ? " · " + esc(bad.join(" · ")) : ""}</p>`;
+		} catch (e) { return ""; }
+	}
 	function panels() {
 		document.body.classList.toggle("editing", S.edit);
 		document.body.classList.toggle("noart", !S.art);
@@ -2680,7 +2698,7 @@
 		const multi = !S.edit && S.selected.size > 1 ? selectedObjs() : null, targets = multi || [o];
 		const common = (get) => (targets.every((t) => get(t) === get(targets[0])) ? get(targets[0]) : undefined);
 		const mixedOpt = `<option value="__mixed" selected disabled>— mixed —</option>`;
-		const reqValue = common(TS.Process.collisionRequested), kindValue = common((t) => (TS.Process.KINDS.includes(t.kind) ? t.kind : ""));
+		const walkValue = common(TS.Process.walkOf), reqValue = common(TS.Process.collisionRequested), kindValue = common((t) => (TS.Process.KINDS.includes(t.kind) ? t.kind : ""));
 		const role = roles ? roles[S.objects.indexOf(o)] : null;
 		const faceSel = S.edit && S.elemMode === "face" && S.elemSel.size;
 		const fm = faceSel ? Mesh.faceMat(o, o.faces[[...S.elemSel][0]]) : null;
@@ -2692,6 +2710,9 @@
 			<label title="What the importer treats it as. Default (inferred): flat models (highest point at or below the walk-over height) are floor. Tall and thin (at least the wall height, and the shorter side of its footprint at most the wall thickness) are wall_h (runs east-west) or wall_v (runs north-south). Everything else is furn. Floor: walked over. wall_h: the torch beam lands on it, and it fades while you are behind it. wall_v: blocks light east / west. Furn: any standing prop, furniture or pillar (what populates a room); it casts shadow. The Kind view tints by this.">Kind${kindValue ? `<span class="badge" title="Set by you; the inferred kind is ${role ? role.kindInferred : "?"}">set</span>` : ""}
 				<select id="p_kind">${kindValue === undefined ? mixedOpt : ""}<option value="" ${kindValue === "" ? "selected" : ""}>default: ${role && !multi ? role.kindInferred + " (inferred)" : "inferred per model"}</option>${TS.Process.KINDS.map((k) =>
 					`<option value="${k}" ${kindValue === k ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+			<label title="Walk behaviour for the game. Stairs: this model is a tread of a flight. The flights are the stairs models of one piece (name each flight's piece apart); the Studio fits a ramp through the tread tops and exports its two ends as seams plus the polygons that keep an actor on it (bundle version 5, footprints.walk). A stairs model needs no collision of its own: auto collision resolves to none.">Walk
+				<select id="p_walk">${walkValue === undefined ? mixedOpt : ""}${TS.Process.WALKS.map((k) => `<option value="${k}" ${walkValue === k ? "selected" : ""}>${k === "auto" ? "auto (none)" : k}</option>`).join("")}</select></label>
+			${walkNote(o, multi)}
 			${role && !multi ? `<p class="dim">height ${role.heightMin}-${role.heightMax} px above the floor${role.flat ? " · flat (walkable)" : ""}</p>` : ""}
 			<label title="Define a piece yourself. Models with the same piece name are one piece however far apart they are, and a named model never joins another by footprint (give a model its own name to split it off). Empty: automatic, models whose footprints come within 2 px are one piece. The Pieces view shows the result.">Piece <input id="p_piece" list="piecenames" value="${esc(common((t) => t.piece || "") ?? "")}" placeholder="${common((t) => t.piece || "") === undefined ? "(mixed: typing replaces all)" : "automatic"}"><datalist id="piecenames">${[...new Set(S.objects.map((t) => (t.piece || "").trim()).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join("")}</datalist></label>
 			<label title="Free-form text for the importer (an escape hatch; nothing in the Studio reads it)">Tags <input id="p_tags" value="${esc(common((t) => t.tags || "") ?? "")}" ${common((t) => t.tags || "") === undefined ? 'placeholder="(mixed: typing replaces all)"' : ""}></label>
@@ -2723,6 +2744,7 @@
 			changed();
 		};
 		$("p_kind").onchange = () => { const k = $("p_kind").value; if (k === "__mixed") return; pushUndo(); for (const t of targets) { if (k) t.kind = k; else delete t.kind; } changed(); };
+		$("p_walk").onchange = () => { const k = $("p_walk").value; if (k === "__mixed") return; pushUndo(); for (const t of targets) { if (k === "stairs") t.walk = k; else delete t.walk; } changed(); };
 		$("p_piece").onchange = () => { pushUndo(); const v = $("p_piece").value.trim(); for (const t of targets) { if (v) t.piece = v; else delete t.piece; } changed(); };
 		$("p_tags").onchange =() => { pushUndo(); const v = $("p_tags").value.trim(); for (const t of targets) { if (v) t.tags = v; else delete t.tags; } changed(); };
 		$("p_smooth").onchange = () => { const v = num("p_smooth"); if (isNaN(v)) return panels(); pushUndo(); for (const t of targets) t.smooth = v; changed(); };

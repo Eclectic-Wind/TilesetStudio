@@ -3,7 +3,9 @@
 // anim = { bones: [{id, name, parent|null, head: [x,y,z], tail: [x,y,z]}]   rest pose, world space (art px)
 //          bind:  {modelId: boneId}                                          a model follows its bone rigidly
 //          paint: {modelId: {n, rev, v: {vertex: {boneId: weight}}}}                 hand-painted skin weights (see R.painted)
-//          clips: [{id, name, fps, frames, tracks: {boneId: [{f, rot: [rx,ry,rz], pos: [x,y,z]}]}}]
+//          clips: [{id, name, fps, frames, tracks: {boneId: [{f, rot: [rx,ry,rz], pos: [x,y,z]}]},
+//                   optional: loop ("once" | "pingpong"; missing = loop), export (false = not in the bundle), models [object id] (the flipbook's
+//                   models: the game swaps their pieces for the frames), albedo (this clip's sheet, a data URL)}]
 //          clip: active clip id, frame: current frame, albedo: dataURL of the artist's sheet (or null)}
 // A bone turns about its head (rot = degrees, applied Z·Y·X) and then moves by pos; its children ride along. A key holds a bone's
 // whole local pose, so frames between keys blend linearly; before the first key a bone eases in from rest at frame 0, and after the last key it holds.
