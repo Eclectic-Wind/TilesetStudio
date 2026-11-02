@@ -3,7 +3,7 @@
 (() => {
 	const KEYS = {
 		"Select": [
-			["Click / Shift+click", "Select / add to selection. Click again for the next thing under the pointer (white outline = what a click takes)"],
+			["Click / Shift+click", "Select / add to selection. Click again for the next thing under the pointer (white outline = what a click takes); X-ray picks through faces"],
 			["Q", "Select tool: drag a selected piece to move it, drag empty space to box-select"],
 			["B", "Box select: drag a rectangle (3D too) to select every model it touches; Shift adds. Properties then edits them all"],
 			["A / Alt+A", "Select all / none"],
@@ -38,13 +38,13 @@
 			["K", "Knife: click points along a cut, Enter or right-click cuts, Backspace drops a point, the first point closes; X-ray cuts through"],
 			["F", "Fill: 2 vertices → a line, 3+ vertices or an edge loop → a face"],
 			["Ctrl+E", "Bridge two faces (a tunnel) or two edge loops or strips (a band); same vertex counts"],
-			["Ctrl+right-click", "New point at the pointer, joined to the selected one: draw an outline, F, E up"],
+			["Ctrl+right-click", "New point at the pointer, joined to the selected one: draw an outline, F, E up (Add ▾ Point starts from nothing)"],
 			["P", "Free Draw: add a shape, or cut through or carve a closed solid; works in the held 3D camera"],
 		],
 		"View": [
 			["Alt-drag, middle-drag", "Look round (eases back on release)"],
 			["5, 3D button", "Stay in 3D and model there: drag orbits, Ctrl-drag box-selects, Shift/Space-drag pans; again to go back"],
-			["Axis key balls", "Look down an axis (or Numpad 1 / 3 / 7; Ctrl: the opposite side). Click the ringed ball to flip"],
+			["Axis key balls", "Look down an axis (or Numpad 1 / 3 / 7; Ctrl: the opposite side). Click the ringed ball to flip. Moves and turns then stay on that plane, until the padlock button clears it"],
 			["Space-drag, Shift+middle", "Pan"],
 			["Arrows", "Pan a tile"],
 			["Wheel, + / −", "Zoom in whole-pixel steps"],

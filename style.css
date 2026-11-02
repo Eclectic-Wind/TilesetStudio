@@ -106,8 +106,9 @@ main.workspace-docked { display: flex; overflow: hidden; }
 .workspace-docked > section.output { display: flex; flex-direction: column; border-left: 0; }
 .workspace-docked .outwrap { flex: 1 1 0; }
 .workspace-hidden { display: none !important; }
-.workspace-divider { position: relative; width: 5px; flex: 0 0 5px; background: var(--line); cursor: col-resize; touch-action: none; transition: background .12s; }
+.workspace-divider { position: relative; width: 7px; flex: 0 0 7px; background: var(--line); cursor: col-resize; touch-action: none; transition: background .12s; }
 .workspace-divider:hover, .workspace-divider:focus-visible { background: var(--accent); outline: none; }
+.workspace-divider::after { content: ""; position: absolute; top: 45%; left: 2px; width: 3px; height: 48px; border-radius: 3px; background: var(--dim); }
 footer { padding: 3px 12px; font-size: 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 24px; }
 .narrownote { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; margin: 0; padding: 8px 12px; background: var(--accent-soft); border-top: 1px solid var(--accent); }
 @media (max-width: 759px) { .narrownote { display: block; } }
@@ -373,7 +374,8 @@ section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: non
 
 /* Start-up splash: the logo shows briefly, then fades away. Pure CSS, never blocks input. */
 .splash { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: var(--bg); pointer-events: none; animation: splash .8s ease forwards; }
-.splash img { width: min(480px, 70vw); height: auto; image-rendering: pixelated; }
+.splash img { width: min(480px, 70vw); height: auto; image-rendering: pixelated; animation: splashlogo .8s ease forwards; }
+@keyframes splashlogo { 0% { opacity: 0; transform: scale(.94); } 25% { opacity: 1; transform: none; } 100% { transform: scale(1.03); } }
 @keyframes splash { 0%, 55% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
 
 /* Toasts: short notes over the view that fade by themselves (js/app.js toast) */

@@ -3,7 +3,7 @@
 "use strict";
 (() => {
 	const $ = (id) => document.getElementById(id);
-	const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+	const clamp = TS.clamp;
 	const main = document.querySelector("main"), side = main.querySelector("aside.left"), view = main.querySelector("section.view"), out = main.querySelector("section.output");
 	const KEY = "ts.workspace.layout.v1", WIDTH = 280, RATIO = 0.62, MIN_WIDTH = 180, MAX_WIDTH = 520;
 	const defaults = () => ({ width: WIDTH, ratio: RATIO, mode: "split", hidden: [], collapsed: [] });
