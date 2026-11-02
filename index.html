@@ -28,7 +28,7 @@
 			<button id="b_import3d" title="Import 3D / stamp: pick models from a glTF (.glb, with bones and animation), a Wavefront OBJ or another Studio project, then add them or stamp them over your art">Import 3D / stamp…</button>
 		</div>
 	</div>
-	<div class="menuwrap">
+	<div class="menuwrap" data-click>
 		<button id="b_add" class="ghost" title="Add a primitive at the 3D cursor (Shift+A)">＋ Add ▾</button>
 		<div id="addmenu" class="menu">
 			<button data-kind="box">Box</button><button data-kind="cylinder">Cylinder</button><button data-kind="wedge">Wedge</button>
@@ -36,6 +36,7 @@
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
 		</div>
 	</div>
+	<button id="b_animate" class="ghost" title="Animation mode: rig the models with bones, pose them on a timeline, and send the frames to Aseprite as a normal-map spritesheet">Animate</button>
 	<div class="menuwrap" data-click>
 		<button id="b_aseprite" class="ghost" title="Link a folder shared with the Aseprite extension: Studio writes normal.png there, and can take albedo.png back as the tileset art"><span id="as_dot" class="dot"></span> Aseprite ▾</button>
 		<div class="menu aseprite-menu">
@@ -51,7 +52,6 @@
 			<p class="linkstate"><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the Aseprite extension</a> · needs Aseprite 1.3 or newer (Steam, itch or built from source)</p>
 		</div>
 	</div>
-	<button id="b_animate" class="ghost" title="Animation mode: rig the models with bones, pose them on a timeline, and send the frames to Aseprite as a normal-map spritesheet">Animate</button>
 	<span id="tileinfo" class="dim">no tileset</span>
 	<span class="grow"></span>
 	<div class="actions">
@@ -67,13 +67,12 @@
 			</div>
 		</div>
 	</div>
-	<span class="sep"></span>
 	<button id="b_learn" class="ghost" title="Visual lessons: Z placement, lighting, collision, kinds, and animating with Aseprite (L)">Learn</button>
 	<button id="b_help" class="ghost round" title="Shortcuts (F1)">?</button>
 </header>
 <main>
 	<aside class="left">
-		<div id="stamppanel" class="stamppanel">
+		<div id="stamppanel" class="toolpanel">
 			<h3>Model stamp</h3>
 			<button id="stamp_choose">Choose source / models</button>
 			<p id="stamp_name" class="dim"></p>
@@ -85,12 +84,7 @@
 			<p id="stamp_help" aria-live="polite"></p>
 			<div class="pencilactions"><button id="stamp_place" class="primary">Place stamp</button><button id="stamp_move">Move preview</button><button id="stamp_done">Done (Q)</button></div>
 		</div>
-			<details class="sec" open id="sec_models">
-				<summary id="models_h">Models</summary>
-				<input id="outfilter" class="outfilter" type="search" placeholder="Filter models…" title="Show only models whose name contains this">
-				<ul id="outliner" data-empty="No models yet. Pick Add ▾ (or press Shift+A) to place one."></ul>
-			</details>
-		<div id="pencilpanel" class="pencilpanel">
+		<div id="pencilpanel" class="toolpanel">
 			<h3>Free Draw</h3>
 			<label>Action <select id="pencil_operation"><option value="add">Add shape</option><option value="cut">Cut through</option><option value="carve">Carve recess</option></select></label>
 			<label>Draw <select id="pencil_mode"><option value="freehand">Freehand</option><option value="corners">Click corners</option><option value="box">Box</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option></select></label>
@@ -105,6 +99,11 @@
 			<p id="pencil_help" class="dim">Draw an outline and release to preview. Scroll for height, Shift+scroll for fine adjustment. Click or Enter applies; Esc cancels.</p>
 			<div class="pencilactions"><button id="pencil_finish" class="primary">Finish shape</button><button id="pencil_back" title="Remove the last corner (Backspace)">Undo point</button><button id="pencil_clear">Clear</button><button id="pencil_done">Done (Q)</button></div>
 		</div>
+			<details class="sec" open id="sec_models">
+				<summary id="models_h">Models</summary>
+				<input id="outfilter" class="outfilter" type="search" placeholder="Filter models…" title="Show only models whose name contains this">
+				<ul id="outliner" data-empty="No models yet. Pick Add ▾ (or press Shift+A) to place one."></ul>
+			</details>
 			<details class="sec" open id="sec_props">
 				<summary>Properties</summary>
 				<div id="props"></div>
@@ -160,8 +159,7 @@
 						<button id="e_open" class="primary big">Open tileset PNG</button>
 						<button id="e_project" class="big">Open project</button>
 					</div>
-					<div class="cta-row"><button id="e_sample" class="link" title="Open the built-in BasicSample project">Try the sample</button><span class="dim">·</span><button id="e_learn" class="link" title="Short visual lessons (L)">Take the quick lesson</button></div>
-					<div class="cta-row"><button id="e_blank" class="link" title="Start a blank 512 × 512 px tileset with no art; model on the grid and open art later">New empty tileset</button></div>
+						<div class="cta-row"><button id="e_sample" class="link" title="Open the built-in BasicSample project">Try the sample</button><span class="dim">·</span><button id="e_learn" class="link" title="Short visual lessons (L)">Take the quick lesson</button><span class="dim">·</span><button id="e_blank" class="link" title="Start a blank 512 × 512 px tileset with no art; model on the grid and open art later">New empty tileset</button></div>
 						<ol class="steps"><li><b>1</b>Open art</li><li><b>2</b>Model over it</li><li><b>3</b>Check the maps</li><li><b>4</b>Export</li></ol>
 				</div>
 			</div>
@@ -218,9 +216,6 @@
 			<button data-tool="zoom" title="Zoom: drag up/down on the view (or wheel, pinch)">🔍</button>
 			<button data-tool="look" title="Look round: drag on the view; it eases back when you let go (or Alt/middle-drag)">👁</button>
 			<button data-act="stay3d" title="Stay in 3D (5): the look-round holds until you press this again. Drag orbits, Shift/Space-drag pans, wheel zooms, click selects.">3D</button>
-			<button data-act="view-front" data-view="front" title="Front view, orthographic (Numpad 1; Ctrl: back). Locks moves and turns to this plane.">Fr</button>
-			<button data-act="view-right" data-view="right" title="Right view, orthographic (Numpad 3; Ctrl: left). Locks moves and turns to this plane.">Rt</button>
-			<button data-act="view-top" data-view="top" title="Top view, orthographic (Numpad 7; Ctrl: bottom). Locks moves and turns to this plane.">Tp</button>
 			<button data-act="ortho" title="Orthographic / perspective (Numpad 5)">⊞</button>
 			<button data-act="unlockview" title="Clear the view-plane lock (moves go over the ground again)">🔓</button>
 			<span class="gap"></span>
@@ -246,9 +241,9 @@
 	<section class="output">
 		<div id="outmodes" class="tabs">
 			<button data-mode="lit" class="on">Lit</button>
-			<span class="grp"><button class="grphead" data-label="Maps">Maps ▾</button><div class="sub"><button data-mode="height">Height</button><button data-mode="normals">Normals</button><button data-mode="roughness">Rough</button><button data-mode="metallic">Metal</button></div></span>
+			<span class="grp"><button class="grphead">Maps</button><div class="sub"><button data-mode="height">Height</button><button data-mode="normals">Normals</button><button data-mode="roughness">Rough</button><button data-mode="metallic">Metal</button></div></span>
 			<button data-mode="holes">Holes</button>
-			<span class="grp"><button class="grphead" data-label="Plan">Plan ▾</button><div class="sub"><button data-mode="heightfield" title="The floor plan seen from above: colour = top height, stripes = open underneath">Floor</button><button data-mode="collision" title="The floor plan: red = what blocks the player (bright = the exported collision, outlined), orange = strip models' strips; the 24x12 feet box follows the pointer">Collision</button><button data-mode="kind" title="Models tinted by their resolved kind: green floor, blue deco, orange solid, magenta wall, cyan side. A small rug or a 2 px bump shows up as floor.">Kind</button><button data-mode="pieces" title="How the engine groups the art into pieces per 32 px tile cell: colour = piece, cell border = the piece the engine reads the cell as, red = conflict, yellow = floating">Pieces</button></div></span>
+			<span class="grp"><button class="grphead">Plan</button><div class="sub"><button data-mode="heightfield" title="The floor plan seen from above: colour = top height, stripes = open underneath">Floor</button><button data-mode="collision" title="The floor plan: red = what blocks the player (bright = the exported collision, outlined), orange = strip models' strips; the 24x12 feet box follows the pointer">Collision</button><button data-mode="kind" title="Models tinted by their resolved kind: green floor, blue deco, orange solid, magenta wall, cyan side. A small rug or a 2 px bump shows up as floor.">Kind</button><button data-mode="pieces" title="How the engine groups the art into pieces per 32 px tile cell: colour = piece, cell border = the piece the engine reads the cell as, red = conflict, yellow = floating">Pieces</button></div></span>
 			<span class="grow"></span>
 			<span class="outzoom"><button id="o_zoomout" title="Zoom out (wheel)">−</button><span id="o_zoom" class="zoomlabel"></span><button id="o_zoomin" title="Zoom in (wheel)">＋</button><button id="o_fit" title="Fit (middle/right-drag or Space-drag pans)">⛶</button><button id="o_copy" title="Copy the image shown here to the clipboard, to paste into any app">Copy image</button></span>
 		</div>
@@ -327,43 +322,20 @@
 </div></div>
 <div id="help" class="modal" role="dialog" aria-modal="true" aria-labelledby="help_title">
 	<div class="card" id="help_card" tabindex="-1">
-		<div class="sourcebar helpbar"><h2 id="help_title">Tileset Studio</h2><span class="grow"></span><span class="dim">Esc closes</span><button id="help_close">Close</button></div>
-		<p><b>Flow:</b> Open tileset (PNG) → lay models over the art → check the output (it updates as you work while "auto" is on) → Export.
-		Axes: <b class="ax-x">X across</b> (east-west), <b class="ax-y">Y depth</b> (north-south on the ground, bigger = nearer you), <b class="ax-z">Z height</b> (up).
-		The view is the tileset's own projection (File > Projection). Top-down: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up. Isometric: X runs down-right, Y down-left, height up; the axis key at the bottom right of the view shows the directions.
-		Model what the art shows: fronts stand on the floor line, tops sit at their height. Holes (art no model covers) show in magenta.</p>
-		<table>
-			<tr><td>Shift+A</td><td>add a primitive in the tile south-east of the red cursor</td><td>right-click, C</td><td>place the 3D cursor (on a top: stack on it)</td></tr>
-			<tr><td>click / Shift+click</td><td>select / add to selection</td><td>Tab</td><td>edit the active model</td></tr>
-			<tr><td>1 / 2 / 3</td><td>vertex / edge / face mode</td><td>A / Alt+A</td><td>select all / none</td></tr>
-			<tr><td>G</td><td>move over the ground; Z = only height, X = only across, Y = only depth</td><td>S</td><td>scale (X / Y / Z = width / depth / height only)</td></tr>
-			<tr><td>R</td><td>turn, 15° steps (Z = upright axis; X / Y tip it over)</td><td>E</td><td>extrude faces</td></tr>
-			<tr><td>5, 3D button</td><td>stay in 3D and model there: every tool works; drag orbits, drag a selected piece to move it, Ctrl-drag box-selects, Shift/Space-drag pans, wheel zooms; again to go back</td><td>Facing turn</td><td>properties: turns a model's or face's shading to where the art meant it to face (shape stays)</td></tr>
-			<tr><td>I</td><td>inset faces (even all round)</td><td>Ctrl+B</td><td>bevel edges</td></tr>
-			<tr><td>Ctrl+R</td><td>loop cut: click an edge, slide, click</td><td>Shift+D / X</td><td>duplicate / delete (edit mode: the selected vertices, edges or faces)</td></tr>
-			<tr><td>E on edges / vertices</td><td>grow quads / new points on lines, then move them</td><td>Alt+E</td><td>extrude manifold: pushed in, a face cuts the model (no inner walls); pulled out flush, it merges with the faces beside it</td></tr>
-			<tr><td>F (edit mode)</td><td>fill: 2 vertices → a line, 3+ vertices or an edge loop → a face (outside edit mode: frame)</td><td>Ctrl+E</td><td>bridge two faces (a tunnel / neck) or two edge loops / strips (a band); same vertex counts</td></tr>
-			<tr><td>Ctrl+right-click (edit)</td><td>new point at the pointer, joined to the selected one: draw an outline, F, E up</td><td>Ctrl+J</td><td>join the selected models into the active one (Add ▸ Point starts from nothing)</td></tr>
-		<tr><td>K (edit mode)</td><td>knife: click points along a cut (snap to vertices / edges, or start off the model), Enter / right-click cuts, Backspace drops a point, first point closes; X-ray cuts through</td><td>P</td><td>Free Draw: add a shape, cut through or carve a closed solid; set Corner Radius for this outline; works in the held 3D camera</td></tr>
-			<tr><td>X / Y / Z twice</td><td>local axis while moving, scaling or turning (the model's own axes, each about its own middle; in edit mode the selection's normal)</td><td>click again</td><td>picks the next thing under the pointer (white outline = what a click takes); X-ray picks through faces</td></tr>
-			<tr><td>type a number</td><td>exact value while a tool runs</td><td>Shift</td><td>half the snap step (Snap off: no snapping)</td></tr>
-			<tr><td>Alt-drag, middle-drag</td><td>look round (eases back on release)</td><td>Space-drag, Shift+middle</td><td>pan</td></tr>
-			<tr><td>B</td><td>Box select tool: drag a rectangle (3D too) to select every model it touches; Shift adds, Alt-drag orbits. The properties panel then edits all selected models</td><td>L</td><td>Learn: visual lessons on Z placement, lighting, collision, kinds</td></tr>
-			<tr><td>wheel, + / −</td><td>zoom in whole-pixel steps</td><td>. (or F outside edit mode) / Home</td><td>frame selection / fit the tileset</td></tr><tr><td>arrows</td><td>pan a tile</td><td>Q</td><td>select tool (drag a selected piece to move it, drag empty space to box-select)</td></tr>
-			<tr><td>Ctrl+Z / Ctrl+Shift+Z</td><td>undo / redo</td><td>Ctrl+S</td><td>save project (unsaved work is autosaved and offered back on the next start)</td></tr>
-			<tr><td>Ctrl+O / Ctrl+Shift+O</td><td>open a project / a tileset PNG</td><td>Ctrl+Shift+E</td><td>export the Godot bundle</td></tr>
-			<tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste models in place (also between projects)</td><td>Ctrl+I</td><td>invert selection</td></tr>
-			<tr><td>Ctrl+M, X / Y / Z</td><td>mirror the selection on that axis</td><td>H / Shift+H / Alt+H</td><td>hide selected / hide others / show all (hidden still exports)</td></tr>
-			<tr><td>Ctrl+arrows, PageUp/Down</td><td>nudge one snap step (Shift: half)</td><td>[ / ]</td><td>snap step down / up</td></tr>
-			<tr><td>Alt+Z</td><td>X-ray</td><td>outliner</td><td>double-click renames, the dot hides, the box filters</td></tr>
-		</table>
-		<p><b>More tools</b> (each panel explains itself; hover any control): <b>Free Draw (P)</b> creates a custom shape or cuts/carves a closed solid from the same outline; Corner Radius rounds only that outline. It also works in the held 3D camera. <b>File ▸ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▸ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> (left panel) lay another tileset over yours as a ghost. README.md has the full manual.</p>
-		<p><b>Pen / touch:</b> the left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p><p><b>Output view:</b> drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans, ⛶ fits. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p>
-		<p><b>Into Godot:</b> set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p>
+			<div class="sourcebar helpbar"><h2 id="help_title">Tileset Studio</h2><input id="help_search" type="search" placeholder="Filter shortcuts…" aria-label="Filter shortcuts" spellcheck="false"><span class="grow"></span><button id="help_close">Close</button></div>
+			<p class="helpflow"><b>Open tileset</b> → <b>model over the art</b> → <b>check the output</b> (it updates as you work while "auto" is on) → <b>Export</b>. Axes: <b class="ax-x">X across</b>, <b class="ax-y">Y depth</b> (bigger = nearer you), <b class="ax-z">Z height</b>. Model what the art shows: fronts stand on the floor line, tops sit at their height; holes (art no model covers) show in magenta.</p>
+			<div id="help_keys" class="helpkeys"></div>
+			<p id="help_none" class="dim" hidden>No shortcut matches that.</p>
+			<details class="helpmore"><summary>Projection</summary><p>The view is the tileset's own projection (File ▾ Projection). Top-down: a point (X, Y, Z) shows at canvas (X, Y − Z), so going deeper moves a point down the screen and rising moves it up. Isometric: X runs down-right, Y down-left, height up; the axis key at the bottom right of the view shows the directions.</p></details>
+			<details class="helpmore"><summary>Tools in the panels</summary><p><b>Free Draw (P)</b> creates a custom shape or cuts/carves a closed solid from the same outline; Corner Radius rounds only that outline. <b>Facing turn</b> (Properties) turns a model's or face's shading to where the art meant it to face; the shape stays. <b>File ▾ Import 3D / stamp</b> adds models from an OBJ or another project, or stamps them over your art. <b>Export ▾ 3D models</b> writes glTF (with bones and animation) or OBJ for Blender and other 3D tools. <b>References</b> lay another tileset over yours as a ghost.</p><p><b>Scaling</b> snaps sizes to whole steps; a part smaller than the step (a thin leg) scales in the largest power-of-two step that fits it.</p></details>
+			<details class="helpmore"><summary>Output view</summary><p>Drag to move the light, Shift+wheel for its height; wheel (or − / +) zooms, middle/right/Space-drag pans. Hover reads the pixel; double-click selects its model; "next hole ›" visits uncovered spots; "⚠ Tile problems" lists cells the importer will misread (click it for the Pieces view). <b>Floor</b> shows the floor plan from above: dark stripes = open underneath (a top on legs), light stripes = a gap between stacked parts.</p></details>
+			<details class="helpmore"><summary>Pen and touch</summary><p>The left palette has every tool; palette tools are "armed" (press where to start, drag, let go). The bar at the bottom gives X/Y/Z locks, an exact value, "fine", apply and cancel. Two fingers pan and pinch-zoom; the top-right panel pans, zooms, looks round and frames. « / » at the top of either panel folds it away.</p></details>
+			<details class="helpmore"><summary>Into Godot</summary><p>Set the Name at the top of the Export menu, then Export ▾ → <b>Godot bundle</b>: one name.export.json with the art, maps and collision. Copy it into the Godot project; the Studio Import plugin unpacks it and builds name_tileset.tres by itself (and again whenever you export over it).</p></details>
 		<p class="credits">by: Chris Villarin<br>Contributions by: Nielsen Bool</p>
 	</div>
 </div>
 <script src="js/math.js"></script>
+<script src="js/dom.js"></script>
 <script src="js/proj.js"></script>
 <script src="js/shape.js"></script>
 <script src="js/mesh.js"></script>
@@ -386,6 +358,8 @@
 <script src="js/transfer-ui.js"></script>
 <script src="js/sample_basic.js"></script>
 <script src="js/learn.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/help.js"></script>
 <script src="js/app.js"></script>
 <script src="js/anim-ui.js"></script>
 <script src="js/layout.js"></script>

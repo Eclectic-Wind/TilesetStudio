@@ -4,7 +4,7 @@
 (() => {
 	const $ = (id) => document.getElementById(id);
 	const Rig = TS.Rig, Link = TS.Link, v3 = TS.v3;
-	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+	const esc = TS.esc;
 	const round = (v) => Math.round(v * 100) / 100;
 	let previewMode = "lit"; // the panel's own preview: lit | normal | albedo
 	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4], litCache = null;
@@ -594,8 +594,8 @@
 	// parent's tip when they aren't connected. Both are switchable and remembered.
 	const AXC = ["#ff5b5b", "#5bd16b", "#5b8cff"];
 	let showGizmos = true, showNames = true;
-	try { showGizmos = localStorage.getItem("tsGizmos") !== "0"; showNames = localStorage.getItem("tsNames") !== "0"; } catch (e) { /* storage blocked */ }
-	const savePref = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch (e) { /* ignore */ } };
+	showGizmos = TS.store.get("tsGizmos") !== "0"; showNames = TS.store.get("tsNames") !== "0";
+	const savePref = (k, v) => TS.store.set(k, v ? "1" : "0");
 	function viewDir() {
 		const el = $("view"), r = el && api().renderer;
 		if (!el || !r) return [0, 1, 0];

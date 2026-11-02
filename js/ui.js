@@ -3,12 +3,9 @@
 "use strict";
 (() => {
 	const $ = (id) => document.getElementById(id);
-	const store = {
-		get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-		set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
-	};
+	const { store, esc } = TS;
 
-	// --- Menus: File and Export open on click and stay open until you pick something or click away (Add is app.js's) ---
+	// --- Menus open on click and stay open until you pick something or click away ---
 	const closeMenus = (except) => {
 		for (const m of document.querySelectorAll(".menu.open")) if (!except || !except.contains(m)) m.classList.remove("open");
 	};
@@ -19,8 +16,6 @@
 		menu.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") setTimeout(() => menu.classList.remove("open"), 0); });
 	}
 	document.addEventListener("click", (e) => {
-		const add = $("addmenu");
-		if (add.classList.contains("open") && !add.parentElement.contains(e.target)) add.classList.remove("open");
 		for (const m of document.querySelectorAll(".menuwrap[data-click] .menu.open")) if (!m.parentElement.contains(e.target)) m.classList.remove("open");
 	});
 	window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
@@ -31,8 +26,7 @@
 	document.body.append(tip);
 	let cur = null, timer = 0, lastShown = 0;
 	const hideTip = () => { clearTimeout(timer); tip.classList.remove("on"); cur = null; };
-	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-	const fillTip = (text) => {
+		const fillTip = (text) => {
 		const m = text.match(/^(.{1,48}?)(?::\s|;\s|\.\s)([\s\S]+)$/);
 		if (m) tip.innerHTML = `<b>${esc(m[1])}</b><span>${esc(m[2])}</span>`;
 		else if (text.length <= 60) tip.innerHTML = `<b>${esc(text)}</b>`;

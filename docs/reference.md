@@ -248,7 +248,7 @@ drawn silhouette, then turn the facing to where the surface was meant to face. T
 ## Processing and the output view
 
 **Process** (automatic after every change unless "auto" is off) renders each canvas pixel's surface: the highest point of any
-model along that pixel's line of sight. The output view tests the result before you export. Its tabs are **Lit**, **Maps ▾** (Height / Normals / Rough / Metal), **Holes** and **Plan ▾** (Floor / Collision / Kind / Pieces); a ▾ tab opens a short list and shows the view you picked:
+model along that pixel's line of sight. The output view tests the result before you export. Its tabs are **Lit**, **Maps** (Height / Normals / Rough / Metal), **Holes** and **Plan** (Floor / Collision / Kind / Pieces); picking Maps or Plan shows its views in a row underneath:
 
 - **Lit**: the art lit by a light you drag around (Shift+wheel or slider = its height, "reach" = its radius), shaded with the
   normals, roughness and metallic, with shadows traced through the floor heightfield the same way the engine does.

@@ -822,7 +822,7 @@
 		if ($("l_sample")) $("l_sample").onclick = () => loadSample();
 		if ($("l_ghost")) $("l_ghost").onclick = () => { close(); TS.api.addReference(JSON.stringify(B())).catch((e) => TS.api.toast(e.message, "bad")); };
 		setPlayLabel();
-		try { localStorage.setItem("ts.learn", String(cur)); } catch (err) { /* storage blocked */ }
+		TS.store.set("ts.learn", String(cur));
 	}
 
 	function build() {
@@ -851,7 +851,7 @@
 		raf = requestAnimationFrame(frame);
 	}
 	function open(n) {
-		if (!built) { build(); try { cur = clamp(parseInt(localStorage.getItem("ts.learn") || "0") || 0, 0, L.length - 1); } catch (err) { cur = 0; } }
+		if (!built) { build(); cur = clamp(parseInt(TS.store.get("ts.learn") || "0") || 0, 0, L.length - 1); }
 		if (typeof n === "number") cur = clamp(n, 0, L.length - 1);
 		setPaused(false);
 		$("learn_back").classList.add("open");

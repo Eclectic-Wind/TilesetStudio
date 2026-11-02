@@ -78,7 +78,7 @@
 	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
 	function selChanged() { dirty = true; panels(); }
 
-	const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+	const esc = TS.esc;
 	const selVerts = (o) => Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel);
 	// Bounding box of a list of points.
 	function pointBounds(pts) {
@@ -456,11 +456,10 @@
 	function savePrefs() {
 		const p = { outMode: output ? output.mode : "lit", snapV: 2 };
 		for (const id of PREF_IDS) { const el = $(id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
-		try { localStorage.setItem("ts.prefs", JSON.stringify(p)); } catch (err) { /* storage blocked: not remembered */ }
+		TS.store.set("ts.prefs", JSON.stringify(p));
 	}
 	function loadPrefs() {
-		let p = null;
-		try { p = JSON.parse(localStorage.getItem("ts.prefs") || "null"); } catch (err) { /* storage blocked or bad data */ }
+		const p = TS.store.json("ts.prefs");
 		if (!p) return;
 		if (p.snapV !== 2) delete p.snap; // the default snap is now 1 px: an old remembered choice (often 32) doesn't override it once
 		for (const id of PREF_IDS) {
@@ -671,9 +670,8 @@
 		Link.onRelayOpen = asepriteSend;
 		$("as_online").onclick = async () => {
 			if (!(await askImport())) return;
-			let room = "";
-			try { room = localStorage.getItem("tsLinkRoom") || ""; } catch (e) { /* storage blocked: a new code each time */ }
-			if (!room) { room = Link.newRoom(); try { localStorage.setItem("tsLinkRoom", room); } catch (e) { /* ignore */ } }
+			let room = TS.store.get("tsLinkRoom"); // storage blocked: a new code each time
+			if (!room) { room = Link.newRoom(); TS.store.set("tsLinkRoom", room); }
 			try { Link.connectRelay(room); } catch (e) { return toast(e.message, "bad"); }
 			$("as_room").value = room; $("as_roomrow").hidden = false;
 		};
@@ -681,7 +679,7 @@
 		$("as_newroom").onclick = (e) => {
 			e.preventDefault();
 			const room = Link.newRoom();
-			try { localStorage.setItem("tsLinkRoom", room); } catch (err) { /* storage blocked: the code lasts this visit */ }
+			TS.store.set("tsLinkRoom", room);
 			try { Link.connectRelay(room); } catch (err) { return toast(err.message, "bad"); }
 			$("as_room").value = room;
 			toast("New room code. The old one no longer reaches you; copy this one into Aseprite to link again.", "ok");
@@ -730,19 +728,18 @@
 		document.querySelector("section.output").dataset.mode = mode;
 		pieceInfo(); syncModeTabs(); output.render(); savePrefs();
 	}
-	// The output tabs are grouped (Maps, Plan): the group's tab shows the active member and opens a small list.
+	// The output tabs are grouped (Maps, Plan): the active group shows its views in a row of their own.
 	function syncModeTabs() {
 		for (const g of document.querySelectorAll("#outmodes .grp")) {
-			const on = g.querySelector(".sub button.on"), head = g.querySelector(".grphead");
-			head.textContent = (on ? on.textContent : head.dataset.label) + " ▾";
-			head.classList.toggle("on", !!on);
-			g.classList.remove("open");
+			const on = g.querySelector(".sub button.on");
+			g.querySelector(".grphead").classList.toggle("on", !!on);
+			g.classList.toggle("open", !!on);
+			if (on) g.dataset.last = on.dataset.mode;
 		}
 	}
 	function initModeTabs() {
 		for (const head of document.querySelectorAll("#outmodes .grphead"))
-			head.onclick = (e) => { e.stopPropagation(); const g = head.parentElement, was = g.classList.contains("open"); document.querySelectorAll("#outmodes .grp").forEach((x) => x.classList.remove("open")); g.classList.toggle("open", !was); };
-		document.addEventListener("click", () => document.querySelectorAll("#outmodes .grp").forEach((x) => x.classList.remove("open")));
+			head.onclick = () => { const g = head.parentElement; setOutMode(g.dataset.last || g.querySelector(".sub button").dataset.mode); };
 		syncModeTabs();
 	}
 	// Pieces view legend: each piece's colour and name, and the conflict / floating counts.
@@ -1110,14 +1107,12 @@
 	function copySelection() {
 		if (S.edit || !S.selected.size) return status("Select models to copy.");
 		clipboard = JSON.stringify(selectedObjs());
-		try { localStorage.setItem("ts.clipboard", clipboard); } catch (err) { /* storage blocked: this tab only */ }
+		TS.store.set("ts.clipboard", clipboard); // storage blocked: this tab only
 		status(`Copied ${S.selected.size} model(s). Ctrl+V pastes them in place.`);
 	}
 	function paste() {
 		if (noModelling("paste models")) return;
-		let text = null;
-		try { text = localStorage.getItem("ts.clipboard"); } catch (err) { /* storage blocked */ }
-		text = text || clipboard;
+		const text = TS.store.get("ts.clipboard") || clipboard;
 		if (!text) return status("Nothing copied yet (Ctrl+C copies selected models).");
 		if (!S.art) return status("Open a tileset first.");
 		pushUndo();
@@ -1886,8 +1881,7 @@
 		status(renderer.free.ortho ? "Orthographic view." : "Perspective view.");
 	}
 	function syncViewButtons() {
-		document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("on", !!S.viewLock && VIEWS[S.viewLock.name].k === VIEWS[b.dataset.view].k));
-		document.querySelectorAll('[data-act="unlockview"]').forEach((b) => b.classList.toggle("on", !!S.viewLock));
+				document.querySelectorAll('[data-act="unlockview"]').forEach((b) => b.classList.toggle("on", !!S.viewLock));
 	}
 	// Pointer on the plane through p whose normal is axis k (null looking edge-on).
 	function planePoint(at, p, k) {
@@ -2921,7 +2915,7 @@
 			pixel: () => zoomAt(...viewCentre(), Math.max(1, Math.round(renderer.cam.zoom))), frame: frameSelection,
 			stay3d: () => toggleStay3d(),
 			gizmo: () => { S.gizmo = !S.gizmo; document.querySelectorAll('[data-act="gizmo"]').forEach((b) => b.classList.toggle("on", S.gizmo)); dirty = true; status(S.gizmo ? "Gizmos on: drag an arrow to move, a box to scale, a ring to turn the selection." : "Gizmos off."); },
-			"view-front": (e) => setView(e && e.ctrlKey ? "back" : "front"), "view-right": (e) => setView(e && e.ctrlKey ? "left" : "right"), "view-top": (e) => setView(e && e.ctrlKey ? "bottom" : "top"), unlockview: unlockView, ortho: toggleOrtho,
+			unlockview: unlockView, ortho: toggleOrtho,
 			fit: () => { if (S.stay3d) toggleStay3d(false); fitView(); },
 		};
 		acts.extrudeman = () => { if (S.edit && S.elemMode === "face") { S.armed = "extrude"; S.armedOpts = { manifold: true }; modalBar(); status("Press on the view, drag, and let go to extrude (manifold)."); } else status("Extrude manifold works on faces (3)."); };
@@ -2949,11 +2943,9 @@
 			const set = (folded) => {
 				panel.classList.toggle("folded", folded);
 				b.textContent = folded ? (open === "«" ? "»" : "«") : open;
-				try { localStorage.setItem(key, folded ? "1" : ""); } catch (err) { /* storage blocked: not remembered */ }
+				TS.store.set(key, folded ? "1" : "");
 			};
-			let stored = false;
-			try { stored = localStorage.getItem(key) === "1"; } catch (err) { /* storage blocked */ }
-			set(stored);
+			set(TS.store.get(key) === "1");
 			b.onclick = (e) => { e.stopPropagation(); set(!panel.classList.contains("folded")); $("view").focus(); };
 		}
 		for (const ax of ["x", "y", "z"]) $("mb_" + ax).onclick = () => cycleAxis(ax);
@@ -2989,8 +2981,7 @@
 		$("b_project").onclick = () => $("f_project").click();
 		$("b_save").onclick = saveProject;
 		asepriteInit();
-		$("b_add").onclick = () => toggleAddMenu(!$("addmenu").classList.contains("open"));
-		for (const b of document.querySelectorAll("#addmenu button")) b.onclick = () => { toggleAddMenu(false); addPrimitive(b.dataset.kind); };
+				for (const b of document.querySelectorAll("#addmenu button")) b.onclick = () => { toggleAddMenu(false); addPrimitive(b.dataset.kind); };
 		$("snap").onchange = () => { S.snap = parseFloat($("snap").value); status(`Snapping: ${snapText()} ([ / ] step it)`); };
 		$("shade").onchange = () => { S.shade = $("shade").value; dirty = true; };
 		$("opacity").oninput = () => { S.opacity = parseFloat($("opacity").value); dirty = true; };
