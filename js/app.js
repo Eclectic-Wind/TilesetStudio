@@ -105,7 +105,7 @@
 		const more = " · F1: all shortcuts";
 		const base = `Shift+A add · drag or G move · S scale · R turn · Tab edit · right-click: 3D cursor · Space-drag pan · 5: 3D · snap ${snapText()}`;
 		const edit = `Editing ${{ vert: "vertices", edge: "edges", face: "faces" }[S.elemMode]} (1/2/3) · E extrude · I inset · K knife · F fill · click again: the one behind · Alt+Z X-ray · Tab done`;
-		const in3d = "3D: drag orbits · Shift-drag pans · Ctrl-drag box-selects · 5 goes back · ";
+		const in3d = `3D: ${S.viewLock ? "Alt-drag orbits · drag box-selects" : "drag orbits · Ctrl-drag box-selects"} · Shift-drag pans · 5 goes back · `;
 		status((S.stay3d ? in3d : "") + (S.edit ? edit : S.stay3d ? "Tab edit · Shift+A add · G/S/R" : base) + more);
 	}
 
@@ -1831,6 +1831,9 @@
 		// The tileset view comes back centred on where the orbit was panned to.
 		const t = renderer.free.target;
 		if (renderer.free.blend >= 1) { const c = renderer.proj.toCanvas(t); renderer.cam.x = c[0]; renderer.cam.y = c[1]; }
+		// Yaw keeps counting as you orbit: drop whole turns so the way back is the short way round, not a spin through each one.
+		const home = renderer.proj.yaw, turn = Math.PI * 2;
+		renderer.free.yaw = home + (((renderer.free.yaw - home + Math.PI) % turn) + turn) % turn - Math.PI;
 		animate({ yaw: renderer.proj.yaw, pitch: renderer.proj.pitch }, 260, () => animate({ blend: 0 }, 160));
 	}
 	// Stay in 3D (nav "3D" button, key 5): the look-round holds until toggled off; drag orbits, Shift/Space-drag pans, wheel zooms.
@@ -2303,8 +2306,8 @@
 				press = { kind: "select", start: mouse.slice(), add: e.shiftKey, orbit: e.ctrlKey || e.metaKey ? "box" : S.tool === "box" ? (e.altKey ? "look" : "box") : e.shiftKey ? "pan" : "look",
 					onSel: !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && overSelection(mouse[0], mouse[1]) };
 				// In a preset view a plain drag on empty space box-selects instead of orbiting (as in Blender): Alt-drag or middle-drag
-				// orbits out of it, so a slip of the mouse can't throw you out of the view.
-				if (S.viewLock && press.orbit === "look" && !e.altKey) press.orbit = "box";
+				// (or the look tool, which is there to orbit) leaves it, so a slip of the mouse can't throw you out of the view.
+				if (S.viewLock && press.orbit === "look" && !e.altKey && S.tool !== "look") press.orbit = "box";
 				return;
 			}
 			if (button === 0 && S.tool === "zoom") { press = { kind: "zoom", start: mouse.slice(), zoom: renderer.cam.zoom }; return; }
@@ -2815,10 +2818,10 @@
 		const at = (d, k = 1) => [C[0] + (d[0] / len) * R * k, C[1] + (d[1] / len) * R * k];
 		const [x, y] = [at(dirs[0]), at(dirs[1])], xy = [x[0] + y[0] - C[0], x[1] + y[1] - C[1]];
 		let html = `<polygon points="${[C, x, xy, y].map((q) => q.join(",")).join(" ")}" class="ground"/>`;
-		// Blender-style view gizmo: a ball at each end of each axis; click one to look down that axis (+X Right, -X Left, -Y Front,
-		// +Y Back, +Z Top, -Z Bottom). The current preset's ball is ringed, and clicking it again flips to the opposite side.
+		// Blender-style view gizmo: a ball at each end of each axis; click one to look from that side (+X Right, -X Left, +Y Front,
+		// since Y runs south toward the viewer, -Y Back, +Z Top, -Z Bottom). The current preset's ball is ringed, and clicking it again flips to the opposite side.
 		// Balls are drawn far to near, so where an axis points at the viewer its near ball is the one on top (and the one you hit).
-		const NAMES = ["X across", "Y depth", "Z height"], POS = ["right", "back", "top"], NEG = ["left", "front", "bottom"];
+		const NAMES = ["X across", "Y depth", "Z height"], POS = ["right", "front", "top"], NEG = ["left", "back", "bottom"];
 		const vr = $("view").getBoundingClientRect(), d = renderer.ray(vr.width / 2, vr.height / 2).d.map((v) => (isFinite(v) ? v : 0));
 		const balls = [];
 		for (let k = 0; k < 3; k++) for (const sgn of [1, -1]) balls.push({ k, sgn, depth: sgn * d[k], view: sgn > 0 ? POS[k] : NEG[k] });
