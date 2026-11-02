@@ -1810,7 +1810,8 @@
 
 	let anim = null;
 	function animate(to, ms, done) {
-		const from = { yaw: renderer.free.yaw, pitch: renderer.free.pitch, blend: renderer.free.blend }, t0 = performance.now();
+		const from = {}, t0 = performance.now();
+		for (const k in to) from[k] = renderer.free[k];
 		anim = () => {
 			const t = Math.min(1, (performance.now() - t0) / ms), e = t * t * (3 - 2 * t);
 			for (const k in to) renderer.free[k] = from[k] + (to[k] - from[k]) * e;
@@ -1843,7 +1844,7 @@
 		if (want === !!S.stay3d) return;
 		if (modal) cancelModal();
 		S.stay3d = want;
-		if (!want) { S.viewLock = null; renderer.free.ortho = false; renderer.free.up = null; syncViewButtons(); }
+		if (!want) { viewMove = null; S.viewLock = null; renderer.free.ortho = false; renderer.free.orthoMix = 0; renderer.free.up = null; syncViewButtons(); }
 		document.querySelectorAll('[data-act="stay3d"]').forEach((b) => b.classList.toggle("on", S.stay3d));
 		hover = null;
 		if (S.stay3d) {
@@ -1860,15 +1861,30 @@
 		right: { k: 0, yaw: Math.PI / 2, pitch: 0, up: null, label: "Right" }, left: { k: 0, yaw: -Math.PI / 2, pitch: 0, up: null, label: "Left" },
 		top: { k: 2, yaw: 0, pitch: Math.PI / 2, up: [0, -1, 0], label: "Top" }, bottom: { k: 2, yaw: 0, pitch: -Math.PI / 2, up: [0, 1, 0], label: "Bottom" },
 	};
+	// The camera glides to the view the short way round, easing from perspective to flat. Looking straight down has no "up" to
+	// glide with, so it stops a hair short and the exact pose lands when the move ends.
+	const VIEW_MS = 320;
+	let viewMove = null;
+	function landView() {
+		const f = renderer.free, v = viewMove;
+		if (!v) return;
+		viewMove = null; anim = null;
+		f.blend = 1; f.ortho = true; f.orthoMix = 0; f.yaw = v.yaw; f.pitch = v.pitch; f.up = v.up;
+		dirty = true;
+	}
 	function setView(name) {
 		const v = VIEWS[name];
 		if (!v || modal || pencil || knife) return;
-		const fresh = !S.stay3d;
-		if (fresh) toggleStay3d(true);
-		const f = renderer.free;
-		f.ortho = true; f.yaw = v.yaw; f.pitch = v.pitch; f.up = v.up;
+		if (!S.stay3d) toggleStay3d(true);
+		const f = renderer.free, turn = Math.PI * 2, edge = Math.PI / 2 - 0.005;
+		// Leaving Top or Bottom: the ordinary up is the same picture just off the pole.
+		if (f.up) { f.up = null; f.pitch = TS.clamp(f.pitch, -edge, edge); }
+		f.orthoMix = f.ortho ? 1 : f.orthoMix || 0;
+		const yaw = f.yaw + ((((v.yaw - f.yaw + Math.PI) % turn) + turn) % turn - Math.PI);
+		viewMove = v;
 		S.viewLock = { k: v.k, name };
-		animate({ blend: 1 }, fresh ? 160 : 1);
+		const ms = matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : VIEW_MS;
+		animate({ blend: 1, yaw, pitch: TS.clamp(v.pitch, -edge, edge), orthoMix: 1 }, ms, landView);
 		syncViewButtons(); hint(); dirty = true;
 		status(`${v.label} view (orthographic). Moves and turns are locked to this plane (${"XYZ"[v.k]} frozen). Alt-drag or middle-drag orbits out of it; click another gizmo ball or Unlock to free them.`);
 	}
@@ -2268,6 +2284,7 @@
 				return;
 			}
 			const button = e.pointerType === "pen" && e.button === 5 ? "eraser" : e.button;
+			landView(); // a press during a view's glide finishes it, so the drag starts from the view you asked for
 			if (modal) { if (button === 0) { if (!modal.dragRelease) confirmModal(); } else cancelModal(); return; }
 			if (S.armed) {
 				// A tool started from the palette: this press is its start point; dragging adjusts, release applies.
