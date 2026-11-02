@@ -400,7 +400,7 @@
 		download(`${S.name}.studio.json`, projectJSON());
 		setUnsaved(false);
 		clearTimeout(autosaveTimer);
-		idb("delete", "last").catch(() => {});
+		if (!restorePending()) idb("delete", "last").catch(() => {});
 		status(`Saved ${S.name}.studio.json (to your downloads)`);
 		toast(`Saved ${S.name}.studio.json to your downloads`, "ok");
 	}
@@ -421,8 +421,10 @@
 			$("ask_save").focus();
 		});
 	}
+	// There is one autosave slot. While the banner still offers what's in it, nothing may replace it: answering the banner saves the newer work.
+	const restorePending = () => $("restore").classList.contains("open");
 	function autosave() {
-		if (!S.art || !unsaved) return;
+		if (!S.art || !unsaved || restorePending()) return;
 		idb("put", "last", { time: Date.now(), name: S.name, count: S.objects.length, json: projectJSON() }).catch(() => {});
 	}
 	// Tiny IndexedDB key-value store ("tileset-studio" / "kv"). op: get, put, delete.
@@ -447,8 +449,8 @@
 		const bar = $("restore"), when = new Date(saved.time);
 		$("restore_text").textContent = `Unsaved work from ${when.toLocaleString()}: ${saved.name}, ${saved.count} model(s).`;
 		bar.classList.add("open");
-		$("restore_yes").onclick = async () => { bar.classList.remove("open"); if (!(await openProject(saved.json))) return; markUnsaved(); status(`Restored ${saved.name} from ${when.toLocaleTimeString()}. Save project to keep it as a file.`); toast(`Restored ${saved.name}: Save project (Ctrl+S) to keep it as a file.`, "ok"); };
-		$("restore_no").onclick = () => { bar.classList.remove("open"); idb("delete", "last").catch(() => {}); };
+		$("restore_yes").onclick = async () => { if (!(await openProject(saved.json))) return; bar.classList.remove("open"); markUnsaved(); status(`Restored ${saved.name} from ${when.toLocaleTimeString()}. Save project to keep it as a file.`); toast(`Restored ${saved.name}: Save project (Ctrl+S) to keep it as a file.`, "ok"); };
+		$("restore_no").onclick = () => { bar.classList.remove("open"); idb("delete", "last").catch(() => {}).then(autosave); };
 	}
 
 	// View preferences remembered per browser (snap, display, output view and light).
