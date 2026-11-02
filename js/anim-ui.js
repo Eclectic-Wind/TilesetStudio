@@ -652,7 +652,8 @@
 		const track = `width:${c.frames * FRAME_W}px`;
 		let rows = `<div class="tlrow sum"><div class="tlname" title="Every key on a frame together">All bones${a.bones.length && Object.keys(c.tracks).length ? "" : ' <span class="dim">(no keys yet)</span>'}${a.bones.length ? `<button id="tl_fold" title="${tlCollapsed ? "Show" : "Hide"} the bone rows">${tlCollapsed ? "▸" : "▾"}</button>` : ""}</div><div class="tltrack" style="${track}">${[...all].map((f) => `<i class="kd all${Object.keys(c.tracks).some((id) => keySel.has(keyName(id, f))) ? " sel" : ""}" data-all="1" data-f="${f}" style="left:${f * FRAME_W}px" title="All keys on frame ${f + 1}"></i>`).join("")}</div></div>`;
 		if (!tlCollapsed) for (const b of Rig.ordered(a)) rows += `<div class="tlrow${isSel(b.id) ? " on" : ""}" data-bone="${b.id}"><div class="tlname" style="padding-left:${6 + depth(b) * 10}px" title="${esc(b.name)}">${esc(b.name)}</div><div class="tltrack" style="${track}">${(c.tracks[b.id] || []).filter((k) => k.f < c.frames).map((k) => diamond(k, b.id)).join("")}</div></div>`;
-		el.innerHTML = `<div class="tlbar"><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
+		el.classList.toggle("atrest", restMode);
+		el.innerHTML = `<div class="tlbar"><div class="tlmode" role="group" aria-label="Animate mode"><button id="tl_pose" class="${restMode ? "" : "on"}" aria-pressed="${!restMode}" title="Pose: bones move and keys on this frame (Tab switches)">Pose</button><button id="tl_rest" class="${restMode ? "on" : ""}" aria-pressed="${restMode}" title="Rest pose: reshape the bones themselves; models show at rest and keys don't apply (Tab switches)">Rest</button></div><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
 			`<label class="tlease" title="How the picked keys (or the selected bones' keys on this frame) leave for the next key. Hold keeps the pose until then."><span class="dim">Ease</span> <select id="tl_ease"${eases.length ? "" : " disabled"}>${ease ? "" : '<option value="">–</option>'}${Rig.EASES.map(([v, t]) => `<option value="${v}"${v === ease ? " selected" : ""}>${t}</option>`).join("")}</select></label>` +
 			`<button id="tl_onion" class="${showOnion ? "on" : ""}" title="Onion skin: show the models on the previous frame (red) and next frame (green) while stopped">Onion</button>` +
 			`<button id="tl_seam" title="Key the first frame's pose on the last frame, so the loop has no jump (selected bones, or all with keys)">Close loop</button>` +
@@ -662,6 +663,8 @@
 		$("tl_prev").onclick = () => setFrame(a.frame - 1);
 		$("tl_next").onclick = () => setFrame(a.frame + 1);
 		$("tl_play").onclick = togglePlay;
+		$("tl_pose").onclick = () => { if (restMode) toggleRest(false); };
+		$("tl_rest").onclick = () => { if (!restMode) toggleRest(true); };
 		$("tl_ease").onchange = () => setEase($("tl_ease").value);
 		$("tl_onion").onclick = () => { showOnion = !showOnion; TS.store.set("tsOnion", showOnion ? "1" : "0"); $("tl_onion").classList.toggle("on", showOnion); draw(); };
 		$("tl_seam").onclick = () => {
@@ -913,6 +916,7 @@
 		if (!svg) return;
 		svg.replaceChildren();
 		svg.classList.toggle("painting", on && paintMode);
+		svg.classList.toggle("atrest", on && restMode);
 		if (!on) return;
 		const a = A(), r = api().renderer, mats = Rig.matrices(a, restMode ? null : clip(), a.frame);
 		const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
@@ -941,6 +945,9 @@
 			const tip = add("circle", { cx: t[0], cy: t[1], r: 7, fill: sel ? col : "#14141899", stroke: col, "stroke-width": 1.5, class: "bonetip", "data-bone": b.id });
 			tip.dataset.part = "tip"; tip.style.cursor = "grab";
 		}
+		// Which mode the view is in, always in sight.
+		const badge = add("text", { x: "50%", y: 20, "text-anchor": "middle", fill: restMode ? "#ffb15a" : paintMode ? "#ff8fa3" : "#5ad1ff", "font-size": 12, "font-weight": 700, "pointer-events": "none", stroke: "#141418", "stroke-width": 3, "paint-order": "stroke" });
+		badge.textContent = restMode ? "REST POSE · keys don't apply · Tab to finish" : paintMode ? "WEIGHT PAINT · Esc to finish" : `POSE · frame ${a.frame + 1}`;
 		if (paintMode) add("circle", { class: "brushring", cx: brushAt ? brushAt[0] : 0, cy: brushAt ? brushAt[1] : 0, r: brushAt ? brush.radius : 0, fill: "#ffffff14", stroke: "#fff", "stroke-width": 1.2, "pointer-events": "none" });
 	}
 	let drag = null, restMode = false;
@@ -949,7 +956,7 @@
 	// the rest head, so set the rest first, then animate.
 	function toggleRest(v) {
 		restMode = v === undefined ? !restMode : v;
-		if (restMode) paintMode = false;
+		if (restMode) { paintMode = false; if (playing) togglePlay(); }
 		api().redrawSoon(); draw(); render();
 		api().status(restMode ? "Editing the rest pose: drag a bone's head, tip or body (X / Y / Z narrows it, a preset view picks the plane). Tab to finish." : "Back to posing.");
 	}

@@ -466,6 +466,14 @@ body.animating details.animonly { display: block; }
 body.animating .timeline.animonly { display: flex; }
 .boneoverlay .bonetip, .boneoverlay [data-part="body"], .boneoverlay [data-gizmo] { pointer-events: all; }
 .boneoverlay.painting * { pointer-events: none !important; } /* weight painting: the view underneath takes the brush */
+.boneoverlay.atrest { box-shadow: inset 0 0 0 2px #ffb15a; }
+.timeline .tlmode { display: flex; flex: none; }
+.timeline .tlmode button { border-radius: 0; }
+.timeline .tlmode button:first-child { border-radius: var(--r-s) 0 0 var(--r-s); }
+.timeline .tlmode button:last-child { border-radius: 0 var(--r-s) var(--r-s) 0; margin-left: -1px; }
+.timeline .tlmode #tl_pose.on { background: #5ad1ff; border-color: #5ad1ff; color: #141418; }
+.timeline .tlmode #tl_rest.on { background: #ffb15a; border-color: #ffb15a; color: #141418; }
+.timeline.atrest .tlgrid { opacity: .45; }
 .animbody .ansec { border-top: 1px solid var(--line); padding: 4px 0; }
 .animbody .ansec:first-child { border-top: 0; }
 .animbody .ansec > summary { cursor: pointer; padding: 3px 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
