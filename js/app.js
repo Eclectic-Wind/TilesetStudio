@@ -1676,7 +1676,14 @@
 	}
 
 	function restoreBase() {
+		// Move, Scale and Turn only change positions (and the axes): everything else is still as it was.
+		const posed = modal.type === "grab" || modal.type === "scale" || modal.type === "rotate";
 		for (const [o, base] of modal.base) {
+			if (posed) {
+				o.verts = base.verts.map((p) => p.slice());
+				if (base.basis) o.basis = base.basis.map((a) => a.slice()); else delete o.basis;
+				continue;
+			}
 			const c = Mesh.clone(base);
 			o.verts = c.verts; o.faces = c.faces;
 			if (c.lines) o.lines = c.lines; else delete o.lines;
@@ -1914,14 +1921,46 @@
 		for (const q of parts) { out.set(q, o); o += q.length; }
 		return out;
 	};
-	// The same array as last time when no part changed, so the renderer needn't send it to the GPU again.
+	// The same array as last time while every part keeps its size: parts that changed are written over and listed in whole.changed
+	// ([offset, length, ...], next to each other merged), so the renderer sends only those to the GPU.
 	const keptConcat = () => {
 		let parts = null, whole = null;
 		return (next) => {
-			if (!parts || parts.length !== next.length || next.some((q, i) => q !== parts[i])) { parts = next; whole = concatF32(next); }
+			if (!parts || parts.length !== next.length || next.some((q, i) => q.length !== parts[i].length)) { parts = next; return (whole = concatF32(next)); }
+			const changed = whole.changed || [];
+			let o = 0;
+			for (let i = 0; i < next.length; i++) {
+				const q = next[i];
+				if (q !== parts[i]) {
+					whole.set(q, o);
+					const n = changed.length;
+					if (n && changed[n - 2] + changed[n - 1] === o) changed[n - 1] += q.length;
+					else changed.push(o, q.length);
+				}
+				o += q.length;
+			}
+			parts = next;
+			if (changed.length) whole.changed = changed;
 			return whole;
 		};
 	};
+	// A model moved whole keeps its triangles, normals and colours, so only the positions need writing. Null if it did anything else.
+	function movedGeometry(hit, obj) {
+		const base = hit.verts, verts = obj.verts, n = verts.length;
+		if (!n || base.length !== n * 3 || hit.faces !== Mesh.faceKey(obj)) return null;
+		const dx = verts[0][0] - base[0], dy = verts[0][1] - base[1], dz = verts[0][2] - base[2];
+		for (let i = 0; i < n; i++) {
+			const p = verts[i], j = i * 3;
+			if (Math.abs(p[0] - base[j] - dx) > 1e-9 || Math.abs(p[1] - base[j + 1] - dy) > 1e-9 || Math.abs(p[2] - base[j + 2] - dz) > 1e-9) return null;
+		}
+		const place = (src, at, w) => {
+			const out = src.slice();
+			for (let k = 0; k < at.length; k++) { const p = verts[at[k]], j = k * w; out[j] = p[0]; out[j + 1] = p[1]; out[j + 2] = p[2]; }
+			return out;
+		};
+		return { tris: place(hit.tris, hit.trisAt, 14), lines: place(hit.lines, hit.linesAt, 10) };
+	}
+	const flatVerts = (obj) => { const out = new Float64Array(obj.verts.length * 3); obj.verts.forEach((p, i) => out.set(p, i * 3)); return out; };
 	const concatTris = keptConcat(), concatLines = keptConcat();
 	// The tile grid as the projection draws it: the floor lattice (lines of constant X and constant Y every 32 world px) cut to the
 	// canvas rectangle, whose border is drawn stronger (cb).
@@ -1957,9 +1996,17 @@
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id) || !!(pencil?.preview?.add && pencil.preview.object === obj), editing = S.edit && isActive;
 			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
 			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
-			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel ? "s" : "n") + (S.edit ? "e" : "") : null, hit = cacheable && geomCache.get(obj);
-			if (hit && hit.key === key) { triParts.push(hit.tris); lineParts.push(hit.lines); continue; }
-			const tris = [], lines = [];
+			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) : 0, look = (isSel ? "s" : "n") + (S.edit ? "e" : ""), hit = cacheable && geomCache.get(obj);
+			if (hit && hit.look === look) {
+				if (hit.key === key) { triParts.push(hit.tris); lineParts.push(hit.lines); continue; }
+				const moved = movedGeometry(hit, obj);
+				if (moved) {
+					Object.assign(hit, moved, { key, verts: flatVerts(obj) });
+					triParts.push(hit.tris); lineParts.push(hit.lines);
+					continue;
+				}
+			}
+			const tris = [], lines = [], trisAt = [], linesAt = [];
 			const corners = Mesh.shadingNormals(obj);
 			if (heat) obj.verts.forEach((p, i) => vtx(points, p, [0, 0, 1], [0.05, 0.05, 0.08, 1]));
 			obj.faces.forEach((f, fi) => {
@@ -1969,18 +2016,19 @@
 				if (faceMode) vtx(dots, Mesh.faceCentre(obj, f), [0, 0, 1], picked ? [1, 0.6, 0.1, 1] : [0.08, 0.08, 0.1, 1]);
 				const own = Mesh.faceColour(f);
 				for (const triangle of Mesh.faceTriangles(obj, f))
-					for (const k of triangle) vtxFace(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint, own);
+					for (const k of triangle) { vtxFace(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint, own); trisAt.push(f.v[k]); }
 			});
 			const edgeCol = editing ? [0.95, 0.95, 1, 0.9] : isSel ? [1, 0.65, 0.3, 0.95] : [0.85, 0.9, 1, 0.35];
 			for (const [k, e] of Mesh.edges(obj)) {
 				const c = editing && S.elemMode === "edge" && S.elemSel.has(k) ? [1, 0.6, 0.1, 1] : edgeCol;
 				vtx(lines, obj.verts[e.a], [0, 0, 1], c); vtx(lines, obj.verts[e.b], [0, 0, 1], c);
+				linesAt.push(e.a, e.b);
 			}
 			if (editing && S.elemMode === "vert")
 				obj.verts.forEach((p, i) => vtx(points, p, [0, 0, 1], S.elemSel.has(i) ? [1, 0.6, 0.1, 1] : [0.1, 0.1, 0.12, 1]));
 			const ft = new Float32Array(tris), fl = new Float32Array(lines);
 			triParts.push(ft); lineParts.push(fl);
-			if (cacheable) geomCache.set(obj, { key, tris: ft, lines: fl });
+			if (cacheable) geomCache.set(obj, { key, look, tris: ft, lines: fl, trisAt: Int32Array.from(trisAt), linesAt: Int32Array.from(linesAt), verts: flatVerts(obj), faces: Mesh.faceKey(obj) });
 		}
 		if (hv) {
 			// What a click would pick: outlined in white over everything.
@@ -3203,10 +3251,13 @@
 		const b = pointBounds(pts);
 		return [0, 1, 2].map((k) => (k === 2 && !S.edit ? b.min[k] : (b.min[k] + b.max[k]) / 2));
 	}
-	function drawGizmo() {
+	let gizmoAt = null;
+	// sameGeometry: only the camera moved, so the pivot from last time still holds (working it out reads every selected vertex).
+	function drawGizmo(sameGeometry) {
 		const svg = $("edit_gizmo");
 		const idle = !S.gizmo || modal || knife || S.armed || S.loopCut || pencil || S.tool === "stamp" || (TS.AnimUI && TS.AnimUI.on) || !(renderer.free.blend === 0 || (S.stay3d && renderer.free.blend >= 1));
-		const P = idle ? null : gizmoPivot(), s0 = P && renderer.toScreen(P);
+		const P = idle ? null : sameGeometry === true && gizmoAt ? gizmoAt : gizmoPivot(), s0 = P && renderer.toScreen(P);
+		gizmoAt = P;
 		const dirs = s0 ? [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((a) => { const s = renderer.toScreen(v3.add(P, v3.scale(a, 32))); return s ? [s[0] - s0[0], s[1] - s0[1]] : [0, 0]; }) : [];
 		const ppu = Math.max(0, ...dirs.map((d) => Math.hypot(d[0], d[1]))) / 32;
 		if (!s0 || !(ppu > 0) || !isFinite(ppu)) { if (svg.firstChild) svg.replaceChildren(); return; }
@@ -3261,7 +3312,7 @@
 		lastGeometry = geometry;
 		dirty = false; viewMoved = false;
 		renderer.draw(geometry, { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
-		drawAxes(); drawGizmo(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
+		drawAxes(); drawGizmo(sameGeometry); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {
 		if (anim) anim();

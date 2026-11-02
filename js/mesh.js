@@ -178,11 +178,25 @@
 	// [{a, b, c, face}] (vertex indices).
 	// Fingerprint of an object's shape (vertices, face winding, smoothing). Models are edited in place, so caches compare this
 	// instead of a version number.
+	// Runs over every model on every rebuild and pick, so a plain number: floor is far quicker than % on these values.
+	const wrap = (h) => h - Math.floor(h / 1e9) * 1e9;
+	// The part that isn't positions: face corners and smoothing.
+	M.faceKey = (obj) => {
+		let h = wrap((obj.smooth || 0) * 19 + obj.faces.length);
+		for (const f of obj.faces) {
+			h = h * 17 + f.v.length;
+			const v = f.v;
+			for (let k = 0; k < v.length; k++) h = wrap(h) * 13 + v[k] + 1;
+			h = wrap(wrap(h) * 3 + (f.smooth === undefined ? 0 : f.smooth ? 2 : 1));
+			if (f.col) h = wrap(h * 7 + parseInt(f.col.slice(1), 16));
+		}
+		return h;
+	};
 	M.shapeKey = (obj) => {
-		let h = obj.smooth || 0;
-		for (const p of obj.verts) h = (h * 31 + p[0] * 7.31 + p[1] * 3.17 + p[2] * 1.93) % 1e9;
-		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; h = (h * 3 + (f.smooth === undefined ? 0 : f.smooth ? 2 : 1)) % 1e9; if (f.col) h = (h * 7 + parseInt(f.col.slice(1), 16)) % 1e9; }
-		return h + ":" + obj.verts.length + ":" + obj.faces.length;
+		const verts = obj.verts;
+		let h = wrap(M.faceKey(obj) * 23 + verts.length);
+		for (let k = 0; k < verts.length; k++) { const p = verts[k]; h = wrap(h * 31 + p[0] * 7.31 + p[1] * 3.17 + p[2] * 1.93); }
+		return h;
 	};
 	// Axis-aligned box round an object: {min, max}. Cached like the triangles.
 	const boundsCache = new WeakMap();

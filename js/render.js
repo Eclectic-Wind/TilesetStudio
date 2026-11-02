@@ -388,7 +388,9 @@
 				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.shade === "base" ? 3 : opts.shade === "art" || free ? 2 : 1);
 				gl.uniform1f(gl.getUniformLocation(this.prog, "u_opacity"), opacity);
 				gl.depthMask(!opts.xray);
+				if (opacity >= 1) gl.disable(gl.BLEND); // nothing to mix with
 				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris, true);
+				gl.enable(gl.BLEND);
 			} else if (geometry.tris.length && !opts.xray) {
 				// Invisible faces still hide what's behind them (opacity 0 without X-ray).
 				gl.colorMask(false, false, false, false);
@@ -447,9 +449,14 @@
 		_stream(data, mode, kept, wide) {
 			const gl = this.gl, stride = wide ? 56 : 40;
 			gl.bindBuffer(gl.ARRAY_BUFFER, kept ? kept.buf : this.buf);
-			if (!kept || kept.data !== data) {
+			const changed = kept && kept.data === data ? data.changed : null;
+			if (!kept || kept.data !== data || (changed && changed.length > 128)) {
 				gl.bufferData(gl.ARRAY_BUFFER, data, kept ? gl.DYNAMIC_DRAW : gl.STREAM_DRAW);
-				if (kept) kept.data = data;
+				if (kept) { kept.data = data; data.changed = null; }
+			} else if (changed) {
+				// Only the models that changed: [offset, length, ...] in floats.
+				for (let i = 0; i < changed.length; i += 2) gl.bufferSubData(gl.ARRAY_BUFFER, changed[i] * 4, data, changed[i], changed[i + 1]);
+				data.changed = null;
 			}
 			const attrs = [["a_pos", 3, 0], ["a_nrm", 3, 12], ["a_col", 4, 24], ...(wide ? [["a_base", 4, 40]] : [])];
 			if (!wide) { const b = gl.getAttribLocation(this.prog, "a_base"); if (b >= 0) gl.vertexAttrib4f(b, 0, 0, 0, 0); }
