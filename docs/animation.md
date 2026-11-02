@@ -1,4 +1,28 @@
-# Animation mode and the Aseprite link
+# Animation
+
+Make your models move. You don't need Aseprite or any setup to start. Press **L** and pick the **Animation** tab for short visual lessons.
+
+## Your first animation
+
+1. Press **Animate** in the top bar. The timeline opens under the view.
+2. Click frame 6 on the timeline, select a model, press **G** and move it (**R** turns it instead).
+3. Press **Space** to play. Studio works out the frames in between.
+
+## The words
+
+- **Frame:** one picture of the animation.
+- **Clip:** one row of frames, such as a walk or a door opening.
+- **Key (◆):** a frame whose pose you chose yourself. Frames between keys are blended for you.
+- **Bone:** a handle inside a model. You only need bones for things that bend.
+- **Normal map:** a picture of which way each part of the shape faces, so the game's light can shade it. Studio makes one for every frame.
+- **Albedo:** the plain colours of each frame, without lighting. You paint these.
+- **Sheet:** one big picture holding all the frames in a grid.
+
+## Getting the frames into your game
+
+Studio moves the shape, but the colours of each frame are painted by you. Either use the live [Aseprite link](aseprite-link.md), or press *Download normal sheet*, paint over it in any program and press *Load albedo sheet…* with a picture of the same size. Then, in the panel's *Game export*, select the models and press *Use selected models*, and export with *Export ▾ → Godot bundle*.
+
+## Reference
 
 **Animate** (top bar) opens the *Rig & animation* panel and a timeline. Model over your drawing as usual, then:
 
@@ -49,72 +73,5 @@ only redoes the frames it changes, and frames with the same pose share a picture
 it is whole, and *Download normal sheet* finishes it on the spot. A power-of-two tileset always
 gives a power-of-two sheet. Rigging is saved in the `.studio.json` project (`anim`), including the last Albedo sheet received.
 
-## Frames in Aseprite
-
-The Aseprite sprite is **one tile big** (the size of your tileset) and every animation frame is a **real frame on Aseprite's timeline**.
-
-- **Each clip has its own frames**, marked by a tag named `<clip name> [<clip id>]` (extension 1.3 or newer). Pick another clip in Studio and the
-  link moves to its tag; the other clips' frames are not touched. A clip seen for the first time takes the frames already there if the file has no
-  tags yet, else a new empty range at the end (nothing is sent back until you paint in it, so the sheet Studio keeps for the clip is safe). Keep the tag's `[id]`; a deleted clip's tag and frames stay until you remove them.
-- **Studio to Aseprite.** Studio's normal map appears on each frame in the locked layer **Normal (Studio)**. Change the frame count in Studio and
-  Aseprite adds or removes frames at the end of the clip's tag (one undo step there). The frame length follows the clip's fps.
-- **Aseprite to Studio.** Paint each frame inside the group **Albedo**. The extension lays every frame out in Studio's sheet grid and sends it.
-- **Adding and deleting frames in Aseprite** changes the clip in Studio: a **deleted** frame takes its key with it and later keys move up one;
-  an **inserted** (or duplicated) frame pushes later keys down. Studio works out which frame it was by comparing frame contents, so a frame that is
-  an exact copy of its neighbour is matched to the later one. Reordering frames by dragging is not tracked.
-- **Not in animation mode?** Only frame 1 is linked and your timeline is left alone.
-
-## Aseprite link (live)
-
-Both programs watch one folder. This works from a GitHub Pages / https page; the folder picker needs Chrome or Edge.
-
-| Direction | File | Content |
-|---|---|---|
-| Studio → Aseprite | `normal.png`, `studio_link.json` | the normal sheet; the json (written last) has `rev` and the sheet size |
-| Aseprite → Studio | `albedo.png` | the flattened group named **Albedo**, saved on every edit that changes it |
-| Aseprite → Studio | `aseprite_status.json` | the extension's heartbeat: file name, size, frames, anything wrong |
-
-**Presence.** The *Aseprite ▾* menu ticks off each step of the link and shows anything wrong on Aseprite's side (no Albedo group, wrong
-colour mode, wrong canvas size); a toast says when Aseprite joins or leaves, and the dot is green only while Aseprite is really there.
-Studio takes pictures only from an extension that is there now, so an `albedo.png` or a relay picture left from an earlier session can
-never overwrite the tileset art. An older extension is told to update (its pictures are ignored).
-
-**Setup**
-1. Install `tools/aseprite/TilesetStudioLink.aseprite-extension` (double-click it, or Edit ▸ Preferences ▸ Extensions ▸ Add Extension). Needs Aseprite 1.3+.
-2. In Studio: *Aseprite ▾ ▸ Link a shared folder…* (*Link Aseprite…* in the Animate panel opens the same menu) and pick an empty folder. Studio writes `normal.png` and `studio_link.json` into it.
-3. In Aseprite, open your file (with none open, the extension offers a new one), then *File ▸ Scripts ▸ Tileset Studio Link…* and
-   pick any file in that folder. A layer **Normal (Studio)** appears (locked, kept up to date as you change the rig).
-4. Press **Set up file** in the link window: it switches the file to RGB and puts the layers already there into a group called **Albedo**
-   (one undo step). Draw in that group. Each edit is flattened and sent; Studio shows it in the preview.
-
-**Canvas rule.** The Aseprite canvas must be exactly one tile (Studio's tileset size), and the sheet it builds must be a power of two
-(16, 32, 64, 128 ... per cell; 2^n columns and rows). If it is not, Studio shows a red warning and **keeps the previous page**; the extension
-warns too. Fix the canvas and the next edit goes through.
-
-### Online link (any browser, including Firefox / Zen)
-
-The folder picker is Chromium-only, so there is a second transport that needs no folder access. Studio (in the browser) and the
-extension (in Aseprite) both **dial out** to a tiny relay (`tools/relay`, a Cloudflare Worker) and share a random room code. The relay
-only forwards the PNGs and keeps the latest in memory until everyone has left; it stores nothing.
-
-1. **Requirements:** Aseprite **1.3 or newer** (the extension uses its Lua `WebSocket` API) and the extension
-   [`TilesetStudioLink.aseprite-extension`](../tools/aseprite/TilesetStudioLink.aseprite-extension) (double-click to install, or
-   Edit ▸ Preferences ▸ Extensions ▸ Add Extension). The same download link is in Studio's *Aseprite ▾* menu.
-2. In Studio: *Aseprite ▾ ▸ Link online (any browser)* and copy the room code.
-3. In Aseprite: *File ▸ Scripts ▸ Tileset Studio Link (online)…*, paste the room code, *Link*. The rest is as above (layer
-   **Normal (Studio)**, group **Albedo**).
-
-The room code is the only secret: anyone with it can read and send pictures in that room, so treat it like a password. It is kept
-in the browser between visits; **Use a new room code** swaps it for a fresh random one at once, cutting off the old code, and you
-paste the new one into Aseprite. Deploying your
-own relay: `cd tools/relay && npx wrangler login && npx wrangler deploy`, then put its address in `L.RELAY` (js/aseprite.js) and `RELAY`
-(the extension's plugin.lua).
-
-The non-animated tileset uses the same link: the *Aseprite ▾* menu in the top bar sends the tileset's normal map and can take
-Aseprite's `albedo.png` back as the tileset art.
-
-**No link at all:** use *Download normal sheet* and *Load albedo sheet…* (same size checks).
-
-Tests: `node tools/test_link.js` covers Studio's side of the link and `tools/aseprite/test_headless.lua` runs the extension in Aseprite's batch mode. Aseprite's WebSocket and dialogs don't run in batch mode, so those follow the documented 1.3 API.
 glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex) and its whole skeleton; a skinned model imported from glTF stays one model and keeps its weights as painted ones. The Albedo preview is the whole
 sheet cell, not re-skinned onto the pose.

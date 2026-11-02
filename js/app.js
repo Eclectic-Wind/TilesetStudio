@@ -624,6 +624,7 @@
 		$("as_b_tip").textContent = !linked ? "" : health === "ok" ? "Aseprite is live" : health === "warn" ? "Aseprite link needs a look" : "Waiting for Aseprite";
 		$("as_idle").hidden = linked;
 		$("as_steps").hidden = !linked;
+		$("as_dl_again").hidden = !linked || !!p;
 		$("as_unlink").hidden = !linked;
 		$("as_send").hidden = !linked || Link.adoptPending; // nothing goes out until Studio has taken Aseprite's file
 		$("as_newroom").hidden = !Link.relayRoom();
@@ -638,11 +639,11 @@
 		const online = !!Link.relayRoom(), adopting = Link.adoptPending;
 		step(1, !online || (Link.relayOpen() && p) ? "done" : "now", online ? (!Link.relayOpen() ? "Connecting to the relay…" : p ? "Room code" : "Copy this room code") : "Folder linked");
 		step(2, p ? "done" : "now", p ? `Aseprite joined: ${p.file}` : "Join from Aseprite",
-			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : `File ▸ Scripts ▸ Tileset Studio Link${online ? " (online)…, paste the code, press Link" : "…, and pick any file in this folder"}.`);
+			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : `In Aseprite: File ▸ Scripts ▸ Tileset Studio Link${online ? " (online)…, paste the code, press Link" : "…, and pick any file in this folder"}.`);
 		if (adopting) step(3, p ? "now" : "", "Normal map arrives", "After Studio has taken the Aseprite file.");
 		else step(3, p && p.normal ? "done" : p ? "now" : "", p && p.normal ? "Normal map is in Aseprite" : "Normal map arrives", p && p.normal ? "Locked layer Normal (Studio)." : "");
 		const sent = Link.lastAlbedo ? `Last picture received at ${new Date(Link.lastAlbedo).toLocaleTimeString()}.` : "";
-		step(4, p && p.problem ? "bad" : Link.lastAlbedo ? "done" : p ? "now" : "", "Paint in the group named Albedo", p && p.problem ? p.problem : sent);
+		step(4, p && p.problem ? "bad" : Link.lastAlbedo ? "done" : p ? "now" : "", "Paint in the group named Albedo", p && p.problem ? p.problem : sent || (p ? "No group yet? Press Set up file in Aseprite's link window." : ""));
 	}
 	function firstTile(img) {
 		if (!S.art || (img.width === S.art.w && img.height === S.art.h) || img.width < S.art.w || img.height < S.art.h) return img;
@@ -755,6 +756,7 @@
 		const help = (open) => $("as_help").classList.toggle("open", open);
 		$("as_help_btn").onclick = (e) => { e.stopPropagation(); menu.classList.remove("open"); help(true); $("as_help_close").focus(); };
 		$("as_help_close").onclick = () => help(false);
+		$("as_help_lessons").onclick = () => { help(false); TS.Learn.openSection("aseprite"); };
 		$("as_help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") help(false); });
 		$("as_help").addEventListener("click", (e) => { if (e.target === $("as_help")) help(false); });
 		$("as_send").onclick = asepriteSend;

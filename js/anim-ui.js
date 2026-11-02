@@ -359,7 +359,7 @@
 		const deformSel = () => { const id = [...S().selected][0]; return !(id !== undefined && a.rigid && a.rigid[id]); };
 		const skinStiff = () => { const s = a.skin && S().selected.size && a.skin[[...S().selected][0]]; return s ? s.stiff || 3 : 3; };
 		const bound = (id) => S().objects.filter((o) => a.bind[o.id] === id).length;
-		let h = `<div class="arow"><select id="an_clip" title="Animation clip">${a.clips.map((x) => `<option value="${x.id}"${x.id === a.clip ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+		let h = `<button id="an_learn" class="link" title="Short visual lessons: your first animation, bones, timing, getting frames into your game">New to animating? Watch the lessons</button><div class="arow"><select id="an_clip" title="Animation clip">${a.clips.map((x) => `<option value="${x.id}"${x.id === a.clip ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
 			<button id="an_clipnew" title="New clip">＋</button><button id="an_clipdel" title="Delete this clip"${a.clips.length < 2 ? " disabled" : ""}>✕</button></div>
 			<div class="arow"><label>Name <input id="an_clipname" type="text" value="${esc(c.name)}"></label></div>
 			<div class="arow"><label title="Frames in this clip. Each is one cell of the spritesheet.">Frames <input id="an_frames" type="number" min="1" max="64" value="${c.frames}"></label>
@@ -591,6 +591,7 @@
 			q("an_keydel").onclick = () => edit(() => Rig.deleteKey(c, bone.id, a.frame));
 			q("an_keyrest").onclick = () => edit(() => Rig.setKey(c, bone.id, a.frame, [0, 0, 0], [0, 0, 0]));
 		}
+		q("an_learn").onclick = () => TS.Learn.openSection("anim");
 		q("an_link").onclick = (e) => { e.stopPropagation(); $("b_aseprite").nextElementSibling.classList.add("open"); }; // one place to link, from the panel or the top bar
 		if (q("an_unlink")) q("an_unlink").onclick = () => { Link.disconnect(); render(); };
 		q("an_dl").onclick = downloadSheet;

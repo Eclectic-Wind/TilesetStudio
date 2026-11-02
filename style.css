@@ -104,6 +104,8 @@ body.noart #b_process, body.noart .export > button, body.noart #b_save { opacity
 .assteps li.bad::before { border-color: var(--bad); background: var(--bad); }
 .asroom { display: flex; gap: 4px; margin-top: 4px; }
 .asroom input { flex: 1; min-width: 0; }
+.aseprite-menu .asstep { margin-top: 8px; margin-bottom: 4px; }
+.aseprite-menu .asstep a { color: var(--info); }
 .aseprite-menu .asroom button { width: auto; flex: none; border: 1px solid var(--line); }
 #as_roomrow { flex-wrap: wrap; align-items: center; white-space: nowrap; }
 #as_roomrow input { flex: 1 1 150px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -355,6 +357,8 @@ section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: non
 .ashelp ol, .ashelp ul { margin: 6px 0 6px 18px; padding: 0; }
 .ashelp li, .ashelp p { margin: 5px 0; line-height: 1.45; }
 .ashelp b { color: var(--text); }
+.asprivacy { margin: 12px 0 6px; }
+.asprivacy > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
 
 /* Help */
 #help_card { width: min(760px, calc(100vw - 32px)); }
@@ -446,8 +450,13 @@ section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: non
 .learn .track:hover #tl_thumb, .learn .track:focus-visible #tl_thumb { transform: scale(1.2); }
 .learn .track:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 4px; }
 .learn #tl_time { min-width: 76px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.learn.haslist:not(.compact) .stage { max-height: 34vh; }
 .learn .kindnote { margin: 8px 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
 .learn .kindnote b { color: var(--text); }
+.learn .fixes { margin: 8px 0; font-size: 13px; line-height: 1.45; }
+.learn .fixes dt { font-weight: 600; margin-top: 8px; }
+.learn .fixes dd { margin: 2px 0 0; color: var(--dim); }
+.learn .fixes b { color: var(--text); }
 
 /* --- Animation mode (js/anim-ui.js) --- */
 .animonly { display: none; }

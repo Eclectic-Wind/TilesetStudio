@@ -26,7 +26,7 @@ Tileset Studio is a standalone web app. No install, no build, no internet.
 
 Prefer a local server? Run `serve.ps1` and visit `http://127.0.0.1:8765/`. Over a server, automatic processing also runs in the background, so big projects stay smooth while it works (browsers refuse background workers for pages opened from disk, where it runs on the page). Files can then be opened by URL with `?tileset=/art/x.png` or `?project=/samples/ward_bedroom2.studio.json`.
 
-The whole tool is this folder, so you can copy it anywhere to hand it out. New here? Press **L** for the animated **Learn** lessons (modelling, and animating with Aseprite).
+The whole tool is this folder, so you can copy it anywhere to hand it out. New here? Press **L** for the animated **Learn** lessons (modelling, animation and the Aseprite link).
 
 ## How it works
 
@@ -40,7 +40,7 @@ Your tileset is drawn in a fixed projection (Top-down or Isometric at a tilt you
 - **Look round** in 3D (hold Alt and drag, or press **5** to stay there) to check depth and stacking. Free Draw and the main modeling tools also work in the held 3D camera.
 - **Check the result** in the output view: lit preview with shadows, height / normal / roughness / metal maps, holes the models miss, floor plan, collision and tile-piece problems.
 - **Import 3D** from glTF (`.glb`, or `.gltf` with its data files; bones and animation), FBX (mesh geometry), OBJ or other projects, and reuse parts as **stamps**.
-- **Animate** with bones (rigid or bending), a timeline and clips, and render every frame's normal map into a spritesheet. It can link live to Aseprite ([guide](docs/animation-aseprite.md)).
+- **Animate** with bones (rigid or bending), a timeline and clips, and render every frame's normal map into a spritesheet. See the [animation guide](docs/animation.md). You can also paint live in Aseprite ([link guide](docs/aseprite-link.md)).
 - **Stay safe**: changes autosave in the browser, with undo/redo, and the next start offers to restore unsaved work.
 
 ## Exports
@@ -113,8 +113,8 @@ Whatever you build, keep both tileset sides a multiple of 32 px and keep separat
 |---|---|
 | `index.html`, `style.css`, `js/` | The app: plain ES2020 and WebGL2, no libraries, runs from `file://` |
 | `samples/` | Example projects (`ward_bedroom2`, `BasicSample` used by Learn) |
-| `docs/` | [Full reference](docs/reference.md), [export schema](docs/export-schema.md), [animation and Aseprite](docs/animation-aseprite.md) |
-| `tools/aseprite/` | The Aseprite extension for the live animation link |
+| `docs/` | [Full reference](docs/reference.md), [export schema](docs/export-schema.md), [animation](docs/animation.md), [Aseprite link](docs/aseprite-link.md) |
+| `tools/aseprite/` | The Aseprite extension for the live link |
 
 ### Free Draw primitives
 Choose Box, Cylinder or Sphere, then drag opposite corners of the footprint. Set Thickness for the height (sphere: third diameter). Edge bevel applies to newly generated boxes and cylinder rims and is clamped to fit. The same shapes work as Cut and Carve cutters; spherical cutters produce curved cavities. Cut extends the cutter through the target depth. Clear/Esc cancels a cut preview; Apply/Enter commits it.
