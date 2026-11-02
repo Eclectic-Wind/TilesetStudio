@@ -16,7 +16,8 @@
    undo step; `Reset to auto` clears the painting. Painting belongs to a vertex, so a model whose vertex count changes loses it.
 3. **Pose.** Pick a frame on the timeline (`,` and `.` step). Change a bone's Turn X/Y/Z or Move values and that frame gets a key
    (◆). Or drag a bone's tip in the view: it turns the bone about the depth axis (Y), which is the side-view swing. Frames between
-   keys blend linearly; before the first key a bone eases in from rest at frame 0; after the last key it holds.
+   keys blend, and a turn always takes the short way round, so a full spin needs keys along the way (each under 180 degrees apart).
+   Before the first key a bone eases in from rest at frame 0; after the last key it holds.
    **Shortcut:** in animation mode, moving (G) or turning (R) a model in the view keys it on the current frame. A model with no bone
    gets one (named after it, visible in the Bones list, with the model bound to it), so you never have to rig simple movement by hand.
    The model's resting position stays put; the move lives in the key. Pick another frame and move it again. Scaling is not animated
@@ -26,9 +27,16 @@
    every bone, add the selected bone's turn, and draw a dashed line from a parent's tip to a child that is not connected.
    If a model was edited, moved or resized outside animation mode so that it no longer sits on its bones, the panel says so (nothing can
    bend a model that is far from every bone): use *Edit rest pose* to move the bones back to it. Duplicating a model keeps its bone.
-4. **Clips.** Any number of clips, each with its own frame count (1–64) and fps. ▶ (or Space) plays it in the view; posing a bone
-   stops playback first. On the timeline ◆ marks the selected bone's keys, or (dimmer) any bone's keys when none is selected; Up / Down
-   jump between keys. Lowering the frame count keeps the keys past the end (the timeline says so) and raising it brings them back.
+4. **Clips.** Any number of clips, each with its own frame count (1–64), fps, Loop setting and Albedo sheet. ▶ (or Space) plays it in the
+   view the way the game will (loop, once or ping-pong); posing a bone stops playback first. Lowering the frame count keeps the keys past
+   the end (the timeline says so) and raising it brings them back.
+5. **The dopesheet** (under the view) has a ruler, a row of every keyed frame, and one row per bone.
+   - Drag the ruler to scrub. Click a row to go to that frame and select its bone; click a bone's name to select it (Shift adds).
+   - Click a key to pick it (Shift adds; a key in the All bones row picks every key on that frame), or drag across a row to box-select.
+   - Drag picked keys to move them, Alt-drag to copy. Delete or X removes them, Ctrl+C / Ctrl+V paste at the playhead, Esc drops the picks. Up / Down jump between keys.
+   - **Ease** sets how the picked keys (or the selected bones' keys on this frame) leave for the next key: Linear, Ease in, Ease out, Ease in-out or Hold (keeps the pose until the next key). Eased keys show round, Hold square.
+   - **Onion** shows the models on the previous (red) and next (green) frames as wires while stopped.
+   - **Close loop** keys the first frame's pose on the last frame. **Mirror pose** flips this frame's pose across X onto the other side's bones (`arm.L` and `arm.R`, `Leg_l` and `Leg_r`, `LeftArm` and `RightArm`); a bone with no other side flips itself.
 
 The panel previews the current frame lit by the normal map (move the pointer over it to move the light), with your Albedo if linked, else the tileset's own art.
 
@@ -36,7 +44,8 @@ The panel previews the current frame lit by the normal map (move the pointer ove
 
 Every frame is rendered through the normal Process pipeline into one **normal-map sheet**: cells the size of the tileset, in a grid of
 power-of-two columns and rows (8 frames of 128x128 = 4x2 cells = 512x256). Empty pixels are transparent. The frame on screen renders
-first and the rest follow a few at a time (the panel counts down), so a long clip never freezes the page; Aseprite gets the sheet once
+first and the rest follow a few at a time (the panel counts down), so a long clip never freezes the page. Frames are kept by pose: an edit
+only redoes the frames it changes, and frames with the same pose share a picture. Aseprite gets the sheet once
 it is whole, and *Download normal sheet* finishes it on the spot. A power-of-two tileset always
 gives a power-of-two sheet. Rigging is saved in the `.studio.json` project (`anim`), including the last Albedo sheet received.
 
@@ -44,8 +53,11 @@ gives a power-of-two sheet. Rigging is saved in the `.studio.json` project (`ani
 
 The Aseprite sprite is **one tile big** (the size of your tileset) and every animation frame is a **real frame on Aseprite's timeline**.
 
+- **Each clip has its own frames**, marked by a tag named `<clip name> [<clip id>]` (extension 1.3 or newer). Pick another clip in Studio and the
+  link moves to its tag; the other clips' frames are not touched. A clip seen for the first time takes the frames already there if the file has no
+  tags yet, else a new empty range at the end (nothing is sent back until you paint in it, so the sheet Studio keeps for the clip is safe). Keep the tag's `[id]`; a deleted clip's tag and frames stay until you remove them.
 - **Studio to Aseprite.** Studio's normal map appears on each frame in the locked layer **Normal (Studio)**. Change the frame count in Studio and
-  Aseprite adds or removes frames at the end (one undo step there). The frame length follows the clip's fps.
+  Aseprite adds or removes frames at the end of the clip's tag (one undo step there). The frame length follows the clip's fps.
 - **Aseprite to Studio.** Paint each frame inside the group **Albedo**. The extension lays every frame out in Studio's sheet grid and sends it.
 - **Adding and deleting frames in Aseprite** changes the clip in Studio: a **deleted** frame takes its key with it and later keys move up one;
   an **inserted** (or duplicated) frame pushes later keys down. Studio works out which frame it was by comparing frame contents, so a frame that is
@@ -97,5 +109,5 @@ Aseprite's `albedo.png` back as the tileset art.
 **No link at all:** use *Download normal sheet* and *Load albedo sheet…* (same size checks).
 
 Not covered yet: the extension can't be tested headless, so it follows the documented Aseprite 1.3 API; report any API differences.
-glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex). The Albedo preview is the whole
+glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex) and its whole skeleton; a skinned model imported from glTF stays one model and keeps its weights as painted ones. The Albedo preview is the whole
 sheet cell, not re-skinned onto the pose.

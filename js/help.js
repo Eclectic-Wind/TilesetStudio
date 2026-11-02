@@ -53,6 +53,7 @@
 		],
 		"File": [
 			["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"],
+			["Animate: Delete, Ctrl+C, Ctrl+V", "With keys picked in the dopesheet: delete them, copy them, paste at the playhead (Alt-drag copies too)"],
 			["Ctrl+S", "Save project (unsaved work is autosaved and offered back on the next start)"],
 			["Ctrl+O / Ctrl+Shift+O", "Open a project / a tileset PNG"],
 			["Ctrl+Shift+E", "Export the Godot bundle"],

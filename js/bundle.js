@@ -18,12 +18,35 @@
 		return btoa(bin);
 	};
 
+	// A material's index in maps.materials (the table the bundle already has): the frames add none of their own.
+	const materialLookup = (materials) => {
+		const memo = new Map();
+		return (rough, metal) => {
+			const key = Math.round(rough * 255) * 256 + Math.round(metal * 255);
+			if (memo.has(key)) return memo.get(key);
+			let best = 0, bd = Infinity;
+			materials.forEach((m, k) => { const d = (m[0] - rough) ** 2 + (m[1] - metal) ** 2; if (d < bd) { bd = d; best = k; } });
+			memo.set(key, best);
+			return best;
+		};
+	};
+	// One flipbook frame processed like the base frame: the piece's models at this frame's pose under this frame's paint.
+	const frameSurface = (objs, anim, clip, f, sheet, lay, W, H, settings) => {
+		const [ox, oy] = TS.Rig.cellOrigin(lay, f), rgba = new Uint8ClampedArray(W * H * 4), alpha = new Uint8Array(W * H);
+		for (let y = 0; y < H; y++) {
+			rgba.set(sheet.data.subarray(((oy + y) * sheet.width + ox) * 4, ((oy + y) * sheet.width + ox + W) * 4), y * W * 4);
+			for (let x = 0; x < W; x++) alpha[y * W + x] = rgba[(y * W + x) * 4 + 3];
+		}
+		return TS.Process.run(TS.Rig.posedObjects(objs, anim, clip, f), { w: W, h: H, data: rgba, alpha }, settings);
+	};
+
 	// Animated tiles (bundle version 6, docs/export-schema.md): per clip with a `models` scope, one target per piece those models
 	// belong to. The base frame stays in the atlas; the target holds the frames as cell-aligned rects of the piece's art, packed `cols`
-	// per row, as a PNG of the Aseprite Albedo frames. Flipbook only: height, normal and material are the base frame's (no `data`).
+	// per row, as a PNG of the Aseprite Albedo frames. A clip that only repaints reuses the base frame's height, normal and material;
+	// when bones move the piece, `data` carries them per frame.
 	// p: {anim (project anim: clips[{name, fps, frames, loop, export, models: [object id]}]), objects, settings, result (with pieceMap),
 	//     art: {w, h}, albedoOf(clip) -> {width, height, data RGBA} | null (the clip's Albedo sheet, Rig.layout cells),
-	//     encodePNG(rgba, w, h) -> base64 PNG (no prefix); dry: true skips building the sheets (warnings only)}
+	//     materials (maps.materials), encodePNG(rgba, w, h) -> base64 PNG (no prefix); dry: true skips building the sheets (warnings only)}
 	// -> {clips, warnings} or null when nothing is exported and nothing to say.
 	Bundle.anim = (p) => {
 		const P = TS.Process, Rig = TS.Rig, T = 32, MAX_SHEET = 2048;
@@ -35,7 +58,7 @@
 			if (clip.export === false) continue;
 			const ids = Array.isArray(clip.models) ? clip.models : [];
 			if (!ids.length) {
-				if (Object.values(clip.tracks || {}).some((ks) => ks.length)) warnings.push(`clip "${clip.name}": no models chosen, so it is not exported (rigged clips are not exported yet; for a flipbook pick its models)`);
+				if (Object.values(clip.tracks || {}).some((ks) => ks.length)) warnings.push(`clip "${clip.name}": no models chosen, so it is not exported (a clip reaches the game as painted frames on the models you pick)`);
 				continue;
 			}
 			const pieces = new Map(); // piece index -> its models in the clip
@@ -80,24 +103,36 @@
 				}
 				const cols = Math.max(1, Math.min(frames, Math.floor(MAX_SHEET / rw))), rows = Math.ceil(frames / cols);
 				const out = p.dry ? null : new Uint8ClampedArray(cols * rw * rows * rh * 4);
+				// Bones move this piece in the clip: each frame gets the height, normal and material of the posed models under its own paint.
+				const pieceObjs = pm.pieces[piece].objs.map((oi) => p.objects[oi]), moves = pieceObjs.some((o) => Rig.modelMoves(a, clip, o));
+				const data = moves && !p.dry ? new Uint8Array(out.length) : null, matOf = materialLookup(p.materials || []), flat = data && r.proj.toMapNormal([0, 0, 1]);
 				let outside = 0, outsideFrame = -1;
 				for (let f = 0; f < frames; f++) {
 					const [ox, oy] = Rig.cellOrigin(lay, f), dx = (f % cols) * rw, dy = Math.floor(f / cols) * rh;
+					const fr = data ? frameSurface(pieceObjs, a, clip, f, sheet, lay, W, H, p.settings) : null;
 					let any = 0;
 					for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
-						const s = ((oy + ry + y) * sheet.width + ox + rx + x) * 4;
+						const s = ((oy + ry + y) * sheet.width + ox + rx + x) * 4, bi = (ry + y) * W + rx + x;
+						const d = ((dy + y) * cols * rw + dx + x) * 4;
 						if (sheet.data[s + 3] > cut) {
 							any++;
-							const bi = (ry + y) * W + rx + x;
-							if (!(r.owner[bi] >= 0 && pm.pieceOf[r.owner[bi]] === piece)) { outside++; if (outsideFrame < 0) outsideFrame = f + 1; }
+							const has = fr && !isNaN(fr.height[bi]);
+							if (moves ? fr && !has : !(r.owner[bi] >= 0 && pm.pieceOf[r.owner[bi]] === piece)) { outside++; if (outsideFrame < 0) outsideFrame = f + 1; }
+							if (fr) { // maps.data's art-row bytes
+								const n = has ? P.mapNormal(fr, bi, p.settings) : flat;
+								data[d] = has ? TS.clamp(Math.round(fr.height[bi]), 0, 255) : 0;
+								data[d + 1] = Math.round(TS.clamp(n[0] * 0.5 + 0.5, 0, 1) * 255);
+								data[d + 2] = Math.round(TS.clamp(n[1] * 0.5 + 0.5, 0, 1) * 255);
+								data[d + 3] = matOf(has ? fr.rough[bi] : 1, has ? fr.metal[bi] : 0) + 1;
+							}
 						}
-						if (out) { const d = ((dy + y) * cols * rw + dx + x) * 4; out[d] = sheet.data[s]; out[d + 1] = sheet.data[s + 1]; out[d + 2] = sheet.data[s + 2]; out[d + 3] = sheet.data[s + 3]; }
+						if (out) { out[d] = sheet.data[s]; out[d + 1] = sheet.data[s + 1]; out[d + 2] = sheet.data[s + 2]; out[d + 3] = sheet.data[s + 3]; }
 					}
 					if (!any) warnings.push(`clip "${clip.name}" / ${names}: frame ${f + 1} is empty`);
 				}
-				if (outside) warnings.push(`clip "${clip.name}" / ${names}: ${outside} painted pixel(s) (first in frame ${outsideFrame}) lie outside the piece's base art, where the base height and normal are flat`);
-				targets.push({ piece: piece + 1, rect: [rx, ry, rw, rh], cols, rows, source: "flipbook",
-					...(out ? { color: p.encodePNG(out, cols * rw, rows * rh) } : {}) });
+				if (outside) warnings.push(`clip "${clip.name}" / ${names}: ${outside} painted pixel(s) (first in frame ${outsideFrame}) lie outside ${moves ? "the posed models" : "the piece's base art"}, where height and normal are flat`);
+				targets.push({ piece: piece + 1, rect: [rx, ry, rw, rh], cols, rows, source: "flipbook", ...(moves && p.dry ? { moves: true } : {}),
+					...(out ? { color: p.encodePNG(out, cols * rw, rows * rh) } : {}), ...(data ? { data: base64(data) } : {}) });
 			}
 			if (targets.length) clips.push({ name: clip.name, fps: clip.fps | 0 || 8, frames, loop: ["once", "pingpong"].includes(clip.loop) ? clip.loop : "loop", shadow: "static", collision: "static", targets });
 		}
@@ -108,8 +143,8 @@
 	// p: {name, bundleId, atlas (PNG data URL of the art), art: {w, h}, objects, settings, result (processed, with pieceMap), now (ISO 8601)}
 	Bundle.build = (p) => {
 		const P = TS.Process, { art, settings, result } = p;
-		const anim = p.anim ? Bundle.anim(Object.assign({ art, objects: p.objects, settings, result }, p)) : null;
-			const maps = P.maps(result, settings), proj = TS.Proj.of(settings, art);
+		const maps = P.maps(result, settings), proj = TS.Proj.of(settings, art);
+		const anim = p.anim ? Bundle.anim(Object.assign({ art, objects: p.objects, settings, result, materials: maps.materials }, p)) : null;
 		return {
 			format: "tileset-studio-export", version: Bundle.VERSION, name: p.name, tile: 32, canvas: [art.w, art.h],
 			projection: proj.kind === "iso" ? { type: "iso", origin: proj.origin.slice(), tilt: proj.tilt } : { type: "oblique" }, exported: p.now,

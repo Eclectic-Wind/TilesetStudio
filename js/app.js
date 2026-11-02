@@ -34,12 +34,28 @@
 	const activeObj = () => objById(S.active);
 	const selectedObjs = () => S.objects.filter((o) => S.selected.has(o.id));
 
+	// Albedo sheets are big and rarely change, so undo steps name them and keep each picture once.
+	const sheetIds = new Map(), sheetById = new Map();
+	const sheetId = (url) => {
+		if (!sheetIds.has(url)) { const id = "@sheet" + sheetIds.size; sheetIds.set(url, id); sheetById.set(id, url); }
+		return sheetIds.get(url);
+	};
 	function snapshot() {
 		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
-			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt });
+			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt }, (k, v) => (k === "albedo" && typeof v === "string" ? sheetId(v) : v));
+	}
+	// Painted frames live in Aseprite, not in the undo history: a clip that still exists keeps the sheet it has now.
+	function restoreSheets(anim) {
+		const now = new Map(S.anim.clips.map((c) => [c.id, c]));
+		for (const c of anim.clips) {
+			if (now.has(c.id)) { if (now.get(c.id).albedo) c.albedo = now.get(c.id).albedo; else delete c.albedo; }
+			else if (c.albedo) c.albedo = sheetById.get(c.albedo) || c.albedo;
+		}
+		anim.albedo = null;
 	}
 	function restore(json) {
 		const s = JSON.parse(json);
+		if (s.anim) restoreSheets(s.anim);
 		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
 		hover = null; loopHover = null; cycle = null;
@@ -3203,7 +3219,14 @@
 			const nb = R.newBone(b.name, b.head.slice(), b.tail.slice(), b.parent ? boneMap[b.parent] : null);
 			a.bones.push(nb); boneMap[b.id] = nb.id;
 		}
-		models.forEach((m, i) => { const old = rig.bind[m.id]; if (old && boneMap[old]) a.bind[copies[i].id] = boneMap[old]; });
+		models.forEach((m, i) => {
+			const old = rig.bind[m.id], pt = rig.paint && rig.paint[m.id];
+			if (old && boneMap[old]) a.bind[copies[i].id] = boneMap[old];
+			if (!pt) return;
+			const v = {};
+			for (const k of Object.keys(pt.v)) { v[k] = {}; for (const b of Object.keys(pt.v[k])) if (boneMap[b]) v[k][boneMap[b]] = pt.v[k][b]; }
+			(a.paint = a.paint || {})[copies[i].id] = { n: pt.n, rev: 1, v };
+		});
 		for (const c of rig.clips) {
 			const nc = R.newClip(c.name, c.frames, c.fps);
 			for (const id of Object.keys(c.tracks)) nc.tracks[boneMap[id]] = JSON.parse(JSON.stringify(c.tracks[id]));

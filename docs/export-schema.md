@@ -2,7 +2,7 @@
 
 Version 6 only **adds** to version 5 (below): every version 5 field keeps its shape, and a reader that ignores `anim` gets the base frame of every animated piece as an ordinary still tile (the atlas, `maps.data`, `maps.pieces` and the piece table are unchanged: no frame lives in the atlas grid, no cell moves, frames add no pieces and no paintable tiles).
 
-New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about. First version: **flipbooks** (frames painted in Aseprite, geometry unchanged), **static shadow and collision**. `source: "rig"` (bone-animated frames with their own height / normal data) is reserved and not written yet.
+New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about: **flipbooks** (frames painted in Aseprite), **static shadow and collision**. When bones move a target's models in the clip, the target also carries each frame's height, normal and material in `data`. A reader that ignores `data` still works, with the base frame's lighting. `source: "rig"` (frames rendered with no painting) is reserved and not written.
 
 ## `anim`
 
@@ -19,7 +19,8 @@ anim: {
       cols, rows,                        // the frames are packed cols per row, left to right then down, each w x h (frame f at ((f % cols) * w, floor(f / cols) * h))
       source: "flipbook",                // "rig" reserved
       color: "<base64 PNG>",             // cols*w x rows*h RGBA: the frames' albedo, as painted (transparent pixels show what is behind)
-      data?: "<base64 zlib>"             // reserved (rig): per-frame height / normal / material in maps.data's art-row layout.
+      data?: "<base64>"                  // present when bones move the target's models: raw bytes like maps.data, packed like color (cols*w x rows*h x 4 bytes).
+                                         // Each pixel is maps.data's art-row form: R height, G B normal, A material + 1 (an index into maps.materials); 0,0,0,0 = no paint here.
                                          // Absent = every frame reuses the base frame's height, normal and material: read maps.data at `rect`
     }]
   }],
@@ -27,10 +28,10 @@ anim: {
 }
 ```
 
-- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame. A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame (height, normal and material come from `data` when it is there). A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
 - The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
 - `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
-- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame has no art (height and normal are flat there); a rect reaching south of the piece's base row (oblique), which the game sorts by.
+- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame (with `data`: that frame's posed models) has no surface, so height and normal are flat there; a rect reaching south of the piece's base row (oblique), which the game sorts by.
 
 ## Making one in the Studio
 
@@ -43,7 +44,7 @@ The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.j
 
 ## Not in this round
 
-`source: "rig"` and `data`, `shadow: "frames"` and per-frame floor spans, animated collision, frame de-duplication, isometric (untested; the rect is in canvas px either way).
+`source: "rig"`, `shadow: "frames"` and per-frame floor spans, animated collision, frame de-duplication, isometric (untested; the rect is in canvas px either way).
 
 ---
 

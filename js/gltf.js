@@ -68,7 +68,11 @@
 		if (useRig) {
 			const need = new Set();
 			if (opts.allBones) anim.bones.forEach((b) => need.add(b.id));
-			for (const o of objects) for (let b = Rig.bone(anim, anim.bind[o.id]), n = 0; b && n < 1000; n++, b = b.parent && Rig.bone(anim, b.parent)) need.add(b.id);
+			for (const o of objects) {
+				for (let b = Rig.bone(anim, anim.bind[o.id]), n = 0; b && n < 1000; n++, b = b.parent && Rig.bone(anim, b.parent)) need.add(b.id);
+				const sk = Rig.skinWeights(anim, o); // a deforming model needs its whole skeleton, children of its bone included
+				if (sk) sk.list.forEach((b) => need.add(b.id));
+			}
 			bones = Rig.ordered(anim).filter((b) => need.has(b.id));
 		}
 		const boneIdx = new Map(bones.map((b, i) => [b.id, i]));
@@ -267,7 +271,7 @@
 		});
 
 		// models
-		const objects = [], bind = {};
+		const objects = [], bind = {}, paint = {};
 		let nextId = 1;
 		gl.meshes && nodes.forEach((nd, ni) => {
 			if (nd.mesh === undefined) return;
@@ -308,42 +312,46 @@
 				return toS(g).map((v) => v * scale);
 			});
 
-			// Which bone does each face follow?
-			const owner = (a, b, c) => {
+			// A skinned mesh stays one model, bound to the bone holding the most weight, and keeps its weights as painted ones.
+			let mainJoint = -1;
+			if (skin) {
 				const sum = new Map();
-				for (const v of [a, b, c]) for (let k = 0; k < 4; k++) if (weights[v][k] > 0) sum.set(joints[v][k], (sum.get(joints[v][k]) || 0) + weights[v][k]);
-				let best = -1, bw = 0;
-				for (const [j, w] of sum) if (w > bw) { best = j; bw = w; }
-				return best;
-			};
-			const fixed = nearestJoint(ni) >= 0 && !skin ? nearestJoint(ni) : -1; // parented to a bone
-			const groups = new Map();
-			for (const t of tris) {
-				const key = skin ? owner(...t) : fixed;
-				if (!groups.has(key)) groups.set(key, []);
-				groups.get(key).push(t);
+				weights.forEach((row, v) => row.forEach((w, k) => { if (w > 0) sum.set(joints[v][k], (sum.get(joints[v][k]) || 0) + w); }));
+				let bw = 0;
+				for (const [j, w] of sum) if (w > bw) { mainJoint = j; bw = w; }
 			}
+			const fixed = nearestJoint(ni) >= 0 && !skin ? nearestJoint(ni) : -1; // parented to a bone
+			const groups = new Map([[skin ? mainJoint : fixed, tris]]);
 			const label = nd.name || mesh.name || "Model";
 			const ex = nd.extras && nd.extras.studio;
 			for (const [key, list] of groups) {
-				const used = new Map(), verts = [], faces = [];
+				const used = new Map(), verts = [], faces = [], source = [];
 				const add = (v) => { // weld vertices that sit on the same spot (glTF splits them along seams)
 					const p = rest[v], k = p.map((x) => Math.round(x * 1e4)).join(",");
-					if (!used.has(k)) { used.set(k, verts.length); verts.push(p.slice()); }
+					if (!used.has(k)) { used.set(k, verts.length); verts.push(p.slice()); source.push(v); }
 					return used.get(k);
 				};
 				let exact = false;
 				if (ex && groups.size === 1 && ex.counts && ex.counts.verts === pts.length && ex.counts.tris === tris.length && Array.isArray(ex.faces)) {
 					// Written by Studio and the mesh still has its size: keep its own faces (quads and all) and its vertices as they are.
 					exact = true;
-					rest.forEach((p) => verts.push(p.slice()));
+					rest.forEach((p, v) => { verts.push(p.slice()); source.push(v); });
 					for (const f of ex.faces) faces.push(Object.assign({}, f));
 				} else for (const t of list) { const f = t.map(add); if (new Set(f).size === 3) faces.push({ v: f }); }
 				if (!faces.length) continue;
-				const o = { id: nextId++, name: groups.size > 1 && key >= 0 && boneOfNode.get(key) ? `${label} · ${boneOfNode.get(key).name}` : label, verts, faces, mat: { roughness: 0.7, metallic: 0 }, solid: true, smooth: 30 };
+				const o = { id: nextId++, name: label, verts, faces, mat: { roughness: 0.7, metallic: 0 }, solid: true, smooth: 30 };
 				if (exact && ex.props) Object.assign(o, JSON.parse(JSON.stringify(ex.props)));
 				objects.push(o);
 				if (key >= 0 && boneOfNode.get(key)) bind[o.id] = boneOfNode.get(key).id;
+				if (skin && bind[o.id]) {
+					const v = {};
+					source.forEach((src, i) => {
+						const row = {};
+						weights[src].forEach((w, k) => { const b = w > 0 && boneOfNode.get(joints[src][k]); if (b) row[b.id] = (row[b.id] || 0) + Math.round(w * 1000) / 1000; });
+						if (Object.keys(row).length) v[i] = row;
+					});
+					if (Object.keys(v).length) paint[o.id] = { n: verts.length, rev: 1, v };
+				}
 			}
 		});
 		if (!objects.length) throw new Error("This file has no triangle meshes to import.");
@@ -390,7 +398,7 @@
 			}
 			if (Object.keys(tracks).length) clips.push({ id: "c" + (clips.length + 1), name: an.name || "Clip " + (ai + 1), fps: Math.round(fps * 100) / 100, frames, tracks });
 		});
-		return { objects, rig: bones.length || clips.length ? { bones, bind, clips } : null };
+		return { objects, rig: bones.length || clips.length ? { bones, bind, paint, clips } : null };
 	};
 
 	// Drop keys that a straight blend of their neighbours already gives (every frame is sampled, most are redundant).

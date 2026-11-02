@@ -7,6 +7,8 @@
 -- Studio's frame count drives the timeline (Studio adds / removes frames), and adding or deleting frames here changes Studio's
 -- clip: a deleted frame in the middle takes its key with it and later keys move up.
 -- (If Studio is not in animation mode, only frame 1 is linked and your frames are left alone.)
+-- Each Studio clip owns a range of frames marked by a tag named "<clip name> [<clip id>]": switching clips in Studio moves the link to
+-- that clip's range, and the frames of other clips are never touched. A clip seen for the first time gets a new range at the end.
 --
 -- Two ways to link: a shared folder (Chrome / Edge in Studio), or "Tileset Studio Link (online)...", where both programs dial out to a
 -- small relay with a shared room code, so Studio can run in any browser. Needs Aseprite 1.3 or newer (WebSocket support).
@@ -73,6 +75,7 @@ local function parseMeta(text)
     art = text:find('"art"%s*:%s*true') ~= nil,
     adopt = text:find('"adopt"%s*:%s*true') ~= nil,
     origin = text:match('"origin"%s*:%s*"(%a+)"'),
+    clip = text:match('"clip"%s*:%s*"(%w+)"'), clipName = text:match('"clipName"%s*:%s*"([^"]*)"'),
   }
 end
 
@@ -82,6 +85,24 @@ local function readMeta(folder)
   local text = f:read("a")
   f:close()
   return parseMeta(text)
+end
+
+-- The tag marking a clip's frames.
+local function clipTag(sprite, id)
+  local mark = "[" .. id .. "]"
+  for _, tag in ipairs(sprite.tags) do
+    if tag.name:sub(-#mark) == mark then return tag end
+  end
+  return nil
+end
+
+-- The linked frames: first frame and how many. Studio's older meta has no clip, and then the whole timeline is linked.
+-- Nil when the clip has no frames here yet (the next normal map from Studio makes them).
+local function clipRange(sprite, meta)
+  if not (meta and meta.anim and meta.clip) then return 1, #sprite.frames end
+  local tag = clipTag(sprite, meta.clip)
+  if not tag then return nil end
+  return tag.fromFrame.frameNumber, tag.frames
 end
 
 -- A problem with Studio's picture stays on screen (the Albedo messages that follow must not bury it) until the next import works.
@@ -178,7 +199,11 @@ local function exportAlbedo()
   if sprite.colorMode ~= ColorMode.RGB then say("Use RGB colour mode (Sprite > Color Mode).") return end
   local meta = state.meta
   local anim = meta and meta.anim
-  local n = anim and #sprite.frames or 1
+  local first, n = 1, 1
+  if anim then
+    first, n = clipRange(sprite, meta)
+    if not first then say("Waiting for Studio's frames for this clip...") return end
+  end
   local cw, ch = sprite.width, sprite.height
   local function deliver(sheet)
     if state.ws then return relaySendAlbedo(sheet) end
@@ -206,7 +231,7 @@ local function exportAlbedo()
   local sheet = Image(cols * cw, rows * ch, ColorMode.RGB)
   for f = 1, n do
     local img = Image(cw, ch, ColorMode.RGB)
-    drawLayer(img, group, f)
+    drawLayer(img, group, first + f - 1)
     sheet:drawImage(img, Point(((f - 1) % cols) * cw, ((f - 1) // cols) * ch))
   end
   if not deliver(sheet) then return end
@@ -224,9 +249,15 @@ local function frameBytes(sprite, i)
   return img.bytes
 end
 
-local function snapshotFrames()
+local function rangeBytes(sprite, first, n)
   local list = {}
-  for i = 1, #state.sprite.frames do list[i] = frameBytes(state.sprite, i) end
+  for i = 1, n do list[i] = frameBytes(sprite, first + i - 1) end
+  return list
+end
+
+local function snapshotFrames()
+  local first, n = clipRange(state.sprite, state.meta)
+  local list = first and rangeBytes(state.sprite, first, n) or {}
   state.hashes, state.nframes = list, #list
   return list
 end
@@ -273,12 +304,12 @@ end
 -- The frame count changed here (or by hand): tell Studio what happened. Returns true if Studio now has to answer with a new sheet.
 local function syncFrames()
   local sprite = state.sprite
-  local old, n = state.hashes or {}, #sprite.frames
+  local first, n = clipRange(sprite, state.meta)
+  if not first then return false end
+  local old = state.hashes or {}
   local ops = nil
   if n ~= state.nframes and state.meta and state.meta.anim then
-    local list = {}
-    for i = 1, n do list[i] = frameBytes(sprite, i) end
-    ops = frameOps(old, list)
+    ops = frameOps(old, rangeBytes(sprite, first, n))
   end
   snapshotFrames()
   if ops and #ops > 0 then
@@ -289,21 +320,53 @@ local function syncFrames()
   return false
 end
 
--- Studio's frame count wins when Studio changes it: frames are added / removed at the end (one undo step in Aseprite).
-local function ensureFrames(target, fps)
+-- Studio's frame count wins when Studio changes it: frames are added / removed at the end of the clip's range (one undo step in
+-- Aseprite). -> whether the count changed, and whether this clip's frames were just made empty (nothing to send back yet).
+local function ensureFrames(target, fps, meta)
   local sprite = state.sprite
   target = math.max(1, math.min(64, target))
-  local changed = #sprite.frames ~= target
+  local changed, fresh = false, false
   state.ignore = true
   app.transaction("Tileset Studio frames", function()
-    while #sprite.frames < target do sprite:newEmptyFrame(#sprite.frames + 1) end
-    while #sprite.frames > target do sprite:deleteFrame(#sprite.frames) end
+    local first
+    if meta and meta.clip then
+      local tag = clipTag(sprite, meta.clip)
+      local name = (meta.clipName or "Clip") .. " [" .. meta.clip .. "]"
+      if tag then
+        first = tag.fromFrame.frameNumber
+        changed = tag.frames ~= target
+        while tag.frames < target do
+          local at = tag.toFrame.frameNumber + 1
+          sprite:newEmptyFrame(at)
+          tag.toFrame = at
+        end
+        while tag.frames > target do
+          local at = tag.toFrame.frameNumber
+          tag.toFrame = at - 1
+          sprite:deleteFrame(at)
+        end
+        tag.name = name
+      else
+        -- No tags yet: this clip takes the frames already here, and any past its count are left alone. Otherwise it starts a new range.
+        first = #sprite.tags == 0 and 1 or #sprite.frames + 1
+        fresh = first > 1
+        changed = true
+        while #sprite.frames < first + target - 1 do sprite:newEmptyFrame(#sprite.frames + 1) end
+        local made = sprite:newTag(first, first + target - 1)
+        made.name = name
+      end
+    else
+      first = 1
+      changed = #sprite.frames ~= target
+      while #sprite.frames < target do sprite:newEmptyFrame(#sprite.frames + 1) end
+      while #sprite.frames > target do sprite:deleteFrame(#sprite.frames) end
+    end
     if fps and fps > 0 then
-      for _, fr in ipairs(sprite.frames) do fr.duration = 1 / fps end
+      for f = first, first + target - 1 do sprite.frames[f].duration = 1 / fps end
     end
   end)
   state.ignore = false
-  return changed
+  return changed, fresh
 end
 
 local function importNormal(path)
@@ -320,9 +383,10 @@ local function importNormal(path)
     return false
   end
   state.problem, state.pending = nil, nil
-  local framesChanged = false
-  if anim then framesChanged = ensureFrames(meta.frames, meta.fps) end
-  local count = anim and #sprite.frames or 1
+  local framesChanged, fresh = false, false
+  if anim then framesChanged, fresh = ensureFrames(meta.frames, meta.fps, meta) end
+  local first, count = 1, 1
+  if anim then first, count = clipRange(sprite, meta) end
   state.ignore = true
   app.transaction("Tileset Studio normals", function()
     local layer
@@ -338,9 +402,9 @@ local function importNormal(path)
     for f = 1, count do
       local cell = Image(cw, ch, ColorMode.RGB)
       cell:drawImage(sheet, Point(-((f - 1) % cols) * cw, -((f - 1) // cols) * ch))
-      local old = layer:cel(f)
+      local old = layer:cel(first + f - 1)
       if old then sprite:deleteCel(old) end
-      sprite:newCel(layer, f, cell, Point(0, 0))
+      sprite:newCel(layer, first + f - 1, cell, Point(0, 0))
     end
     layer.isEditable = false
   end)
@@ -349,10 +413,12 @@ local function importNormal(path)
   -- After a frame change here Studio answers with a fresh sheet; then our Albedo can go out again. A frame count that Studio
   -- changed needs a new Albedo sheet too. Otherwise the pictures did not change and nothing is sent.
   -- Switching Studio to or from animation changes the sheet layout Studio expects, so the Albedo has to go out again.
-  local layout = table.concat({ tostring(anim), tostring(cw), tostring(ch), tostring(cols), tostring(count) }, ",")
+  -- Empty frames just made for a clip are not sent: they would wipe the sheet Studio already keeps for it.
+  local layout = table.concat({ tostring(anim), tostring(meta and meta.clip), tostring(cw), tostring(ch), tostring(cols), tostring(count) }, ",")
   local layoutChanged = layout ~= state.layout
   state.layout = layout
-  if state.awaiting or framesChanged or layoutChanged then state.awaiting = nil; state.dirty = true else state.dirty = false end
+  if fresh then state.awaiting = nil; state.dirty = false
+  elseif state.awaiting or framesChanged or layoutChanged then state.awaiting = nil; state.dirty = true else state.dirty = false end
   app.refresh()
   say("Received Studio's normal map (rev " .. tostring(state.rev) .. (anim and (", " .. count .. " frames") or "") .. ") as layer \"" .. NORMAL_LAYER .. "\".")
   return true

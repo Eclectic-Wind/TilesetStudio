@@ -51,7 +51,14 @@
 	T.rigFor = function (rig, ids, map) {
 		if (!rig) return null;
 		const byId = new Map(rig.bones.map((b) => [b.id, b])), need = new Set();
-		for (const id of ids) for (let b = byId.get(rig.bind[id]), n = 0; b && n < 1000; n++, b = b.parent && byId.get(b.parent)) need.add(b.id);
+		const up = (b) => { for (let n = 0; b && n < 1000; n++, b = b.parent && byId.get(b.parent)) need.add(b.id); };
+		const paint = {};
+		for (const id of ids) {
+			up(byId.get(rig.bind[id]));
+			if (!rig.paint || !rig.paint[id]) continue;
+			paint[id] = clone(rig.paint[id]); // a skinned model's weights need every bone they name
+			for (const row of Object.values(paint[id].v)) for (const b of Object.keys(row)) up(byId.get(b));
+		}
 		if (!need.size) return null;
 		const at = (p) => (map ? p.map((v, i) => v * map.s + map.c[i]) : p.slice());
 		const bones = rig.bones.filter((b) => need.has(b.id)).map((b) => Object.assign(clone(b), { head: at(b.head), tail: at(b.tail) }));
@@ -63,7 +70,7 @@
 			for (const id of Object.keys(c.tracks)) if (need.has(id)) tracks[id] = c.tracks[id].map((k) => ({ f: k.f, rot: k.rot.slice(), pos: map ? k.pos.map((v) => v * map.s) : k.pos.slice() }));
 			if (Object.keys(tracks).length) clips.push({ name: c.name, fps: c.fps, frames: c.frames, tracks });
 		}
-		return { bones, bind, clips };
+		return { bones, bind, paint, clips };
 	};
 	T.readOBJ = function (text, options = {}) {
 		const scale = options.scale === undefined ? 1 : options.scale, up = options.up || "z";

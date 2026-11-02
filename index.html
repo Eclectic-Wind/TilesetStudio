@@ -316,7 +316,7 @@
 	<label id="obj_rig_row"><input id="obj_rig" type="checkbox" checked> Include bones and animation clips</label>
 	<label>Pixels per unit <input id="obj_units" type="number" min="0.0001" max="100000" step="1" value="1"></label>
 	<label id="obj_up_row" hidden>File up axis <select id="obj_up"><option value="z">Z up</option><option value="y">Y up</option></select></label>
-	<p id="obj_note" class="dim">glTF is Y-up like Blender, and Studio's axes read the same as Blender's. Use the same pixels-per-unit when you import again. Each model follows one bone rigidly; a face is sent as triangles (a Studio-made model comes back with its quads). Textures and UVs are not transferred.</p>
+	<p id="obj_note" class="dim">glTF is Y-up like Blender, and Studio's axes read the same as Blender's. Use the same pixels-per-unit when you import again. Models keep their skin weights; a face is sent as triangles (a Studio-made model comes back with its quads). Textures and UVs are not transferred.</p>
 	<p id="obj_export_error" class="bad" aria-live="polite"></p>
 	<div class="sourcebar"><button id="obj_download" class="primary">Download</button><button id="obj_close">Cancel</button></div>
 </div></div>

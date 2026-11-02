@@ -8,7 +8,8 @@
 //                   models: the game swaps their pieces for the frames), albedo (this clip's sheet, a data URL)}]
 //          clip: active clip id, frame: current frame, albedo: dataURL of the artist's sheet (or null)}
 // A bone turns about its head (rot = degrees, applied Z·Y·X) and then moves by pos; its children ride along. A key holds a bone's
-// whole local pose, so frames between keys blend linearly; before the first key a bone eases in from rest at frame 0, and after the last key it holds.
+// whole local pose and an optional ease; frames between keys blend, turns the short way round (a quaternion blend); before the first
+// key a bone eases in from rest at frame 0, and after the last key it holds.
 "use strict";
 (function () {
 	const m4 = TS.m4, v3 = TS.v3;
@@ -18,6 +19,7 @@
 
 	R.newAnim = () => ({ bones: [], bind: {}, clips: [], clip: null, frame: 0, albedo: null });
 	R.bumpIds = (anim) => {
+		R.migrate(anim);
 		for (const b of anim.bones) nextBone = Math.max(nextBone, (parseInt(String(b.id).slice(1), 10) || 0) + 1);
 		for (const c of anim.clips) nextClip = Math.max(nextClip, (parseInt(String(c.id).slice(1), 10) || 0) + 1);
 	};
@@ -69,6 +71,43 @@
 		return m;
 	};
 
+	// The Euler angles for a rotation matrix closest to `ref`. The same rotation has two Euler forms (a 100 degree turn about Y reads
+	// [180, 80, 180] from matToEuler), each repeating every 360: keys and fields stay on the one that continues from where the bone was.
+	R.nearEuler = (m, ref) => {
+		const wrap = (e) => e.map((v, i) => { while (v - ref[i] > 180) v -= 360; while (v - ref[i] < -180) v += 360; return v; });
+		const e = R.matToEuler(m), p = wrap(e), q = wrap([e[0] + 180, 180 - e[1], e[2] + 180]);
+		const off = (x) => Math.abs(x[0] - ref[0]) + Math.abs(x[1] - ref[1]) + Math.abs(x[2] - ref[2]);
+		return off(q) < off(p) - 1e-6 ? q : p;
+	};
+	// Row-major 3x3 <-> quaternion [x, y, z, w], for blending turns.
+	const matToQuat = (m) => {
+		const t = m[0][0] + m[1][1] + m[2][2];
+		let q;
+		if (t > 0) { const s = Math.sqrt(t + 1) * 2; q = [(m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s, s / 4]; }
+		else if (m[0][0] >= m[1][1] && m[0][0] >= m[2][2]) { const s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2; q = [s / 4, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s]; }
+		else if (m[1][1] >= m[2][2]) { const s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2; q = [(m[0][1] + m[1][0]) / s, s / 4, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s]; }
+		else { const s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2; q = [(m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, s / 4, (m[1][0] - m[0][1]) / s]; }
+		return q;
+	};
+	const quatToMat = ([x, y, z, w]) => [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]];
+	const slerp = (a, b, t) => {
+		let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+		const s = d < 0 ? -1 : 1; d = Math.abs(d);
+		if (d > 0.9995) { const o = a.map((v, i) => v + (s * b[i] - v) * t), l = Math.hypot(...o); return o.map((v) => v / l); }
+		const th = Math.acos(Math.min(1, d)), u = Math.sin((1 - t) * th) / Math.sin(th), w = (s * Math.sin(t * th)) / Math.sin(th);
+		return a.map((v, i) => u * v + w * b[i]);
+	};
+	// A turn part way from one Euler key to the next, the short way round.
+	const blendRot = (a, b, t) => {
+		if (t <= 0) return a.slice();
+		if (t >= 1) return b.slice();
+		if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) return a.slice();
+		return R.nearEuler(quatToMat(slerp(matToQuat(R.eulerToMat(a)), matToQuat(R.eulerToMat(b)), t)), v3.lerp(a, b, t));
+	};
+	// How a key leaves for the next one (key.ease; missing = linear). Hold keeps its pose until the next key.
+	R.EASES = [["linear", "Linear"], ["in", "Ease in"], ["out", "Ease out"], ["inout", "Ease in-out"], ["hold", "Hold"]];
+	const eased = (ease, t) => (ease === "in" ? t * t : ease === "out" ? t * (2 - t) : ease === "inout" ? t * t * (3 - 2 * t) : ease === "hold" ? 0 : t);
+
 	// A bone's local pose at a frame: its keys blended (none = rest).
 	R.localPose = (clip, boneId, frame) => {
 		const keys = (clip && clip.tracks[boneId]) || [];
@@ -76,14 +115,98 @@
 		// Before the first key the bone eases in from its rest pose at frame 0 (so keying only frame 3 leaves frame 0 at rest).
 		if (frame <= keys[0].f) {
 			const t = keys[0].f > 0 ? Math.max(0, frame / keys[0].f) : 1;
-			return { rot: v3.lerp([0, 0, 0], keys[0].rot, t), pos: v3.lerp([0, 0, 0], keys[0].pos, t) };
+			return { rot: blendRot([0, 0, 0], keys[0].rot, t), pos: v3.lerp([0, 0, 0], keys[0].pos, t) };
 		}
 		const last = keys[keys.length - 1];
 		if (frame >= last.f) return { rot: last.rot.slice(), pos: last.pos.slice() };
 		let i = 0;
 		while (keys[i + 1].f < frame) i++;
-		const a = keys[i], b = keys[i + 1], t = (frame - a.f) / (b.f - a.f);
-		return { rot: v3.lerp(a.rot, b.rot, t), pos: v3.lerp(a.pos, b.pos, t) };
+		const a = keys[i], b = keys[i + 1], t = eased(a.ease, (frame - a.f) / (b.f - a.f));
+		return { rot: blendRot(a.rot, b.rot, t), pos: v3.lerp(a.pos, b.pos, t) };
+	};
+	// Which frame playback is on, `ticks` frames of the clock after starting on `start`, and whether a "once" clip has finished.
+	R.playFrame = (clip, start, ticks) => {
+		const n = clip.frames;
+		if (clip.loop === "once") return { f: Math.min(start + ticks, n - 1), done: start + ticks >= n - 1 };
+		if (clip.loop === "pingpong" && n > 1) { const span = 2 * (n - 1), p = (start + ticks) % span; return { f: p < n ? p : span - p, done: false }; }
+		return { f: (start + ticks) % n, done: false };
+	};
+	// The pose of the whole rig at a frame as text: two frames with the same text have the same picture.
+	R.frameSig = (anim, clip, frame) => anim.bones.map((b) => { const p = R.localPose(clip, b.id, frame); return p.rot.concat(p.pos).map((v) => Math.round(v * 100) / 100).join(","); }).join(";");
+	// Does anything in this clip move the model? (A key that is not the rest pose on a bone it follows.)
+	R.modelMoves = (anim, clip, o) => {
+		const main = R.bone(anim, anim.bind[o.id]);
+		if (!main) return false;
+		const w = R.skinWeights(anim, o), list = w ? w.list : [];
+		if (!w) for (let b = main, n = 0; b && n < 1000; b = b.parent && R.bone(anim, b.parent), n++) list.push(b);
+		return list.some((b) => ((clip.tracks || {})[b.id] || []).some((k) => k.rot.some((v) => Math.abs(v) > 0.01) || k.pos.some((v) => Math.abs(v) > 0.01)));
+	};
+	// A project saved before each clip kept its own Albedo: the one sheet belongs to the clip that was active.
+	R.migrate = (anim) => {
+		if (!anim.albedo) return anim;
+		const c = R.clipOf(anim);
+		if (c && !c.albedo) c.albedo = anim.albedo;
+		anim.albedo = null;
+		return anim;
+	};
+
+	// --- editing keys as a group (the dopesheet). A key is named {id: bone id, f: frame}. ---
+
+	// Move (or copy) keys df frames along, keeping them inside the clip as a block; a key already there is replaced. -> where they landed.
+	R.moveKeys = (clip, picks, df, copy) => {
+		const found = picks.map((p) => ({ id: p.id, key: R.keyAt(clip, p.id, p.f) })).filter((p) => p.key);
+		if (!found.length) return [];
+		const lo = Math.min(...found.map((p) => p.key.f)), hi = Math.max(...found.map((p) => p.key.f));
+		df = TS.clamp(df, -lo, clip.frames - 1 - hi);
+		const moved = found.map((p) => ({ id: p.id, key: Object.assign({}, p.key, { f: p.key.f + df }) }));
+		if (!copy) for (const p of found) R.deleteKey(clip, p.id, p.key.f);
+		for (const p of moved) putKey(clip, p.id, p.key);
+		return moved.map((p) => ({ id: p.id, f: p.key.f }));
+	};
+	const putKey = (clip, id, key) => {
+		const keys = clip.tracks[id] || (clip.tracks[id] = []), at = keys.findIndex((k) => k.f === key.f);
+		if (at >= 0) keys[at] = key; else { keys.push(key); keys.sort((a, b) => a.f - b.f); }
+	};
+	// Copied keys: their frames are relative to the earliest. Pasting puts the earliest on `frame`; anything past the end is left out.
+	R.copyKeys = (clip, picks) => {
+		const keys = picks.map((p) => ({ id: p.id, key: R.keyAt(clip, p.id, p.f) })).filter((p) => p.key);
+		if (!keys.length) return null;
+		const lo = Math.min(...keys.map((p) => p.key.f));
+		return keys.map((p) => ({ id: p.id, key: Object.assign({}, JSON.parse(JSON.stringify(p.key)), { f: p.key.f - lo }) }));
+	};
+	R.pasteKeys = (clip, copied, frame, anim) => {
+		const out = [];
+		for (const p of copied) {
+			const f = p.key.f + frame;
+			if (f >= clip.frames || !R.bone(anim, p.id)) continue;
+			putKey(clip, p.id, Object.assign(JSON.parse(JSON.stringify(p.key)), { f }));
+			out.push({ id: p.id, f });
+		}
+		return out;
+	};
+	// The last frame takes the first frame's pose, so a loop has no jump at the seam.
+	R.closeLoop = (clip, ids) => {
+		for (const id of ids) { const p = R.localPose(clip, id, 0); R.setKey(clip, id, clip.frames - 1, p.rot, p.pos); }
+	};
+	// Left / right bone names: arm.L <-> arm.R, Arm_L <-> Arm_R, LeftArm <-> RightArm. The name itself when it has no side.
+	R.mirrorName = (name) => {
+		const swap = { L: "R", R: "L", l: "r", r: "l", Left: "Right", Right: "Left", left: "right", right: "left" };
+		const end = name.match(/^(.*[._\- ])(L|R|l|r|Left|Right|left|right)$/);
+		if (end) return end[1] + swap[end[2]];
+		const start = name.match(/^(Left|Right|left|right)(.*)$/);
+		return start ? swap[start[1]] + start[2] : name;
+	};
+	// Flip a pose across the X axis onto the other side's bones on this frame (a bone with no other side flips itself). Turns about X
+	// stay; turns about Y and Z and a move along X change sign.
+	R.mirrorPose = (anim, clip, frame, ids) => {
+		const out = [];
+		for (const id of ids) {
+			const b = R.bone(anim, id), name = b && R.mirrorName(b.name), other = (name && anim.bones.find((x) => x.name === name)) || b;
+			if (!b) continue;
+			const p = R.localPose(clip, id, frame);
+			out.push([other.id, [p.rot[0], -p.rot[1], -p.rot[2]], [-p.pos[0], p.pos[1], p.pos[2]]]);
+		}
+		for (const [id, rot, pos] of out) R.setKey(clip, id, frame, rot, pos);
 	};
 	R.keyAt = (clip, boneId, frame) => ((clip && clip.tracks[boneId]) || []).find((k) => k.f === frame) || null;
 	R.setKey = (clip, boneId, frame, rot, pos) => {
@@ -130,7 +253,7 @@
 		const parent = bone.parent && mats.get(bone.parent);
 		if (parent) local = m4.mul(m4.invert(parent), local);
 		const h = apply(local, bone.head);
-		return { rot: R.matToEuler(rotPart(local)), pos: [h[0] - bone.head[0], h[1] - bone.head[1], h[2] - bone.head[2]] };
+		return { rot: R.nearEuler(rotPart(local), R.localPose(clip, bone.id, frame).rot), pos: [h[0] - bone.head[0], h[1] - bone.head[1], h[2] - bone.head[2]] };
 	};
 
 	// The models as they stand at a frame: copies (same ids) with the bound ones' vertices moved; the rest are shared as they are.

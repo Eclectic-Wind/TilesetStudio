@@ -7,11 +7,16 @@
 	const esc = TS.esc;
 	const round = (v) => Math.round(v * 100) / 100;
 	let previewMode = "lit"; // the panel's own preview: lit | normal | albedo
-	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4], litCache = null;
+	let on = false, boneSel = null, playing = 0, sheet = null, albedo = null, albedoURL = null, renderTimer = 0, linkState = ["off", "Not linked."], light = [0.3, 0.4];
 	const S = () => TS.state, A = () => TS.state.anim, api = () => TS.api;
 	const clip = () => Rig.clipOf(A());
 	// Weight painting: with a bone selected, drag over the models to give it more (or less) of each vertex under the brush.
 	let paintMode = false, stroke = null, brushAt = null;
+	// The dopesheet: keys picked ("boneId|frame"), the last copied keys, and whether the view shows the neighbouring frames as ghosts.
+	const keySel = new Set();
+	let keyClip = null, showOnion = TS.store.get("tsOnion") === "1", tlCollapsed = TS.store.get("tsTlRows") === "0";
+	const keyName = (id, f) => id + "|" + f;
+	const picked = () => [...keySel].map((s) => { const i = s.lastIndexOf("|"); return { id: s.slice(0, i), f: +s.slice(i + 1) }; });
 	const brush = { mode: "mix", weight: 1, strength: 0.5, radius: 36, through: false };
 	const cell =() => (S().art ? { w: S().art.w, h: S().art.h } : { w: 64, h: 64 });
 
@@ -66,7 +71,7 @@
 		}
 		multi.clear(); boneSel = null;
 	}
-	function touched() { api().markUnsaved(); api().redrawSoon(); scheduleSheet(); render(); }
+	function touched() { api().markUnsaved(); api().redrawSoon(); loadAlbedoURL(); scheduleSheet(); render(); }
 
 	function ensureClip() {
 		const a = A();
@@ -77,7 +82,18 @@
 
 	// --- the sheet: normals rendered for every frame, shown lit, and sent to Aseprite ---
 
-	function scheduleSheet() { pass++; litCache = null; clearTimeout(renderTimer); renderTimer = setTimeout(renderSheet, 250); }
+	function scheduleSheet() { pass++; clearTimeout(renderTimer); renderTimer = setTimeout(renderSheet, 250); }
+	// Frames are kept by pose, so an edit only redoes the frames it changed and frames with the same pose share one picture. Everything
+	// else a frame depends on (models, rest pose, weights, settings, size) is rigBase: when it changes, the kept frames go.
+	const NORMAL_BYTES = 256e6, LIT_BYTES = 320e6;
+	let rigBase = "", litArt = null, litAlbedo = null;
+	const normalFrames = new Map(), litFrames = new Map();
+	const remember = (map, key, value, room) => { map.set(key, value); while (map.size > Math.max(8, room)) map.delete(map.keys().next().value); };
+	function checkRigBase(c) {
+		const a = A(), base = JSON.stringify([S().objects, a.bones, a.bind, a.rigid, a.skin, a.paint, S().settings, c.w, c.h]);
+		if (base !== rigBase) { rigBase = base; normalFrames.clear(); litFrames.clear(); }
+	}
+	const pushSheet = (img, lay, cl) => Link.push(img, lay, { anim: true, fps: cl.fps, clip: cl.id, clipName: cl.name.replace(/["\\]/g, "") });
 	// The big Lit / Normals view shows the clip's frame while animating and the rest pose otherwise: redraw it when that changes.
 	function refreshOutput() { const o = api().output; if (o && o.result) o.render(); }
 	// Frames render a few at a time so a long clip never freezes the page: the frame on screen first, then the rest in short slices
@@ -88,11 +104,14 @@
 		clearTimeout(renderTimer);
 		if (!on || !S().art || !clip() || !S().objects.length) { sheet = null; pending = 0; drawPreview(); refreshOutput(); showSheetInfo(); return; }
 		const c = cell(), cl = clip(), a = A(), objs = S().objects, st = S().settings, lay = Rig.layout(c.w, c.h, cl.frames);
+		checkRigBase(c);
 		const old = sheet && sheet.layout.w === lay.w && sheet.layout.h === lay.h && sheet.layout.cw === c.w && sheet.layout.ch === c.h ? sheet.sheet : null;
 		const next = { sheet: old ? new ImageData(new Uint8ClampedArray(old.data), lay.w, lay.h) : new ImageData(lay.w, lay.h), layout: lay };
 		const todo = Array.from({ length: cl.frames }, (_, i) => i).sort((x, y) => (x === a.frame ? -1 : y === a.frame ? 1 : x - y));
 		const one = (f) => {
-			const img = Rig.frameNormals(objs, a, cl, f, c.w, c.h, st), [ox, oy] = Rig.cellOrigin(lay, f);
+			const sig = Rig.frameSig(a, cl, f), [ox, oy] = Rig.cellOrigin(lay, f);
+			let img = normalFrames.get(sig);
+			if (!img) { img = Rig.frameNormals(objs, a, cl, f, c.w, c.h, st); remember(normalFrames, sig, img, NORMAL_BYTES / (c.w * c.h * 4)); }
 			for (let y = 0; y < c.h; y++) next.sheet.data.set(img.data.subarray(y * c.w * 4, (y + 1) * c.w * 4), ((oy + y) * lay.w + ox) * 4);
 		};
 		const step = () => {
@@ -107,7 +126,7 @@
 			if (todo.length) return void setTimeout(step, 0);
 			refreshOutput();
 			Link.expected = { w: lay.w, h: lay.h };
-			if (Link.linked()) Link.push(next.sheet, lay, { anim: true, fps: cl.fps }).catch((e) => setLink("warn", "Could not write to the folder: " + e.message));
+			if (Link.linked()) pushSheet(next.sheet, lay, cl).catch((e) => setLink("warn", "Could not write to the folder: " + e.message));
 		};
 		step();
 	}
@@ -168,8 +187,10 @@
 	// linked Albedo for the frame's cell), so its colour and shadows match. Kept until the frame, the models or the Albedo change.
 	function litResult() {
 		if (!on || !S().art || !clip() || !S().objects.length) return null;
-		const f = A().frame;
-		if (litCache && litCache.frame === f && litCache.albedo === albedo) return litCache;
+		const f = A().frame, key = f + "|" + Rig.frameSig(A(), clip(), f);
+		if (litArt !== S().art || litAlbedo !== albedo) { litFrames.clear(); litArt = S().art; litAlbedo = albedo; }
+		const hit = litFrames.get(key);
+		if (hit) return hit;
 		const c = cell(), lay = Rig.layout(c.w, c.h, clip().frames);
 		const r = TS.Process.run(Rig.posedObjects(S().objects, A(), clip(), f), S().art, S().settings);
 		const data = new Uint8ClampedArray(S().art.data);
@@ -181,8 +202,9 @@
 			}
 		}
 		r.art = Object.assign({}, r.art, { data });
-		litCache = { frame: f, albedo, result: r, litNormal: TS.Process.litNormals(r, S().settings), prisms: null };
-		return litCache;
+		const entry = { result: r, litNormal: TS.Process.litNormals(r, S().settings), prisms: null };
+		remember(litFrames, key, entry, LIT_BYTES / (c.w * c.h * 40));
+		return entry;
 	}
 
 	// --- the Aseprite link ---
@@ -234,7 +256,7 @@
 			if (!names.length || !r || !r.pieceMap) return head;
 			const out = TS.Bundle.anim({ anim: { clips: [c] }, objects: S().objects, settings: S().settings, result: r, art: S().art, albedoOf: (cl) => (cl === c ? albedo : null), dry: true });
 			if (!out) return head;
-			const ok = out.clips.length ? `<p class="dim">Exports ${out.clips[0].targets.map((t) => `${t.rect[2]}x${t.rect[3]} px`).join(" + ")} per frame.</p>` : "";
+			const ok = out.clips.length ? `<p class="dim">Exports ${out.clips[0].targets.map((t) => `${t.rect[2]}x${t.rect[3]} px`).join(" + ")} per frame. ${out.clips[0].targets.some((t) => t.moves) ? "Height and normals follow the bones, frame by frame." : "Height and normals stay the base frame's (no bone moves these models)."}</p>` : "";
 			return head + ok + out.warnings.map((w) => `<p class="warnline">⚠ ${esc(w)}</p>`).join("");
 		} catch (e) { return ""; }
 	}
@@ -242,7 +264,7 @@
 	async function albedoImages() {
 		const out = new Map();
 		for (const c of A().clips) {
-			const url = c.albedo || (c.id === A().clip ? A().albedo : null);
+			const url = c.albedo;
 			if (!url || !(c.models || []).length) continue;
 			const img = await new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = url; });
 			if (!img) continue;
@@ -259,19 +281,21 @@
 		const c = document.createElement("canvas");
 		c.width = img.width; c.height = img.height;
 		c.getContext("2d").putImageData(img, 0, 0);
-		A().albedo = albedoURL = c.toDataURL("image/png");
+		albedoURL = c.toDataURL("image/png");
 		const active = Rig.clipOf(A());
-		if (active) active.albedo = albedoURL; // each clip keeps its own sheet: the game export reads it
+		if (active) active.albedo = albedoURL; // each clip keeps its own sheet: the preview and the game export read it
 		api().markUnsaved();
 		drawPreview(); showFrameArt();
 	}
 	async function loadAlbedoURL() {
-		if (A().albedo === albedoURL) return;
-		albedoURL = A().albedo;
+		const url = (clip() || {}).albedo || null;
+		if (url === albedoURL) return;
+		albedoURL = url;
 		albedo = null;
-		if (!albedoURL) return drawPreview();
+		if (!albedoURL) { drawPreview(); showFrameArt(); return; }
 		const img = new Image();
 		img.onload = () => {
+			if (url !== albedoURL) return; // another clip was picked meanwhile
 			const c = document.createElement("canvas");
 			c.width = img.width; c.height = img.height;
 			const g = c.getContext("2d");
@@ -286,7 +310,7 @@
 		if (pending) { // a pass is still running: finish it now so the download is whole
 			const cl = cell();
 			pass++; sheet = Rig.normalSheet(S().objects, A(), clip(), cl.w, cl.h, S().settings); pending = 0; showSheetInfo();
-			if (Link.linked()) Link.push(sheet.sheet, sheet.layout, { anim: true, fps: clip().fps }).catch((e) => setLink("warn", "Could not write to the folder: " + e.message));
+			if (Link.linked()) pushSheet(sheet.sheet, sheet.layout, clip()).catch((e) => setLink("warn", "Could not write to the folder: " + e.message));
 		}
 		const c = document.createElement("canvas");
 		c.width = sheet.sheet.width; c.height = sheet.sheet.height;
@@ -336,43 +360,63 @@
 			<div class="arow"><label>Name <input id="an_clipname" type="text" value="${esc(c.name)}"></label></div>
 			<div class="arow"><label title="Frames in this clip. Each is one cell of the spritesheet.">Frames <input id="an_frames" type="number" min="1" max="64" value="${c.frames}"></label>
 			<label title="Playback speed in the preview">FPS <input id="an_fps" type="number" min="1" max="60" value="${c.fps}"></label></div>
-			<h4>Game export</h4>
-			<div class="arow"><label class="chk" title="Put this clip in the Godot bundle (bundle version 6, anim). Only a clip with models chosen below is exported."><input id="an_exp" type="checkbox"${c.export === false ? "" : " checked"}> Export</label>
-			<label title="What the game does at the last frame: loop, play once and hold, or ping-pong back and forth">Loop <select id="an_loop">${[["loop", "loop"], ["once", "once"], ["pingpong", "ping-pong"]].map(([v, t]) => `<option value="${v}"${(c.loop || "loop") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
-			<div class="arow"><button id="an_models" title="The models this flipbook animates: select them in the view, then press this. The pieces they belong to are swapped for the frames while the clip plays; the frames are the Albedo painted in Aseprite. Height, normal and shadow stay the base frame's.">Use selected models</button><button id="an_modelsclear"${(c.models || []).length ? "" : " disabled"}>Clear</button></div>
-			${exportNote(c)}
-			<h4>Bones${a.bones.length ? ` <span class="dim">(${a.bones.length})</span>` : ""}</h4><div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
+			<div class="arow"><label title="What happens at the last frame, in the preview and in the game: loop, play once and hold, or ping-pong back and forth">Loop <select id="an_loop">${[["loop", "loop"], ["once", "once"], ["pingpong", "ping-pong"]].map(([v, t]) => `<option value="${v}"${(c.loop || "loop") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>`;
+		const note = exportNote(c), warned = (note.match(/warnline/g) || []).length;
+		const gameExport = `<div class="arow"><label class="chk" title="Put this clip in the Godot bundle (bundle version 6, anim). Only a clip with models chosen below is exported."><input id="an_exp" type="checkbox"${c.export === false ? "" : " checked"}> Export</label></div>
+			<div class="arow"><button id="an_models" title="The models this flipbook animates: select them in the view, then press this. The pieces they belong to are swapped for the frames while the clip plays; the frames are the Albedo painted in Aseprite. Shadow and collision stay the base frame's; height and normals follow the bones when bones move the models.">Use selected models</button><button id="an_modelsclear"${(c.models || []).length ? "" : " disabled"}>Clear</button></div>
+			${note}`;
+		h = section("clip", "Clip", h);
+		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
 			${(() => { const away = S().objects.filter((o) => a.bind[o.id] && Rig.awayFromBones(a, o)).map((o) => esc(o.name)); return away.length ? `<p class="warnline" title="The bones keep the pose they were rigged in. Use Edit rest pose to move the bones back to the model, or Bind selected models to a bone beside it.">⚠ ${away.join(", ")} ${away.length > 1 ? "sit" : "sits"} away from ${away.length > 1 ? "their" : "its"} bones (edited after rigging?), so nothing bends. Edit rest pose to realign the bones.</p>` : ""; })()}
 			<div class="arow"><button id="an_boneadd" title="A bone at the 3D cursor, 24 px tall. With a bone selected, the new one starts at its tip and is its child.">＋ Bone</button>
 			<button id="an_bonemodel" title="One bone per selected model, from the bottom of the model to its top, bound to it">Bone per model</button>
 			<button id="an_rest" class="${restMode ? "on" : ""}" title="Edit the rest pose (Tab): drag a bone's head, tip or body to where it belongs. Models show at rest meanwhile.">${restMode ? "Done (Tab)" : "Edit rest pose"}</button><button id="an_bonedel" class="danger" title="Delete the selected bone(s); their children move up"${bone ? "" : " disabled"}>Delete</button></div>`;
 		if (bone) {
-			const pose = Rig.localPose(c, bone.id, a.frame), key = Rig.keyAt(c, bone.id, a.frame);
-			h += `<div class="boneprops"><div class="arow"><label>Name <input id="an_bname" type="text" value="${esc(bone.name)}"></label></div>
+			rig += `<div class="boneprops"><div class="arow"><label>Name <input id="an_bname" type="text" value="${esc(bone.name)}"></label></div>
 				<div class="arow"><label>Parent <select id="an_bparent"><option value="">(none)</option>${Rig.ordered(a).filter((b) => b.id !== bone.id && !Rig.wouldLoop(a, bone, b.id)).map((b) => `<option value="${b.id}"${b.id === bone.parent ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label></div>
 				<label class="chk" title="Keep this bone's head glued to its parent's tip: moving the parent's tip drags it along, and its head can't be pulled away."><input id="an_conn" type="checkbox"${bone.connected && bone.parent ? " checked" : ""}${bone.parent ? "" : " disabled"}> Connected to the parent's tip</label>
 				${vecRow("Head", "an_h", bone.head)}${vecRow("Tip", "an_t", bone.tail)}
 				<div class="arow"><button id="an_bind" title="Make the selected models follow this bone">Bind selected models</button><button id="an_unbind" title="Let the selected models stand still">Unbind</button></div>
 				<div class="arow"><button id="an_skin" class="${deformSel() ? "on" : ""}" title="Deform (the default): a bound model bends with every bone, vertex by vertex, weighted by distance. Nothing to set up beyond binding it.">Deform</button><button id="an_unskin" class="${deformSel() ? "" : "on"}" title="Rigid: the model moves as one solid piece with its bound bone.">Rigid</button>
 				<label title="How sharply weights fall off with distance. Higher: vertices stick to their nearest bone; lower: blends over a wider span.">Stiffness <input id="an_stiff" type="number" min="0.5" max="12" step="0.5" value="${skinStiff()}"></label></div></div>
-				<h4>Pose · frame ${a.frame + 1}${key ? ' <span class="keyflag">◆ key</span>' : ""}</h4><div class="poseprops">
+`;
+		}
+		h += section("bones", `Bones${a.bones.length ? ` <span class="dim">(${a.bones.length})</span>` : ""}`, rig);
+		if (bone) {
+			const pose = Rig.localPose(c, bone.id, a.frame), key = Rig.keyAt(c, bone.id, a.frame);
+			h += section("pose", `Pose · frame ${a.frame + 1}${key ? ' <span class="keyflag">◆ key</span>' : ""}`, `<div class="poseprops">
 				${["X", "Y", "Z"].map((n, i) => `<div class="vrow"><span class="ax-${n.toLowerCase()}" title="Turn about ${n}">Turn ${n}</span><input id="an_rr${i}" type="range" min="-180" max="180" step="1" value="${round(pose.rot[i])}">${numField("an_r" + i, pose.rot[i])}</div>`).join("")}
 				${bone.connected && bone.parent ? '<p class="dim">Connected: turns only (its head stays on the parent tip).</p>' : vecRow("Move", "an_p", pose.pos)}
 				<div class="arow"><button id="an_keydel" title="Remove this frame's key"${key ? "" : " disabled"}>Remove key</button><button id="an_keyrest" title="Back to the rest pose on this frame (keeps a key)">Rest here</button></div>
-				<p class="dim">Changing a value keys it on this frame. Or drag the bone's tip in the view (turns about the depth axis).</p></div>`;
+				<p class="dim">Changing a value keys it on this frame. Or drag the bone's tip in the view (turns about the depth axis).</p></div>`);
 		}
-		h += weightsPanel(a, bone);
-		h += `<h4>Spritesheet &amp; Aseprite</h4><div class="arow"><label title="What the preview below shows. The big Lit / Normals tab on the right plays the same frames.">Preview <select id="an_pmode"><option value="lit"${previewMode === "lit" ? " selected" : ""}>Lit</option><option value="normal"${previewMode === "normal" ? " selected" : ""}>Normal</option><option value="albedo"${previewMode === "albedo" ? " selected" : ""}>Albedo</option></select></label></div><canvas id="an_prev" class="prev" title="This frame, lit by the normal map and your Albedo. Move the pointer over it to move the light."></canvas>
+		h += section("weights", "Weights", weightsPanel(a, bone));
+		h += section("sheet", "Preview &amp; Aseprite", `<div class="arow"><label title="What the preview below shows. The big Lit / Normals tab on the right plays the same frames.">Preview <select id="an_pmode"><option value="lit"${previewMode === "lit" ? " selected" : ""}>Lit</option><option value="normal"${previewMode === "normal" ? " selected" : ""}>Normal</option><option value="albedo"${previewMode === "albedo" ? " selected" : ""}>Albedo</option></select></label></div><canvas id="an_prev" class="prev" title="This frame, lit by the normal map and your Albedo. Move the pointer over it to move the light."></canvas>
 			<p id="an_sheetinfo" class="dim">${sheetText()}</p>
 			<div class="arow"><button id="an_link" title="Pick the folder the Aseprite extension saves into. Studio writes normal.png there and reads albedo.png from it.">${Link.linked() ? "Re-link folder…" : "Link Aseprite folder…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
 			<p class="linkline"><span id="an_linkdot" class="dot ${linkState[0]}"></span><span id="an_linkstate" class="linkstate ${linkState[0]}">${esc(linkState[1])}</span></p>
 			${Link.supported ? "" : '<p class="dim">This browser can\'t watch a folder; use the buttons below (Chrome or Edge can link live).</p>'}
-			<div class="arow"><button id="an_dl" title="Download the normal-map sheet as a PNG to put in Aseprite">Download normal sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`;
+			<div class="arow"><button id="an_dl" title="Download the normal-map sheet as a PNG to put in Aseprite">Download normal sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`);
+		h += section("export", `Game export${warned ? ` <span class="warn">⚠ ${warned}</span>` : ""}`, gameExport);
+		// The panel is rebuilt on every edit: keep its scroll, and let Tab reach the next field though the one it left is gone.
+		const scroller = body.closest(".sec")?.parentElement, top = scroller ? scroller.scrollTop : 0;
 		body.innerHTML = h;
+		if (scroller) scroller.scrollTop = top;
+		for (const d of body.querySelectorAll("details[data-sec]")) d.ontoggle = () => { secClosed[d.open ? "delete" : "add"](d.dataset.sec); TS.store.set("tsAnClosed", [...secClosed].join(",")); };
 		wire();
 		drawPreview();
 		timeline();
+		const fields = [...body.querySelectorAll("input, select, button")].filter((el) => !el.disabled && el.id);
+		if (tabFrom) {
+			const i = fields.findIndex((el) => el.id === tabFrom.id), to = i >= 0 && fields[i + (tabFrom.back ? -1 : 1)];
+			if (to) to.focus();
+			tabFrom = null;
+		}
 	}
+	// Sections of the panel fold, and stay as they were left.
+	const secClosed = new Set((TS.store.get("tsAnClosed") || "weights,export").split(",").filter(Boolean));
+	let tabFrom = null;
+	const section = (id, title, html) => `<details class="ansec" data-sec="${id}"${secClosed.has(id) ? "" : " open"}><summary>${title}</summary>${html}</details>`;
 
 	// --- weight painting ---
 
@@ -392,7 +436,7 @@
 	}
 	function weightsPanel(a, bone) {
 		const total = S().objects.reduce((n, o) => n + Rig.paintCount(a, o), 0), stale = S().objects.filter((o) => Rig.paintStale(a, o)).map((o) => esc(o.name));
-		let h = `<h4>Weights</h4><div class="arow"><button id="an_paint" class="${paintMode ? "on" : ""}"${bone || paintMode ? "" : " disabled"} title="Paint the selected bone's weights straight onto the models: red = the vertex follows this bone fully, blue = not at all. Select a bone first.">${paintMode ? "Done (Esc)" : "Weight paint"}</button><button id="an_wreset" title="Throw away the painting on the selected models (all models if none is selected) and go back to automatic weights"${total ? "" : " disabled"}>Reset to auto</button></div>`;
+		let h = `<div class="arow"><button id="an_paint" class="${paintMode ? "on" : ""}"${bone || paintMode ? "" : " disabled"} title="Paint the selected bone's weights straight onto the models: red = the vertex follows this bone fully, blue = not at all. Select a bone first.">${paintMode ? "Done (Esc)" : "Weight paint"}</button><button id="an_wreset" title="Throw away the painting on the selected models (all models if none is selected) and go back to automatic weights"${total ? "" : " disabled"}>Reset to auto</button></div>`;
 		if (stale.length) h += `<p class="warnline">⚠ ${stale.join(", ")} changed shape since it was painted, so its painted weights are ignored. Reset to auto to clear them.</p>`;
 		if (!paintMode) return h + `<p class="dim">${total ? `${total} painted vertices; the rest follow the bones' distance.` : "Weights are automatic (by distance to the bones). Paint to fix a joint by hand."}</p>`;
 		const opt = (v, t) => `<option value="${v}"${brush.mode === v ? " selected" : ""}>${t}</option>`, targets = bone ? paintTargets().length : 0;
@@ -478,7 +522,7 @@
 				q(id).oninput = () => { brush[key] = parseFloat(q(id).value); q(out).textContent = brush[key]; moveBrush(); };
 			q("an_bthru").onchange = () => { brush.through = q("an_bthru").checked; };
 		}
-		q("an_clip").onchange = () => { a.clip = q("an_clip").value; a.frame = 0; touched(); restartPlay(); };
+		q("an_clip").onchange = () => { a.clip = q("an_clip").value; a.frame = 0; keySel.clear(); touched(); restartPlay(); };
 		q("an_clipnew").onclick = () => edit(() => { const n = Rig.newClip("Clip " + (a.clips.length + 1), c.frames, c.fps); a.clips.push(n); a.clip = n.id; a.frame = 0; });
 		q("an_clipdel").onclick = () => edit(() => { a.clips = a.clips.filter((x) => x !== c); a.clip = a.clips[0].id; a.frame = 0; });
 		q("an_clipname").onchange = () => edit(() => { c.name = q("an_clipname").value.trim() || c.name; });
@@ -562,18 +606,24 @@
 		if (!c) return;
 		A().frame = ((f % c.frames) + c.frames) % c.frames;
 		api().redrawSoon();
-		timeline(); drawPreview(); showFrameArt();
-		if (boneSel) render();
+		drawPreview(); showFrameArt();
+		if (boneSel) render(); else timeline();
 	}
 	// The 3D view shows the current frame's Albedo (its cell of the received sheet) as the art; a frame with none shows none.
 	// Without a matching sheet, or outside animation mode, the tileset art itself is shown.
+	let artShown = null;
 	function showFrameArt() {
 		const art = S().art, r = api().renderer, c = clip();
 		if (!art || !r) return;
+		const lay = c && Rig.layout(art.w, art.h, c.frames), own = on && albedo && lay && albedo.width === lay.w && albedo.height === lay.h;
+		// Without a sheet every frame shows the same art: it goes to the graphics card once, not on every frame of playback.
+		const shown = { art, albedo: own ? albedo : null, frame: own ? A().frame : -1 };
+		if (artShown && artShown.art === shown.art && artShown.albedo === shown.albedo && artShown.frame === shown.frame) return;
+		artShown = shown;
 		const cv = document.createElement("canvas");
 		cv.width = art.w; cv.height = art.h;
-		const g = cv.getContext("2d"), lay = c && Rig.layout(art.w, art.h, c.frames);
-		if (on && albedo && lay && albedo.width === lay.w && albedo.height === lay.h) {
+		const g = cv.getContext("2d");
+		if (own) {
 			const [ox, oy] = Rig.cellOrigin(lay, A().frame), cellImg = new ImageData(art.w, art.h);
 			for (let y = 0; y < art.h; y++) cellImg.data.set(albedo.data.subarray(((oy + y) * lay.w + ox) * 4, ((oy + y) * lay.w + ox + art.w) * 4), y * art.w * 4);
 			g.putImageData(cellImg, 0, 0);
@@ -581,47 +631,186 @@
 		r.setArt(cv, art.w, art.h);
 		api().redrawSoon();
 	}
+	// The dopesheet: a ruler to scrub, a row of every keyed frame, and one row per bone. Drag a key to move it (Alt copies), drag across
+	// a row to box-select, Delete removes, Ctrl+C / Ctrl+V copy and paste at the playhead.
+	const FRAME_W = 20;
 	function timeline() {
 		const el = $("timeline");
 		if (!el || !on) return;
 		const c = clip(), a = A();
 		if (!c) return;
-		// With a bone selected the diamonds are its keys; with none, a dimmer diamond marks any bone's key.
-		const ids = boneSel ? selIds() : Object.keys(c.tracks), keys = new Set(ids.flatMap((id) => (c.tracks[id] || []).map((k) => k.f)));
+		const old = el.querySelector(".tlgrid"), sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
+		for (const s of [...keySel]) { const i = s.lastIndexOf("|"); if (!Rig.keyAt(c, s.slice(0, i), +s.slice(i + 1))) keySel.delete(s); }
 		const past = Object.values(c.tracks).some((ks) => ks.some((k) => k.f >= c.frames));
-		el.innerHTML = `<div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button>` +
-			`<span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
-			`<div class="frames${c.frames > 24 ? " dense" : ""}">${Array.from({ length: c.frames }, (_, i) => `<button data-f="${i}" class="fr${i === a.frame ? " on" : ""}${keys.has(i) ? (boneSel ? " key" : " key any") : ""}" title="Frame ${i + 1}${keys.has(i) ? " (key)" : ""}">${i + 1}</button>`).join("")}</div>` +
-			`<span class="dim tlhint" title="${esc(c.name)} · ${c.fps} fps. ◆ marks the selected bone's keys (dim: any bone's when none is selected). Up / Down jump between keys.${past ? " Some keys lie past the last frame: raise the frame count to see them again." : ""}">${past ? '<span class="warn">keys past the end · </span>' : ""}${esc(c.name)} · ${c.fps} fps · ${boneSel ? "◆ selected bone" : "◆ any bone"} · ↑↓ jump keys</span>`;
+		const depth = (b) => { let d = 0; for (let p = b.parent && Rig.bone(a, b.parent); p && d < 50; p = p.parent && Rig.bone(a, p.parent)) d++; return d; };
+		const eases = easeTargets().map((k) => k.ease || "linear"), ease = eases.length && eases.every((v) => v === eases[0]) ? eases[0] : "";
+		const diamond = (k, id) => `<i class="kd e-${k.ease || "linear"}${keySel.has(keyName(id, k.f)) ? " sel" : ""}" data-b="${id}" data-f="${k.f}" style="left:${k.f * FRAME_W}px" title="Frame ${k.f + 1}${k.ease ? " · " + k.ease : ""}"></i>`;
+		const all = new Set();
+		for (const ks of Object.values(c.tracks)) for (const k of ks) if (k.f < c.frames) all.add(k.f);
+		const track = `width:${c.frames * FRAME_W}px`;
+		let rows = `<div class="tlrow sum"><div class="tlname" title="Every key on a frame together">All bones${a.bones.length && Object.keys(c.tracks).length ? "" : ' <span class="dim">(no keys yet)</span>'}${a.bones.length ? `<button id="tl_fold" title="${tlCollapsed ? "Show" : "Hide"} the bone rows">${tlCollapsed ? "▸" : "▾"}</button>` : ""}</div><div class="tltrack" style="${track}">${[...all].map((f) => `<i class="kd all${Object.keys(c.tracks).some((id) => keySel.has(keyName(id, f))) ? " sel" : ""}" data-all="1" data-f="${f}" style="left:${f * FRAME_W}px" title="All keys on frame ${f + 1}"></i>`).join("")}</div></div>`;
+		if (!tlCollapsed) for (const b of Rig.ordered(a)) rows += `<div class="tlrow${isSel(b.id) ? " on" : ""}" data-bone="${b.id}"><div class="tlname" style="padding-left:${6 + depth(b) * 10}px" title="${esc(b.name)}">${esc(b.name)}</div><div class="tltrack" style="${track}">${(c.tracks[b.id] || []).filter((k) => k.f < c.frames).map((k) => diamond(k, b.id)).join("")}</div></div>`;
+		el.innerHTML = `<div class="tlbar"><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
+			`<label class="tlease" title="How the picked keys (or the selected bones' keys on this frame) leave for the next key. Hold keeps the pose until then."><span class="dim">Ease</span> <select id="tl_ease"${eases.length ? "" : " disabled"}>${ease ? "" : '<option value="">–</option>'}${Rig.EASES.map(([v, t]) => `<option value="${v}"${v === ease ? " selected" : ""}>${t}</option>`).join("")}</select></label>` +
+			`<button id="tl_onion" class="${showOnion ? "on" : ""}" title="Onion skin: show the models on the previous frame (red) and next frame (green) while stopped">Onion</button>` +
+			`<button id="tl_seam" title="Key the first frame's pose on the last frame, so the loop has no jump (selected bones, or all with keys)">Close loop</button>` +
+			`<button id="tl_mirror" title="Flip this frame's pose across X onto the other side's bones (arm.L and arm.R; selected bones, or all)">Mirror pose</button>` +
+			`<span class="dim tlhint" title="${esc(c.name)} · ${c.fps} fps · ${esc(c.loop || "loop")}. Drag a key to move it, Alt-drag to copy, drag a row to box-select, Delete removes, Ctrl+C / Ctrl+V paste at the playhead, Up / Down jump between keys.${past ? " Some keys lie past the last frame: raise the frame count to see them again." : ""}">${past ? '<span class="warn">keys past the end · </span>' : ""}${esc(c.name)} · ${c.fps} fps · ${esc(c.loop || "loop")}</span></div>` +
+			`<div class="tlgrid"><div class="tlrow ruler"><div class="tlname"></div><div class="tltrack" data-ruler="1" style="${track}">${Array.from({ length: c.frames }, (_, i) => `<span class="${(i + 1) % 5 === 0 || i === 0 ? "" : "minor"}" style="left:${i * FRAME_W}px">${i + 1}</span>`).join("")}</div></div>${rows}<div class="tlhead" id="tl_head" style="left:calc(var(--tl-names) + ${a.frame * FRAME_W}px);width:${FRAME_W}px;height:${(2 + (tlCollapsed ? 0 : a.bones.length)) * 18}px"></div></div>`;
 		$("tl_prev").onclick = () => setFrame(a.frame - 1);
 		$("tl_next").onclick = () => setFrame(a.frame + 1);
 		$("tl_play").onclick = togglePlay;
-		for (const b of el.querySelectorAll("[data-f]")) b.onclick = () => setFrame(parseInt(b.dataset.f, 10));
+		$("tl_ease").onchange = () => setEase($("tl_ease").value);
+		$("tl_onion").onclick = () => { showOnion = !showOnion; TS.store.set("tsOnion", showOnion ? "1" : "0"); $("tl_onion").classList.toggle("on", showOnion); draw(); };
+		$("tl_seam").onclick = () => {
+			const ids = boneSel ? selIds() : Object.keys(c.tracks);
+			if (!ids.length || c.frames < 2) return api().toast("Key a pose first: the last frame takes the first frame's pose.", "bad");
+			edit(() => Rig.closeLoop(c, ids));
+		};
+		$("tl_mirror").onclick = () => {
+			if (!a.bones.length) return api().toast("Add bones first.", "bad");
+			edit(() => Rig.mirrorPose(a, c, a.frame, boneSel ? selIds() : a.bones.map((b) => b.id)));
+		};
+		if ($("tl_fold")) $("tl_fold").onclick = (e) => { e.stopPropagation(); tlCollapsed = !tlCollapsed; TS.store.set("tsTlRows", tlCollapsed ? "0" : "1"); timeline(); };
+		const grid = el.querySelector(".tlgrid");
+		grid.scrollLeft = sl; grid.scrollTop = st;
+		grid.onpointerdown = gridDown;
 		followFrame();
 	}
-	// Keep the current frame's button in sight in a long clip.
+	// The keys an ease applies to: those picked, else the selected bones' keys on this frame.
+	function easeTargets() {
+		const c = clip(), a = A();
+		const list = keySel.size ? picked().map((p) => Rig.keyAt(c, p.id, p.f)) : selIds().map((id) => Rig.keyAt(c, id, a.frame));
+		return list.filter(Boolean);
+	}
+	function setEase(v) {
+		if (!v) return;
+		const keys = easeTargets();
+		if (!keys.length) return;
+		const c = clip(), a = A();
+		// edit() takes its snapshot first, so name the keys again inside it
+		const names = keySel.size ? picked() : selIds().map((id) => ({ id, f: a.frame }));
+		edit(() => { for (const p of names) { const k = Rig.keyAt(c, p.id, p.f); if (k) { if (v === "linear") delete k.ease; else k.ease = v; } } });
+	}
+	function deleteKeys() {
+		const c = clip(), list = picked();
+		edit(() => { for (const p of list) Rig.deleteKey(c, p.id, p.f); keySel.clear(); });
+		api().status(`Deleted ${list.length} key${list.length > 1 ? "s" : ""}.`);
+	}
+	function copyKeys() {
+		keyClip = Rig.copyKeys(clip(), picked());
+		api().status(`Copied ${keyClip ? keyClip.length : 0} key(s). Ctrl+V pastes them at the playhead.`);
+	}
+	function pasteKeys() {
+		const c = clip(), a = A();
+		edit(() => { const out = Rig.pasteKeys(c, keyClip, a.frame, a); keySel.clear(); for (const p of out) keySel.add(keyName(p.id, p.f)); });
+	}
+	// The playhead alone, for scrubbing and playback: nothing is rebuilt.
+	function movePlayhead() {
+		const c = clip(), head = $("tl_head"), pos = document.querySelector("#timeline .tlpos");
+		if (head) head.style.left = `calc(var(--tl-names) + ${A().frame * FRAME_W}px)`;
+		if (pos && c) pos.textContent = `${A().frame + 1} / ${c.frames}`;
+		followFrame();
+	}
+	function showFrameNow(f) {
+		const c = clip();
+		A().frame = TS.clamp(f, 0, c.frames - 1);
+		api().redrawSoon(); drawPreview(); showFrameArt(); movePlayhead();
+	}
+	function gridDown(e) {
+		if (e.button !== 0 || e.target.closest("button")) return;
+		const grid = e.currentTarget, c = clip(), a = A(), kd = e.target.closest(".kd"), row = e.target.closest(".tlrow"), name = e.target.closest(".tlname"), inTrack = e.target.closest(".tltrack");
+		if (playing) togglePlay();
+		if (document.activeElement && document.activeElement.closest("#an_body")) document.activeElement.blur(); // the keys that follow are the dopesheet's
+		const frameAt = (x) => { const t = grid.querySelector(".tltrack").getBoundingClientRect(); return TS.clamp(Math.floor((x - t.left) / FRAME_W), 0, c.frames - 1); };
+		const follow = (move, up) => {
+			grid.setPointerCapture(e.pointerId);
+			grid.onpointermove = move;
+			grid.onpointerup = grid.onpointercancel = (ev) => { grid.onpointermove = grid.onpointerup = grid.onpointercancel = null; up(ev); };
+		};
+		e.preventDefault();
+		if (name) { // a bone's name selects it
+			if (row.dataset.bone) { selectBone(row.dataset.bone, e.shiftKey || e.ctrlKey || e.metaKey); S().selected.clear(); api().redrawSoon(); render(); }
+			return;
+		}
+		if (!inTrack) return;
+		if (inTrack.dataset.ruler) { // scrub
+			showFrameNow(frameAt(e.clientX));
+			follow((ev) => { const f = frameAt(ev.clientX); if (f !== A().frame) showFrameNow(f); }, () => { if (boneSel) render(); else timeline(); });
+			return;
+		}
+		if (kd) { // pick a key, and drag the picked keys along the frames
+			const f = +kd.dataset.f, names = kd.dataset.all ? Object.keys(c.tracks).filter((id) => Rig.keyAt(c, id, f)).map((id) => keyName(id, f)) : [keyName(kd.dataset.b, f)];
+			const had = names.every((n) => keySel.has(n)), add = e.shiftKey || e.ctrlKey || e.metaKey;
+			if (!had && !add) keySel.clear();
+			if (add && had) names.forEach((n) => keySel.delete(n)); else names.forEach((n) => keySel.add(n));
+			const marks = () => [...grid.querySelectorAll(".kd[data-b]")].filter((m) => keySel.has(keyName(m.dataset.b, +m.dataset.f)));
+			grid.querySelectorAll(".kd[data-b]").forEach((m) => m.classList.toggle("sel", keySel.has(keyName(m.dataset.b, +m.dataset.f))));
+			kd.classList.add("sel");
+			const moving = marks();
+			let df = 0;
+			follow((ev) => {
+				df = Math.round((ev.clientX - e.clientX) / FRAME_W);
+				for (const m of moving) m.style.transform = `translateX(${df * FRAME_W}px) rotate(45deg)`;
+			}, (ev) => {
+				if (!df) { if (!add) { A().frame = f; } if (boneSel) render(); else timeline(); api().redrawSoon(); drawPreview(); showFrameArt(); return; }
+				edit(() => {
+					const out = Rig.moveKeys(c, picked(), df, ev.altKey || e.altKey);
+					keySel.clear();
+					for (const p of out) keySel.add(keyName(p.id, p.f));
+				});
+			});
+			return;
+		}
+		// An empty place on a row: a click goes to that frame (and selects the row's bone); a drag draws a box round keys.
+		const box = document.createElement("div"), g0 = grid.getBoundingClientRect(), x0 = e.clientX - g0.left + grid.scrollLeft, y0 = e.clientY - g0.top + grid.scrollTop;
+		box.className = "tlbox";
+		let boxed = false;
+		follow((ev) => {
+			const x1 = ev.clientX - g0.left + grid.scrollLeft, y1 = ev.clientY - g0.top + grid.scrollTop;
+			if (!boxed && Math.hypot(x1 - x0, y1 - y0) < 4) return;
+			if (!boxed) { boxed = true; grid.append(box); }
+			box.style.cssText = `left:${Math.min(x0, x1)}px;top:${Math.min(y0, y1)}px;width:${Math.abs(x1 - x0)}px;height:${Math.abs(y1 - y0)}px`;
+			const b = box.getBoundingClientRect();
+			keySel.clear();
+			for (const m of grid.querySelectorAll(".kd[data-b]")) {
+				const r = m.getBoundingClientRect(), hit = r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom;
+				m.classList.toggle("sel", hit);
+				if (hit) keySel.add(keyName(m.dataset.b, +m.dataset.f));
+			}
+		}, () => {
+			if (boxed) { box.remove(); timeline(); return; }
+			keySel.clear();
+			if (row && row.dataset.bone && !(e.shiftKey || e.ctrlKey || e.metaKey)) { selectBone(row.dataset.bone); S().selected.clear(); }
+			a.frame = frameAt(e.clientX);
+			api().redrawSoon(); drawPreview(); showFrameArt();
+			if (boneSel) render(); else timeline();
+		});
+	}
+	// Keep the current frame in sight in a long clip.
 	function followFrame() {
-		const box = document.querySelector("#timeline .frames"), b = box && box.querySelector(".fr.on");
-		if (!b) return;
-		const r = b.getBoundingClientRect(), br = box.getBoundingClientRect();
-		if (r.left < br.left) box.scrollLeft -= br.left - r.left + 4;
+		const box = document.querySelector("#timeline .tlgrid"), head = $("tl_head");
+		if (!box || !head) return;
+		const r = head.getBoundingClientRect(), br = box.getBoundingClientRect(), names = box.querySelector(".tlname");
+		const left = br.left + (names ? names.offsetWidth : 0);
+		if (r.left < left) box.scrollLeft -= left - r.left + 4;
 		else if (r.right > br.right) box.scrollLeft += r.right - br.right + 4;
 	}
 	function togglePlay() {
-		if (playing) { clearInterval(playing); playing = 0; timeline(); if (boneSel) render(); return; } // the Pose fields catch up with the frame
-		// The frame follows the clock, so a slow redraw skips a frame rather than slowing the clip down.
-		const t0 = performance.now(), f0 = A().frame;
+		if (playing) { clearInterval(playing); playing = 0; draw(); timeline(); if (boneSel) render(); return; } // the Pose fields catch up with the frame
+		const c0 = clip();
+		if (!c0) return;
+		// A "once" clip played from its last frame starts over. The frame follows the clock, so a slow redraw skips a frame rather than slowing the clip down.
+		const t0 = performance.now(), f0 = c0.loop === "once" && A().frame >= c0.frames - 1 ? 0 : A().frame;
 		playing = setInterval(() => {
 			const c = clip();
 			if (!c) return;
-			const f = (f0 + Math.floor(((performance.now() - t0) / 1000) * c.fps)) % c.frames;
-			if (f === A().frame) return;
-			A().frame = f;
-			api().redrawSoon(); drawPreview(); showFrameArt();
-			document.querySelectorAll("#timeline .fr").forEach((b, i) => b.classList.toggle("on", i === A().frame));
-			const pos = document.querySelector("#timeline .tlpos");
-			if (pos) pos.textContent = `${A().frame + 1} / ${c.frames}`;
-			followFrame();
+			const { f, done } = Rig.playFrame(c, f0, Math.floor(((performance.now() - t0) / 1000) * c.fps));
+			if (f !== A().frame) {
+				A().frame = f;
+				api().redrawSoon(); drawPreview(); showFrameArt(); movePlayhead();
+			}
+			if (done) togglePlay();
 		}, 500 / (clip().fps || 8));
 		timeline();
 	}
@@ -695,6 +884,28 @@
 			tx.textContent = b.name + (turn ? "  " + turn : "");
 		}
 	}
+	// Onion skin: the models on the frames before (red) and after (green) as thin wires, while stopped. The clip wraps round unless it plays once.
+	const ONION_FACES = 4000;
+	function drawOnion(add, a, r) {
+		const c = clip();
+		if (!showOnion || playing || restMode || paintMode || !c || c.frames < 2 || !a.bones.length) return;
+		const objs = S().objects.filter((o) => !o.hidden && a.bind[o.id]);
+		if (objs.reduce((n, o) => n + o.faces.length, 0) > ONION_FACES) return;
+		const once = c.loop === "once";
+		for (const [df, col] of [[-1, "#ff6b6b"], [1, "#5bd16b"]]) {
+			const f = a.frame + df;
+			if (once && (f < 0 || f >= c.frames)) continue;
+			let d = "";
+			for (const o of Rig.posedObjects(objs, a, c, (f + c.frames) % c.frames)) {
+				const sp = o.verts.map((p) => r.toScreen(p));
+				for (const face of o.faces) {
+					const pts = face.v.map((i) => sp[i]);
+					if (pts.every(Boolean)) d += "M" + pts.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join("L") + "Z";
+				}
+			}
+			if (d) add("path", { d, fill: "none", stroke: col, "stroke-width": 1, "stroke-opacity": 0.5, "pointer-events": "none" });
+		}
+	}
 	function draw() {
 		const svg = $("bone_overlay");
 		if (!svg) return;
@@ -703,6 +914,7 @@
 		if (!on) return;
 		const a = A(), r = api().renderer, mats = Rig.matrices(a, restMode ? null : clip(), a.frame);
 		const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
+		drawOnion(add, a, r);
 		// Bodies and heads first, every tip after them, so where a parent's tip meets a connected child's head (a joint) the ball on top
 		// is the parent's tip: grabbing a joint turns the parent (pose) or moves the joint (rest), and the child follows.
 		const tips = [];
@@ -786,6 +998,7 @@
 			const P = TS.m4.apply(TS.m4.invert(M), W);
 			if (Math.hypot(P[0] - b.head[0], P[1] - b.head[1], P[2] - b.head[2]) < 0.5) return;
 			b.tail = lk === 1 ? [P[0], b.tail[1], P[2]] : P;
+			reconnect(a);
 			drag.moved = true;
 			api().redrawSoon(); scheduleSheet(); drawPreview();
 			return;
@@ -830,7 +1043,7 @@
 		for (const id of drag.ids || [b.id]) {
 			const bb = Rig.bone(a, id), Rp = bb.parent ? Rig.rotPart(mats.get(bb.parent)) : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 			const pose = Rig.localPose(c, bb.id, a.frame);
-			Rig.setKey(c, bb.id, a.frame, Rig.matToEuler(mul(transpose(Rp), mul(Rw, mul(Rp, Rig.eulerToMat(pose.rot))))), pose.pos);
+			Rig.setKey(c, bb.id, a.frame, Rig.nearEuler(mul(transpose(Rp), mul(Rw, mul(Rp, Rig.eulerToMat(pose.rot)))), pose.rot), pose.pos);
 		}
 		drag.moved = true;
 		api().redrawSoon(); scheduleSheet(); drawPreview();
@@ -921,6 +1134,10 @@
 		}
 		if (drag) return;
 		const mod = e.ctrlKey || e.metaKey;
+		if (keySel.size && !e.altKey && !e.shiftKey && !mod && (k === "delete" || k === "x")) { deleteKeys(); stop(); return; }
+		if (keySel.size && k === "escape") { keySel.clear(); timeline(); stop(); return; }
+		if (mod && !e.altKey && !e.shiftKey && k === "c" && keySel.size) { copyKeys(); stop(); return; }
+		if (mod && !e.altKey && !e.shiftKey && k === "v" && keyClip) { pasteKeys(); stop(); return; }
 		if (parentPick && k === "escape") { parentPick = false; api().status("Parenting cancelled."); stop(); return; }
 		if (mod && !e.altKey && k === "p") {
 			if (!boneSel) { api().toast("Select the child bone first, then Ctrl+P and click its parent.", "bad"); stop(); return; }
@@ -1025,8 +1242,8 @@
 			if (playing) { clearInterval(playing); playing = 0; }
 			if (stroke) stroke = null;
 			pass++; clearTimeout(renderTimer); clearTimeout(TS.AnimUI._t);
-			boneSel = null; multi.clear(); restMode = paintMode = parentPick = false;
-			sheet = null; pending = 0; albedo = null; albedoURL = null;
+			boneSel = null; multi.clear(); keySel.clear(); keyClip = null; restMode = paintMode = parentPick = false;
+			sheet = null; pending = 0; albedo = null; albedoURL = null; artShown = null; rigBase = ""; normalFrames.clear(); litFrames.clear();
 			loadAlbedoURL();
 			if (on) { ensureClip(); scheduleSheet(); render(); timeline(); }
 			showFrameArt(); draw();
@@ -1041,6 +1258,7 @@
 
 	window.addEventListener("DOMContentLoaded", () => {
 		$("b_animate").onclick = () => setMode(!on);
+		$("an_body").addEventListener("keydown", (e) => { if (e.key === "Tab" && e.target.id) { tabFrom = { id: e.target.id, back: e.shiftKey }; setTimeout(() => { tabFrom = null; }, 0); } }, true);
 		$("bone_overlay").addEventListener("pointerdown", (e) => {
 			const id = e.target.dataset && e.target.dataset.bone;
 			if (!id) return;
