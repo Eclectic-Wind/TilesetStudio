@@ -20,7 +20,7 @@ Make your models move. You don't need Aseprite or any setup to start. Press **L*
 
 ## Getting the frames into your game
 
-Studio moves the shape, but the colours of each frame are painted by you. Either use the live [Aseprite link](aseprite-link.md), or press *Download normal sheet*, paint over it in any program and press *Load albedo sheet…* with a picture of the same size. Then, in the panel's *Game export*, select the models and press *Use selected models*, and export with *Export ▾ → Godot bundle*.
+Studio moves the shape, but the colours of each frame are painted by you. Either use the live [Aseprite link](aseprite-link.md), or press *Download normal sheet*, paint over it in any program and press *Load albedo sheet…* with a picture of the same size. Then, in the panel's *Clip* section, select the models and press *Use selected models*, and export with *Export ▾ → Godot bundle*. The *Export ▾* menu lists every animated clip with an *Export* tick, what it sends to the game and any warnings.
 
 ## Reference
 

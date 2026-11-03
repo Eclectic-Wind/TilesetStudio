@@ -741,7 +741,7 @@
 			{ t: 0, say: "Studio draws the shading of every frame.", sub: "That picture is the normal map: it tells the game's light which way each pixel faces. All frames share one big picture, the sheet." },
 			{ t: 6, say: "Keep tile sizes at a power of two.", sub: "16, 32, 64, 128 and so on. Then the sheet always fits: 8 frames of 128 × 128 make a 512 × 256 sheet." },
 			{ t: 11, say: "Studio moves the shape. The colours are painted by you.", sub: "The game shows painted frames (the Albedo). Paint them with the Aseprite link, or use Download normal sheet and Load albedo sheet." },
-			{ t: 17.5, say: "Then choose what the clip animates, and export.", sub: "In the panel's Game export: select the models and press Use selected models. Then Export ▾ → Godot bundle." },
+			{ t: 17.5, say: "Then choose what the clip animates, and export.", sub: "In the panel's Clip section: select the models and press Use selected models. Then Export ▾ → Godot bundle." },
 		],
 		extra: `<p class="kindnote"><b>No Aseprite?</b> Any paint program works: press <b>Download normal sheet</b>, paint the frames over it in your program, then press <b>Load albedo sheet…</b> with a picture of the same size. The Aseprite link only does this live.</p>
 		<div class="row"><button id="l_section_as" class="primary">Set up the Aseprite link →</button></div>`,

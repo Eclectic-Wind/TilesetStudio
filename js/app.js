@@ -532,7 +532,7 @@
 		if (which !== "bundle") return;
 		const text = await bundleJSON();
 		download(`${name}.export.json`, text);
-		const an = lastAnimReport, anNote = an ? ` · ${an.clips.length} animated clip${an.clips.length === 1 ? "" : "s"}${an.warnings.length ? `, ${an.warnings.length} animation warning${an.warnings.length === 1 ? "" : "s"} (Animate panel)` : ""}` : "";
+		const an = lastAnimReport, anNote = an ? ` · ${an.clips.length} animated clip${an.clips.length === 1 ? "" : "s"}${an.warnings.length ? `, ${an.warnings.length} animation warning${an.warnings.length === 1 ? "" : "s"} (Export ▾ lists them)` : ""}` : "";
 		toast(`Exported ${name}.export.json${st().unfilled ? ` (${st().unfilled} art px still uncovered)` : ""}${anNote}`, st().unfilled || (an && an.warnings.length) ? "" : "ok");
 		status(`Exported ${name}.export.json (${Math.round(text.length / 1024)} KB): put it anywhere under the Godot project; the Studio Import plugin builds ${name}_tileset.tres${st().unfilled ? ` — ${st().unfilled} art px still uncovered (holes view)` : ""}`);
 	}

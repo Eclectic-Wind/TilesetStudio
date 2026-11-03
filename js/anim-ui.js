@@ -91,9 +91,29 @@
 	const remember = (map, key, value, room) => { map.set(key, value); while (map.size > Math.max(8, room)) map.delete(map.keys().next().value); };
 	function checkRigBase(c) {
 		const a = A(), base = JSON.stringify([S().objects, a.bones, a.bind, a.rigid, a.skin, a.paint, S().settings, c.w, c.h]);
-		if (base !== rigBase) { rigBase = base; normalFrames.clear(); litFrames.clear(); }
+		if (base !== rigBase) { rigBase = base; normalFrames.clear(); litFrames.clear(); colourFrames.clear(); }
 	}
-	const pushSheet = (img, lay, cl) => Link.push(img, lay, { anim: true, fps: cl.fps, clip: cl.id, clipName: cl.name.replace(/["\\]/g, "") });
+	// Aseprite is sent the asset's base colour, not the normals: the tileset's art carried along with the posed models, frame by frame
+	// (pixels the normals cover but the art has nothing for are plain grey). Kept by pose like the normals.
+	const colourFrames = new Map();
+	let colourArt = null;
+	function colourSheet(img, lay, cl) {
+		const art = S().art, out = new ImageData(img.width, img.height), d = img.data, a = A();
+		checkRigBase({ w: lay.cw, h: lay.ch });
+		if (colourArt !== art) { colourFrames.clear(); colourArt = art; }
+		for (let f = 0; f < lay.frames; f++) {
+			const sig = Rig.frameSig(a, cl, f), [ox, oy] = Rig.cellOrigin(lay, f);
+			let col = colourFrames.get(sig);
+			if (!col) { col = Rig.frameColours(S().objects, a, cl, f, lay.cw, lay.ch, S().settings, art); remember(colourFrames, sig, col, NORMAL_BYTES / (lay.cw * lay.ch * 4)); }
+			for (let y = 0; y < lay.ch; y++) for (let x = 0; x < lay.cw; x++) {
+				const si = ((oy + y) * lay.w + ox + x) * 4, ci = (y * lay.cw + x) * 4;
+				if (!d[si + 3]) continue;
+				out.data.set(col.data[ci + 3] ? col.data.subarray(ci, ci + 4) : [150, 150, 150, 255], si);
+			}
+		}
+		return out;
+	}
+	const pushSheet = (img, lay, cl) => Link.push(colourSheet(img, lay, cl), lay, { anim: true, fps: cl.fps, clip: cl.id, clipName: cl.name.replace(/["\\]/g, "") });
 	// The big Lit / Normals view shows the clip's frame while animating and the rest pose otherwise: redraw it when that changes.
 	function refreshOutput() { const o = api().output; if (o && o.result) o.render(); }
 	// Frames render a few at a time so a long clip never freezes the page: the frame on screen first, then the rest in short slices
@@ -249,20 +269,43 @@
 		renderSheet(); // Aseprite is waiting for the new sheet
 		Link.onStatus("ok", `Aseprite's timeline now has ${c.frames} frame${c.frames === 1 ? "" : "s"}; the clip followed.`);
 	};
-	// The Game export section's lines: what this clip exports, or why not (the same checks as the bundle, without building the sheets).
-	function exportNote(c) {
+	// The names of the models a clip animates (escaped).
+	const clipModels = (c) => { const ids = c.models || []; return S().objects.filter((o) => ids.includes(o.id)).map((o) => esc(o.name)); };
+	// A clip's lines in the Export menu: what it exports, or why not (the same checks as the bundle, without building the sheets).
+	// sheetImg: the clip's decoded Albedo sheet, or null.
+	function exportNote(c, sheetImg) {
 		try {
 			const r = S().result;
 			if (c.export === false) return '<p class="dim">Not exported.</p>';
-			const ids = c.models || [];
-			const names = S().objects.filter((o) => ids.includes(o.id)).map((o) => esc(o.name));
-			const head = names.length ? `<p class="dim">Flipbook of ${names.join(", ")}.</p>` : '<p class="dim">No models chosen: this clip is not exported.</p>';
+			const names = clipModels(c);
+			const head = names.length ? `<p class="dim">Flipbook of ${names.join(", ")}.</p>` : '<p class="dim">No models chosen (Animate ▸ Clip ▸ Use selected models), so it is not exported.</p>';
 			if (!names.length || !r || !r.pieceMap) return head;
-			const out = TS.Bundle.anim({ anim: { clips: [c] }, objects: S().objects, settings: S().settings, result: r, art: S().art, albedoOf: (cl) => (cl === c ? albedo : null), dry: true });
+			const out = TS.Bundle.anim({ anim: Object.assign({}, A(), { clips: [c] }), objects: S().objects, settings: S().settings, result: r, art: S().art, albedoOf: (cl) => (cl === c ? sheetImg : null), dry: true });
 			if (!out) return head;
 			const ok = out.clips.length ? `<p class="dim">Exports ${out.clips[0].targets.map((t) => `${t.rect[2]}x${t.rect[3]} px`).join(" + ")} per frame. ${out.clips[0].targets.some((t) => t.moves) ? "Height and normals follow the bones, frame by frame." : "Height and normals stay the base frame's (no bone moves these models)."}</p>` : "";
 			return head + ok + out.warnings.map((w) => `<p class="warnline">⚠ ${esc(w)}</p>`).join("");
 		} catch (e) { return ""; }
+	}
+	// The Export menu's "Animated clips" part: every clip with models or keys, with its Export tick and what it sends to the game.
+	// Filled each time the menu opens, so it shows the clips as they are now.
+	let menuPass = 0;
+	async function exportMenu(el) {
+		const clips = (A().clips || []).filter((c) => (c.models || []).length || Object.values(c.tracks || {}).some((ks) => ks.length));
+		const my = ++menuPass;
+		if (!clips.length) { el.hidden = true; el.innerHTML = ""; return; }
+		const sheets = await albedoImages();
+		if (my !== menuPass) return; // the menu was opened again meanwhile
+		const active = clip();
+		if (albedo && active) sheets.set(active.id, albedo);
+		el.hidden = false;
+		el.innerHTML = `<hr><p class="menuhead">Animated clips</p>` + clips.map((c) => `<div class="expclip">
+			<label class="chk" title="Put this clip in the Godot bundle (bundle version 6, anim). Only a clip with models chosen is exported."><input type="checkbox" data-clip="${c.id}"${c.export === false ? "" : " checked"}> ${esc(c.name)} <span class="dim">· ${c.frames} frame${c.frames === 1 ? "" : "s"}, ${c.fps | 0 || 8} fps</span></label>
+			${exportNote(c, sheets.get(c.id) || null)}</div>`).join("");
+		for (const box of el.querySelectorAll("input[data-clip]")) box.onchange = () => {
+			const c = A().clips.find((x) => x.id === box.dataset.clip);
+			if (c) edit(() => { if (box.checked) delete c.export; else c.export = false; });
+			exportMenu(el);
+		};
 	}
 	// Every exported clip's Albedo sheet, decoded: Map clip id -> ImageData (the clip's own, else the sheet on screen for the active clip).
 	async function albedoImages() {
@@ -364,11 +407,9 @@
 			<div class="arow"><label>Name <input id="an_clipname" type="text" value="${esc(c.name)}"></label></div>
 			<div class="arow"><label title="Frames in this clip. Each is one cell of the spritesheet.">Frames <input id="an_frames" type="number" min="1" max="64" value="${c.frames}"></label>
 			<label title="Playback speed in the preview">FPS <input id="an_fps" type="number" min="1" max="60" value="${c.fps}"></label></div>
-			<div class="arow"><label title="What happens at the last frame, in the preview and in the game: loop, play once and hold, or ping-pong back and forth">Loop <select id="an_loop">${[["loop", "loop"], ["once", "once"], ["pingpong", "ping-pong"]].map(([v, t]) => `<option value="${v}"${(c.loop || "loop") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>`;
-		const note = exportNote(c), warned = (note.match(/warnline/g) || []).length;
-		const gameExport = `<div class="arow"><label class="chk" title="Put this clip in the Godot bundle (bundle version 6, anim). Only a clip with models chosen below is exported."><input id="an_exp" type="checkbox"${c.export === false ? "" : " checked"}> Export</label></div>
+			<div class="arow"><label title="What happens at the last frame, in the preview and in the game: loop, play once and hold, or ping-pong back and forth">Loop <select id="an_loop">${[["loop", "loop"], ["once", "once"], ["pingpong", "ping-pong"]].map(([v, t]) => `<option value="${v}"${(c.loop || "loop") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
 			<div class="arow"><button id="an_models" title="The models this flipbook animates: select them in the view, then press this. The pieces they belong to are swapped for the frames while the clip plays; the frames are the Albedo painted in Aseprite. Shadow and collision stay the base frame's; height and normals follow the bones when bones move the models.">Use selected models</button><button id="an_modelsclear"${(c.models || []).length ? "" : " disabled"}>Clear</button></div>
-			${note}`;
+			<p class="dim">${clipModels(c).length ? `Flipbook of ${clipModels(c).join(", ")}.` : "No models chosen: the game gets no frames from this clip."} Export ▾ shows what goes into the game.</p>`;
 		h = section("clip", "Clip", h);
 		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
 			${(() => { const away = S().objects.filter((o) => a.bind[o.id] && Rig.awayFromBones(a, o)).map((o) => esc(o.name)); return away.length ? `<p class="warnline" title="The bones keep the pose they were rigged in. Use Edit rest pose to move the bones back to the model, or Bind selected models to a bone beside it.">⚠ ${away.join(", ")} ${away.length > 1 ? "sit" : "sits"} away from ${away.length > 1 ? "their" : "its"} bones (edited after rigging?), so nothing bends. Edit rest pose to realign the bones.</p>` : ""; })()}
@@ -400,7 +441,6 @@
 			<div class="arow"><button id="an_link" title="Link to Aseprite online or through a shared folder, and see each step of the link">${Link.linked() ? "Link status…" : "Link Aseprite…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
 			<p class="linkline"><span id="an_linkdot" class="dot ${linkState[0]}"></span><span id="an_linkstate" class="linkstate ${linkState[0]}">${esc(linkState[1])}</span></p>
 			<div class="arow"><button id="an_dl" title="Download the normal-map sheet as a PNG to put in Aseprite">Download normal sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`);
-		h += section("export", `Game export${warned ? ` <span class="warn">⚠ ${warned}</span>` : ""}`, gameExport);
 		// The panel is rebuilt on every edit: keep its scroll, and let Tab reach the next field though the one it left is gone.
 		const scroller = body.closest(".sec")?.parentElement, top = scroller ? scroller.scrollTop : 0;
 		body.innerHTML = h;
@@ -417,7 +457,7 @@
 		}
 	}
 	// Sections of the panel fold, and stay as they were left.
-	const secClosed = new Set((TS.store.get("tsAnClosed") || "weights,export").split(",").filter(Boolean));
+	const secClosed = new Set((TS.store.get("tsAnClosed") || "weights").split(",").filter(Boolean));
 	let tabFrom = null;
 	const section = (id, title, html) => `<details class="ansec" data-sec="${id}"${secClosed.has(id) ? "" : " open"}><summary>${title}</summary>${html}</details>`;
 
@@ -530,7 +570,6 @@
 		q("an_clipdel").onclick = () => edit(() => { a.clips = a.clips.filter((x) => x !== c); a.clip = a.clips[0].id; a.frame = 0; });
 		q("an_clipname").onchange = () => edit(() => { c.name = q("an_clipname").value.trim() || c.name; });
 		q("an_frames").onchange = () => edit(() => { c.frames = TS.clamp(parseInt(q("an_frames").value, 10) || c.frames, 1, 64); a.frame = Math.min(a.frame, c.frames - 1); });
-		q("an_exp").onchange = () => edit(() => { if (q("an_exp").checked) delete c.export; else c.export = false; });
 		q("an_loop").onchange = () => edit(() => { if (q("an_loop").value === "loop") delete c.loop; else c.loop = q("an_loop").value; });
 		q("an_models").onclick = () => { const ids = [...S().selected]; if (!ids.length) return api().toast("Select the models this clip animates first.", "bad"); edit(() => { c.models = ids; }); };
 		q("an_modelsclear").onclick = () => edit(() => { delete c.models; });
@@ -1267,6 +1306,7 @@
 
 	window.addEventListener("DOMContentLoaded", () => {
 		$("b_animate").onclick = () => setMode(!on);
+		document.querySelector(".menuwrap.export > button").addEventListener("click", () => exportMenu($("exp_anim")));
 		$("an_body").addEventListener("keydown", (e) => { if (e.key === "Tab" && e.target.id) { tabFrom = { id: e.target.id, back: e.shiftKey }; setTimeout(() => { tabFrom = null; }, 0); } }, true);
 		$("bone_overlay").addEventListener("pointerdown", (e) => {
 			const id = e.target.dataset && e.target.dataset.bone;

@@ -428,6 +428,40 @@
 		return TS.Process.images(r, st).normal;
 	};
 
+	// The tileset's art carried along with the posed models: each pixel of the frame takes the colour of the rest-pose pixel its surface
+	// point came from (the nearest surface wins). Transparent where no model covers; art = {w, h, data} (RGBA).
+	R.frameColours = (objects, anim, clip, frame, w, h, settings, art) => {
+		const posed = R.posedObjects(objects, anim, clip, frame), proj = TS.Proj.of(settings, { w, h });
+		const out = new ImageData(w, h), depth = new Float32Array(w * h).fill(-Infinity), Mesh = TS.Mesh;
+		posed.forEach((obj, oi) => {
+			const rest = objects[oi];
+			obj.faces.forEach((f) => {
+				for (const ids of Mesh.faceTriangles(obj, f)) {
+					const p = ids.map((k) => obj.verts[f.v[k]]), q = ids.map((k) => rest.verts[f.v[k]]);
+					const s = p.map((v) => proj.toCanvas(v)), r = q.map((v) => proj.toCanvas(v)), d = p.map((v) => proj.depth(v));
+					const area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[1][1] - s[0][1]) * (s[2][0] - s[0][0]);
+					if (area < 1e-9) continue; // edge-on or facing away
+					const x0 = Math.max(0, Math.floor(Math.min(s[0][0], s[1][0], s[2][0]))), x1 = Math.min(w - 1, Math.ceil(Math.max(s[0][0], s[1][0], s[2][0])));
+					const y0 = Math.max(0, Math.floor(Math.min(s[0][1], s[1][1], s[2][1]))), y1 = Math.min(h - 1, Math.ceil(Math.max(s[0][1], s[1][1], s[2][1])));
+					for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+						const px = x + 0.5, py = y + 0.5;
+						const w0 = ((s[1][0] - px) * (s[2][1] - py) - (s[1][1] - py) * (s[2][0] - px)) / area;
+						const w1 = ((s[2][0] - px) * (s[0][1] - py) - (s[2][1] - py) * (s[0][0] - px)) / area, w2 = 1 - w0 - w1;
+						if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+						const dz = w0 * d[0] + w1 * d[1] + w2 * d[2], i = y * w + x;
+						if (dz <= depth[i]) continue;
+						const ax = Math.floor(w0 * r[0][0] + w1 * r[1][0] + w2 * r[2][0]), ay = Math.floor(w0 * r[0][1] + w1 * r[1][1] + w2 * r[2][1]);
+						const ok = ax >= 0 && ay >= 0 && ax < art.w && ay < art.h && art.data[(ay * art.w + ax) * 4 + 3];
+						depth[i] = dz;
+						if (ok) out.data.set(art.data.subarray((ay * art.w + ax) * 4, (ay * art.w + ax) * 4 + 4), i * 4);
+						else out.data.fill(0, i * 4, i * 4 + 4);
+					}
+				}
+			});
+		});
+		return out;
+	};
+
 	// All frames of a clip as one ImageData sheet.
 	R.normalSheet = (objects, anim, clip, cw, ch, settings) => {
 		const lay = R.layout(cw, ch, clip.frames), sheet = new ImageData(lay.w, lay.h);

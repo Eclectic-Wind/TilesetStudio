@@ -37,7 +37,7 @@ anim: {
 
 1. Model and paint the base frame as usual; the animated thing should be its own piece (its models joined by footprint, or one `piece` name).
 2. Animate mode: pick or add a clip, set the frame count and fps. Paint each frame in Aseprite's **Albedo** group (the link sends the sheet), or load an Albedo sheet.
-3. In the clip's **Game export** section: select the models the flipbook animates, press **Use selected models**; set **Loop**. The section lists what is exported and any warnings; **Export** unticks a clip that should not go into the bundle.
+3. In the clip's **Clip** section: select the models the flipbook animates, press **Use selected models**; set **Loop**. The **Export ▾** menu lists each animated clip with what is exported and any warnings; its **Export** tick leaves out a clip that should not go into the bundle.
 4. Export ▸ Godot bundle. `node tools/export_project.js in.studio.json out.export.json` does the same headless and prints the targets and their sizes (each clip's `albedo` sheet is a data URL in the project).
 
 The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.json` and `samples/AnimSample.export.json` (a TV box with an 8-frame static clip, a flat puddle with a 6-frame ripple, painted headless).

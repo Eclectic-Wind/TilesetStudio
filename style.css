@@ -80,7 +80,14 @@ body.noart #b_process, body.noart .export > button, body.noart #b_save { opacity
 .menu .exportname[hidden] { display: none; }
 .menu .exportname input, .menu .exportname select { flex: 1; min-width: 0; }
 .menu .primary-item { font-weight: 600; color: var(--accent); }
-.export .menu { left: auto; right: 0; min-width: 260px; }
+.export .menu { left: auto; right: 0; min-width: 260px; max-height: 80vh; overflow: auto; }
+.menu .menuhead { margin: 2px 10px 4px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.expanim { max-width: 340px; }
+.expanim .expclip { padding: 4px 10px; }
+.expanim .expclip + .expclip { border-top: 1px solid var(--line); }
+.expanim label.chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.expanim p { margin: 3px 0 0 22px; font-size: 12px; line-height: 1.4; }
+.expanim .warnline { padding: 4px 6px; border: 1px solid var(--bad); border-radius: var(--r-s); color: var(--bad); }
 .aseprite-menu { min-width: 260px; max-width: 340px; }
 .aseprite-menu .aschk { display: flex; align-items: flex-start; gap: 6px; padding: 4px 8px; }
 .aseprite-menu [hidden] { display: none; }
