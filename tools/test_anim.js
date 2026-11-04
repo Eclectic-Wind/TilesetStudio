@@ -177,6 +177,128 @@ test("the dry run (the panel's note) says it moves and builds nothing", () => {
 	assert.strictEqual(out.clips[0].targets[0].data, undefined);
 });
 
+
+console.log("Per-frame floor spans");
+// A scene of models bound to one bone, a clip over all of them, and the sheet's painted area (default: everything).
+function floorScene({ objects, tracks, frames = 4, head = [36, 48, 0], paint = null, size = [96, 96] }) {
+	const [W, H] = size, settings = P.defaultSettings();
+	const anim = { bones: [{ id: "b1", name: "door", parent: null, head, tail: [head[0], head[1], head[2] + 16] }], bind: Object.fromEntries(objects.map((o) => [o.id, "b1"])), clips: [], clip: "c1", frame: 0 };
+	const clip = { id: "c1", name: "Open", fps: 8, frames, tracks, models: objects.map((o) => o.id) };
+	anim.clips.push(clip);
+	const alpha = new Uint8Array(W * H).fill(255), art = { w: W, h: H, data: new Uint8ClampedArray(W * H * 4).fill(255), alpha };
+	const result = P.run(objects, art, settings);
+	result.pieceMap = P.pieces(objects, result, settings);
+	const lay = R.layout(W, H, frames), sheet = { width: lay.w, height: lay.h, data: new Uint8ClampedArray(lay.w * lay.h * 4) };
+	for (let f = 0; f < frames; f++) {
+		const [ox, oy] = R.cellOrigin(lay, f);
+		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (!paint || paint(x, y)) sheet.data.set([200, 200, 200, 255], ((oy + y) * lay.w + ox + x) * 4);
+	}
+	const maps = P.maps(result, settings);
+	const made = TS.Bundle.anim({ anim, objects, settings, result, art, materials: maps.materials, albedoOf: () => sheet, encodePNG: () => "png" });
+	const t = made && made.clips[0] ? made.clips[0].targets[0] : null;
+	// The frame's floor point (absolute floor x, y) as [R, G, B, A].
+	const floorAt = (f, x, y) => {
+		const [rx, ry, rw] = t.rect, bytes = decode(t.floor), fx = (f % t.cols) * rw, fy = Math.floor(f / t.cols) * t.floorH, j = y - (ry + t.floorDy), i = x - rx;
+		if (i < 0 || i >= rw || j < 0 || j >= t.floorH) return [0, 0, 0, 0];
+		const o = ((fy + j) * t.cols * rw + fx + i) * 4;
+		return Array.from(bytes.subarray(o, o + 4));
+	};
+	return { made, clip: made && made.clips[0], t, anim, objects, settings, W, H, floorAt, art };
+}
+// The frame's posed models processed on their own, as the static floor rows would be exported.
+const posedMaps = (s, f) => {
+	const objs = R.posedObjects(s.objects, s.anim, s.anim.clips[0], f), r = P.run(objs, s.art, s.settings);
+	r.pieceMap = P.pieces(objs, r, s.settings);
+	return { r, maps: P.maps(r, s.settings) };
+};
+const swing = (deg) => ({ b1: [{ f: 0, rot: [0, 0, 0], pos: [0, 0, 0] }, { f: 3, rot: [0, 0, deg], pos: [0, 0, 0] }] });
+const named = (box, name) => { box.name = name; return box; };
+
+test("a moving piece carries each frame's floor spans in the static floor-row form, and its clip says shadow: frames", () => {
+	const lift = 20, s = floorScene({ objects: [named(M.box([24, 40, 0], 24, 16, 16), "Door")], tracks: { b1: [{ f: 0, rot: [0, 0, 0], pos: [0, 0, 0] }, { f: 3, rot: [0, 0, 0], pos: [0, 0, lift] }] } });
+	assert.strictEqual(s.clip.shadow, "frames");
+	assert.strictEqual(s.clip.collision, "frames", "a moving piece that blocks carries its collision per frame");
+	assert(Number.isInteger(s.t.floorDy) && s.t.floorH > 0, "floorDy / floorH");
+	assert.strictEqual(decode(s.t.floor).length, s.t.cols * s.t.rect[2] * s.t.rows * s.t.floorH * 4);
+	// x 12..35, y 32..47, 0..16 high: top 16 -> R 17, underside 0. Lifted 20: top 36 -> R 37, underside 20.
+	assert.deepStrictEqual(s.floorAt(0, 20, 40), [17, 0, 0, 0]);
+	assert.deepStrictEqual(s.floorAt(3, 20, 40), [37, 20, 0, 0]);
+	assert.deepStrictEqual(s.floorAt(3, 40, 40), [0, 0, 0, 0], "nothing east of the box");
+});
+test("every frame's floor block is byte for byte what the static floor rows say of the posed piece", () => {
+	const s = floorScene({ objects: [named(M.box([36, 56, 0], 4, 28, 40), "Door")], head: [36, 42, 0], tracks: swing(75) });
+	let compared = 0;
+	for (let f = 0; f < 4; f++) {
+		const { maps } = posedMaps(s, f);
+		for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) {
+			const o = (96 * 96 + y * 96 + x) * 4, want = y < maps.rows ? Array.from(maps.data.subarray(o, o + 4)) : [0, 0, 0, 0];
+			assert.deepStrictEqual(s.floorAt(f, x, y), want, `frame ${f} floor point ${x},${y}`);
+			if (want[0]) compared++;
+		}
+	}
+	assert(compared > 100, "too few floor points compared: " + compared);
+});
+test("a gap between a piece's parts (shelves, a grille) is in the frame's spans, and moves with it", () => {
+	const s = floorScene({ objects: [named(M.box([36, 48, 0], 24, 16, 8), "Shelf low"), named(M.box([36, 48, 20], 24, 16, 8), "Shelf top")], tracks: { b1: [{ f: 0, rot: [0, 0, 0], pos: [0, 0, 0] }, { f: 3, rot: [0, 0, 0], pos: [0, 0, 4] }] } });
+	assert.strictEqual(s.made.clips[0].targets.length, 1, "one piece");
+	assert.deepStrictEqual(s.floorAt(0, 36, 48), [29, 0, 9, 20], "top 28, under 0, gap 8..20");
+	assert.deepStrictEqual(s.floorAt(3, 36, 48), [33, 4, 13, 24], "lifted 4: top 32, under 4, gap 12..24");
+});
+test("a thin leaf swung side-on is a solid line on the floor in every frame, not dots", () => {
+	const s = floorScene({ objects: [named(M.box([36, 60, 0], 3, 36, 40), "Leaf")], head: [36, 42, 0], tracks: swing(90) });
+	for (let f = 0; f < 4; f++) {
+		const pts = [];
+		for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) if (s.floorAt(f, x, y)[0]) pts.push([x, y]);
+		assert(pts.length >= 100, `frame ${f}: ${pts.length} points`);
+		const key = new Set(pts.map((p) => p.join())), seen = new Set([pts[0].join()]), todo = [pts[0]];
+		while (todo.length) {
+			const [x, y] = todo.pop();
+			for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k = `${x + dx},${y + dy}`; if (key.has(k) && !seen.has(k)) { seen.add(k); todo.push([x + dx, y + dy]); } }
+		}
+		assert.strictEqual(seen.size, pts.length, `frame ${f}: the footprint is one connected piece`);
+	}
+	// Opened to 90 degrees the 36 px leaf lies along x from the hinge row.
+	let along = 0;
+	for (let x = 0; x < 96; x++) if (s.floorAt(3, x, 42)[0] || s.floorAt(3, x, 43)[0]) along++;
+	assert(along >= 30, "the open leaf runs " + along + " px along the floor");
+});
+test("the rect holds every floor column of every frame, even where nothing is painted", () => {
+	// A 40 px leaf closed along y at x 18..22; only the cells it stands in (x < 32) are painted, but opened it lies along x out to ~60.
+	const s = floorScene({ objects: [named(M.box([20, 60, 0], 4, 40, 30), "Leaf")], head: [20, 40, 0], tracks: swing(-90), paint: (x) => x < 32 });
+	const [rx, , rw] = s.t.rect;
+	for (let f = 0; f < 4; f++) {
+		const { r } = posedMaps(s, f);
+		for (let k = 0; k < r.floor.top.length; k++) if (r.floor.top[k] >= 0) { const x = k % 96; assert(x >= rx && x < rx + rw, `frame ${f}: floor column ${x} is outside the rect ${rx}..${rx + rw - 1}`); }
+	}
+	assert(rx + rw >= 64, "the rect grew past the painted columns to " + (rx + rw));
+});
+test("a repaint-only clip keeps the static shadow and writes no floor block; the dry run says it will", () => {
+	const { made } = scene({}, false);
+	assert.strictEqual(made.clips[0].shadow, "static");
+	assert.strictEqual(made.clips[0].targets[0].floor, undefined);
+	assert.strictEqual(made.clips[0].targets[0].floorH, undefined);
+	const s = scene({ b1: [{ f: 3, rot: [0, 0, 0], pos: [0, 0, 8] }] }, true);
+	const out = TS.Bundle.anim({ anim: s.anim, objects: s.objects, settings: s.settings, result: s.result, art: { w: s.W, h: s.H }, albedoOf: () => { const l = R.layout(s.W, s.H, 4); return { width: l.w, height: l.h, data: new Uint8ClampedArray(l.w * l.h * 4).fill(255) }; }, dry: true });
+	assert.strictEqual(out.clips[0].targets[0].floor, true);
+});
+test("a moving piece carries each frame's collision polygons, as the static collision of the posed piece", () => {
+	const s = floorScene({ objects: [named(M.box([36, 60, 0], 4, 36, 40), "Leaf")], head: [36, 42, 0], tracks: swing(90) });
+	assert.strictEqual(s.clip.collision, "frames");
+	assert.strictEqual(s.t.collision.length, 4, "one polygon list per frame");
+	const bbox = (polys) => { const pts = polys.flat(); return [Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1]))]; };
+	for (let f = 0; f < 4; f++) {
+		const { r } = posedMaps(s, f);
+		assert(s.t.collision[f].length > 0, `frame ${f} blocks`);
+		assert.strictEqual(JSON.stringify(s.t.collision[f]), JSON.stringify(r.collision.models.flatMap((m) => m.polygons)), `frame ${f} matches the posed piece collision`);
+	}
+	const closed = bbox(s.t.collision[0]), open = bbox(s.t.collision[3]);
+	assert(closed[3] - closed[2] > closed[1] - closed[0], "closed along y");
+	assert(open[1] - open[0] > open[3] - open[2], "open along x");
+});
+test("a repaint-only clip keeps the static collision", () => {
+	assert.strictEqual(scene({}, false).made.clips[0].collision, "static");
+	assert.strictEqual(scene({}, false).made.clips[0].targets[0].collision, undefined);
+});
 console.log("glTF");
 test("a skinned model comes back as one model with its weights", () => {
 	const box = M.box([0, 0, 0], 8, 8, 32);
