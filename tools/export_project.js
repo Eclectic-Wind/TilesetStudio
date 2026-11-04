@@ -123,6 +123,7 @@ if (bundle.anim) {
 		for (const t of c.targets) {
 			console.log(`    piece ${t.piece} (${fp.pieces[t.piece - 1].names.join(" + ")}) ${t.source} rect [${t.rect}] ${t.cols}x${t.rows} frames per sheet, color ${Math.round(t.color.length / 1024)} KB${t.data ? ", data " + Math.round(t.data.length / 1024) + " KB" : ", no data (base frame's height and normal)"}`);
 			if (t.floor) console.log(floorSummary(t, c.frames));
+			if (t.collision) console.log(`      collision polygons by frame: ${t.collision.map((p) => p.length).join(" ")}`);
 		}
 	}
 	for (const w of bundle.anim.warnings) console.log("  warning: " + w);

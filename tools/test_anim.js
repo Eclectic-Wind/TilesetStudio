@@ -217,7 +217,7 @@ const named = (box, name) => { box.name = name; return box; };
 test("a moving piece carries each frame's floor spans in the static floor-row form, and its clip says shadow: frames", () => {
 	const lift = 20, s = floorScene({ objects: [named(M.box([24, 40, 0], 24, 16, 16), "Door")], tracks: { b1: [{ f: 0, rot: [0, 0, 0], pos: [0, 0, 0] }, { f: 3, rot: [0, 0, 0], pos: [0, 0, lift] }] } });
 	assert.strictEqual(s.clip.shadow, "frames");
-	assert.strictEqual(s.clip.collision, "static");
+	assert.strictEqual(s.clip.collision, "frames", "a moving piece that blocks carries its collision per frame");
 	assert(Number.isInteger(s.t.floorDy) && s.t.floorH > 0, "floorDy / floorH");
 	assert.strictEqual(decode(s.t.floor).length, s.t.cols * s.t.rect[2] * s.t.rows * s.t.floorH * 4);
 	// x 12..35, y 32..47, 0..16 high: top 16 -> R 17, underside 0. Lifted 20: top 36 -> R 37, underside 20.
@@ -280,6 +280,24 @@ test("a repaint-only clip keeps the static shadow and writes no floor block; the
 	const s = scene({ b1: [{ f: 3, rot: [0, 0, 0], pos: [0, 0, 8] }] }, true);
 	const out = TS.Bundle.anim({ anim: s.anim, objects: s.objects, settings: s.settings, result: s.result, art: { w: s.W, h: s.H }, albedoOf: () => { const l = R.layout(s.W, s.H, 4); return { width: l.w, height: l.h, data: new Uint8ClampedArray(l.w * l.h * 4).fill(255) }; }, dry: true });
 	assert.strictEqual(out.clips[0].targets[0].floor, true);
+});
+test("a moving piece carries each frame's collision polygons, as the static collision of the posed piece", () => {
+	const s = floorScene({ objects: [named(M.box([36, 60, 0], 4, 36, 40), "Leaf")], head: [36, 42, 0], tracks: swing(90) });
+	assert.strictEqual(s.clip.collision, "frames");
+	assert.strictEqual(s.t.collision.length, 4, "one polygon list per frame");
+	const bbox = (polys) => { const pts = polys.flat(); return [Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1]))]; };
+	for (let f = 0; f < 4; f++) {
+		const { r } = posedMaps(s, f);
+		assert(s.t.collision[f].length > 0, `frame ${f} blocks`);
+		assert.strictEqual(JSON.stringify(s.t.collision[f]), JSON.stringify(r.collision.models.flatMap((m) => m.polygons)), `frame ${f} matches the posed piece collision`);
+	}
+	const closed = bbox(s.t.collision[0]), open = bbox(s.t.collision[3]);
+	assert(closed[3] - closed[2] > closed[1] - closed[0], "closed along y");
+	assert(open[1] - open[0] > open[3] - open[2], "open along x");
+});
+test("a repaint-only clip keeps the static collision", () => {
+	assert.strictEqual(scene({}, false).made.clips[0].collision, "static");
+	assert.strictEqual(scene({}, false).made.clips[0].targets[0].collision, undefined);
 });
 console.log("glTF");
 test("a skinned model comes back as one model with its weights", () => {

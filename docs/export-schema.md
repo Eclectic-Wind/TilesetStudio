@@ -12,7 +12,7 @@ anim: {
     name, fps, frames,
     loop: "loop" | "once" | "pingpong",   // what happens at the last frame. Playback itself (auto-play, from code) is the game's
     shadow: "static" | "frames",         // "static": the base frame's. "frames": the targets that carry `floor` have their own shadow per frame (one without `floor` keeps the base frame's). A reader that does not know "frames" reads "static"
-    collision: "static",                 // always the base frame's
+    collision: "static" | "frames",       // "static": the base frame's. "frames": the targets that carry `collision` have their own per frame (one without keeps the base frame's). A reader that does not know "frames" reads "static"
     targets: [{
       piece,                             // the animated piece: its number in footprints.pieces (1-based), as pieceIndex
       rect: [x, y, w, h],                // atlas px, multiples of 32: holds the piece's art and everything its frames paint. Every frame is drawn here, in place of the piece
@@ -24,14 +24,15 @@ anim: {
                                          // Absent = every frame reuses the base frame's height, normal and material: read maps.data at `rect`
       floor?: "<base64>",                // present with `data`, oblique only: each frame's exact floor spans, raw bytes packed like color (cols*w x rows*floorH x 4). See *Floor spans*
       floorDy?: int,                     // with `floor`: floor y of a frame block's first row, relative to rect[1] (floor y = rect[1] + floorDy + row). Can be negative; may reach south of the rect
-      floorH?: int                       // with `floor`: rows per frame
+      floorH?: int,                       // with `floor`: rows per frame
+      collision?: [[[[x, y], ...], ...], ...]  // present with `data` when the moving piece blocks: per frame (index = frame), that frame's collision polygons in floor px, in the form of `footprints.objects[].collision.polygons`. See *Animated collision*
     }]
   }],
   warnings: [string]                     // for the artist, as the Animate panel shows them
 }
 ```
 
-- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame (height, normal and material come from `data` when it is there; shadow and sort row from the frame's `floor` spans when they are there). A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame (height, normal and material come from `data` when it is there; shadow and sort row from the frame's `floor` spans, collision from the frame's `collision` polygons, when they are there). A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
 - The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
 - `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
 - A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame (with `data`: that frame's posed models) has no surface, so height and normal are flat there; a rect reaching south of the piece's base row (oblique), which a game that does not read `floor` sorts by (with `floor`, each frame's own south edge is in it); isometric with moving models (the shadow stays the base frame's).
@@ -67,6 +68,15 @@ Heights are px above the floor in absolute model z (the asset modelled at local 
 
 Sizes, measured: the white door's block is 576 x 42 px (9 frames of 64 wide, `floorDy` 89, `floorH` 42, 126 KB as base64); the red door's 2016 x 100 px (21 x 2 cells of 96 wide, `floorDy` 89, `floorH` 50, 1 MB as base64, 4% of its points filled).
 
+## Animated collision (`collision`)
+
+Written for a moving target (same condition as `data` and `floor`, **either projection**: polygons are floor-plan px, not tied to art columns) whose posed models block something. `collision` is an array with one entry per frame (index = frame number); each entry is a list of polygons `[[x, y], ...]` in floor px, exactly the form and meaning of `footprints.objects[].collision.polygons`: the floor the posed piece blocks for the player's feet box (a floor point blocks where a solid span reaches into `[collision.step, collision.body]`, then the same pull-in as a static footprint model: sides 3 px, south edge 8 px, at least 4 px deep, traced). A frame with no blocked floor has an empty list. Absent = the base frame's collision applies in every frame.
+
+- It is the polygons of each posed model with footprint collision, merged (`Process.collision` run on the frame's posed piece, the same code as the static collision), so a swung leaf blocks where it really stands. The pull-in is thin-aware (never below 2 px wide), so a leaf seen side-on is a 2+ px wide polygon that stops 8 px short of its far end, as any wall does. Measured: the white door's closed frame is one polygon (x 87..122, y 154..158), frame 8 one polygon along the open leaf (x 85..88, y 153..198); the red door and the two-leaf door keep 2-5 and 4-16 polygons per frame.
+- Models with `collision: strip` (built by the game from hulls) or `none` contribute nothing per frame; set the animated model to `footprint` (the default `auto` resolves to it).
+- **What the game does**: while the clip plays, replace this piece's static collision shapes with the current frame's polygons. Build the shapes for every frame once at import and swap the current one; the polygons are small (a few points each). It is the game's call what blocks the doorway while the door is open (an open door's leaf blocks as drawn; whether a doorway also needs a trigger is gameplay).
+- Not written for a repaint-only clip, a stairs piece, or when no frame blocks anything.
+
 ## Making one in the Studio
 
 1. Model and paint the base frame as usual; the animated thing should be its own piece (its models joined by footprint, or one `piece` name).
@@ -78,10 +88,7 @@ The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.j
 
 ## Not in this round
 
-`source: "rig"`, animated collision (below), frame de-duplication, per-frame floor spans in the isometric projection (the shadow stays the base frame's; the rect is in canvas px either way, but a floor point's column is not its art column there).
-
-**Animated collision**, what it would take: `collision` stays `"static"` (the base frame's) for now. The data to build it is already there, the posed piece's floor spans: a floor point blocks where a solid span reaches into `[collision.step, collision.body]` (R - 1 above the step and G, or the part under the gap, below the body), exactly the mask the Studio builds for footprint mode. Studio side, `Process.run` already computes each frame's `collision` for the posed piece (it is how `floor` is made), so exporting per-frame polygons (`collision: "frames"`, floor px like `collision.polygons`) is plumbing, about 30 lines plus this schema. What is not decided is policy, and it is the game's: footprint mode pulls the mask in for the feet box (3 px each side, 8 px at the south edge), which erases a door leaf 6 px thick seen side-on, so a swinging leaf needs its own rule (no pull-in, or a strip along the leaf), and the game must rebuild its collision shapes each frame and say what blocks the doorway while the door is open. Not built until those are chosen.
-
+`source: "rig"`, frame de-duplication, per-frame floor spans in the isometric projection (the shadow stays the base frame's; the rect is in canvas px either way, but a floor point's column is not its art column there).
 ---
 
 ## Version 5 (earlier)

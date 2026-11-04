@@ -124,10 +124,12 @@
 				const floorDy = reach ? reach.y0 - ry : 0, floorH = reach ? reach.y1 - reach.y0 + 1 : 0;
 				const floorOut = reach ? new Uint8Array(cols * rw * rows * floorH * 4) : null;
 				const data = posed ? new Uint8Array(out.length) : null, matOf = materialLookup(p.materials || []), flat = data && r.proj.toMapNormal([0, 0, 1]);
+				const collide = posed ? [] : null; // per frame: the posed piece's collision polygons (floor px), as the static collision.polygons
 				let outside = 0, outsideFrame = -1;
 				for (let f = 0; f < frames; f++) {
 					const [ox, oy] = Rig.cellOrigin(lay, f), dx = (f % cols) * rw, dy = Math.floor(f / cols) * rh;
 					const fr = data ? frameSurface(posed[f], f, sheet, lay, W, H, p.settings) : null;
+					if (fr) collide.push(fr.collision.models.flatMap((m) => m.polygons));
 					if (floorOut) {
 						const fx = (f % cols) * rw, fy = Math.floor(f / cols) * floorH;
 						for (let j = 0; j < floorH; j++) for (let i = 0; i < rw; i++) {
@@ -158,10 +160,11 @@
 				if (outside) warnings.push(`clip "${clip.name}" / ${names}: ${outside} painted pixel(s) (first in frame ${outsideFrame}) lie outside ${moves ? "the posed models" : "the piece's base art"}, where height and normal are flat`);
 				targets.push({ piece: piece + 1, rect: [rx, ry, rw, rh], cols, rows, source: "flipbook", ...(moves && p.dry ? { moves: true, ...(oblique ? { floor: true } : {}) } : {}),
 					...(out ? { color: p.encodePNG(out, cols * rw, rows * rh) } : {}), ...(data ? { data: base64(data) } : {}),
-					...(floorOut ? { floor: base64(floorOut), floorDy, floorH } : {}) });
+					...(floorOut ? { floor: base64(floorOut), floorDy, floorH } : {}),
+					...(collide && collide.some((c) => c.length) ? { collision: collide } : {}) });
 			}
 			if (targets.length) clips.push({ name: clip.name, fps: clip.fps | 0 || 8, frames, loop: ["once", "pingpong"].includes(clip.loop) ? clip.loop : "loop",
-				shadow: targets.some((t) => t.floor) ? "frames" : "static", collision: "static", targets });
+				shadow: targets.some((t) => t.floor) ? "frames" : "static", collision: targets.some((t) => t.collision) ? "frames" : "static", targets });
 		}
 		return clips.length || warnings.length ? { clips, warnings } : null;
 	};
