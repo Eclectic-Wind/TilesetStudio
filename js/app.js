@@ -15,7 +15,7 @@
 		anim: TS.Rig.newAnim(), // bones, clips and the Aseprite sheet (see rig.js)
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
-	function defaultSettings() { return TS.Process.defaultSettings(); }
+	function defaultSettings() { return { ...TS.Process.defaultSettings(), blockout: false }; }
 	// Generated once per project, saved in the project file; lets the importer tell a moved / renamed export from a new one.
 	function newUUID() {
 		if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -25,6 +25,33 @@
 		return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 	}
 	const undoStack = [], redoStack = [];
+	// Keep source-image references only for normal-mode history. In Blockout, undo
+	// reconstructs the image from geometry instead of retaining a bitmap per edit.
+	const historySources = new Map(), sourceIds = new WeakMap();
+	let nextSourceId = 1;
+	function sourceHistoryId() {
+		if (!S.art || S.settings.blockout) return null;
+		let id = sourceIds.get(S.art);
+		if (!id || !historySources.has(id)) {
+			id = nextSourceId++; sourceIds.set(S.art, id);
+			historySources.set(id, { art: S.art, url: S.artURL });
+		}
+		return id;
+	}
+	function pruneSourceHistory() {
+		const used = new Set();
+		for (const json of [...undoStack, ...redoStack]) {
+			const match = /^\{"sourceArtId":(\d+)/.exec(json);
+			if (match) used.add(Number(match[1]));
+		}
+		for (const id of historySources.keys()) if (!used.has(id)) historySources.delete(id);
+	}
+	function installSourceArt(art, url) {
+		const needsUpload = S.artURL !== url;
+		S.art = art; S.artURL = url;
+		if (needsUpload) renderer.setArt(new ImageData(new Uint8ClampedArray(art.data), art.w, art.h), art.w, art.h);
+		dirty = true;
+	}
 	let renderer, output, modal = null, loopHover = null, mouse = [0, 0], spaceDown = false, dirty = true;
 	let pencil = null, exchange = null;
 
@@ -41,8 +68,8 @@
 		return sheetIds.get(url);
 	};
 	function snapshot() {
-		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
-			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt }, (k, v) => (k === "albedo" && typeof v === "string" ? sheetId(v) : v));
+		return JSON.stringify({ sourceArtId: sourceHistoryId(), objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
+			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt, blockout: !!S.settings.blockout }, (k, v) => (k === "albedo" && typeof v === "string" ? sheetId(v) : v));
 	}
 	// Painted frames live in Aseprite, not in the undo history: a clip that still exists keeps the sheet it has now.
 	function restoreSheets(anim) {
@@ -54,24 +81,32 @@
 		anim.albedo = null;
 	}
 	function restore(json) {
-		const s = JSON.parse(json);
+		const s = JSON.parse(json), modeChanged = !!s.blockout !== !!S.settings.blockout;
 		if (s.anim) restoreSheets(s.anim);
-		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
+		S.objects = s.objects; S.settings.blockout = !!s.blockout; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
+		if (!S.settings.blockout && historySources.has(s.sourceArtId)) {
+			const source = historySources.get(s.sourceArtId);
+			installSourceArt(source.art, source.url); S.result = null;
+		}
 		hover = null; loopHover = null; cycle = null;
 		// Undo / redo of a projection switch: the projection comes back with the models.
 		if (s.projection && (s.projection !== S.settings.projection || String(s.isoOrigin) !== String(S.settings.isoOrigin) || s.isoTilt !== S.settings.isoTilt)) {
 			S.settings.projection = s.projection; S.settings.isoOrigin = s.isoOrigin; S.settings.isoTilt = s.isoTilt;
 			syncProjection(); renderer.fit(); zoomLabel();
+			if(modeChanged)setOutMode(S.settings.blockout ? "blockout" : "lit");
 			changed(); clearTimeout(processTimer); processNow(); // the output must not keep showing the other projection
 			return;
 		}
 		changed();
+		if(modeChanged)setOutMode(S.settings.blockout ? "blockout" : "lit");
+		processNow();
 	}
 	function pushUndo(before) {
 		undoStack.push(before || snapshot());
 		if (undoStack.length > 200) undoStack.shift();
 		redoStack.length = 0;
+		pruneSourceHistory();
 		markUnsaved();
 	}
 	function undo() { if (undoStack.length) { redoStack.push(snapshot()); restore(undoStack.pop()); markUnsaved(); status(`Undo (${undoStack.length} more)`); } else status("Nothing to undo."); }
@@ -87,9 +122,12 @@
 	function changed() {
 		processGen++;
 		dirty = true;
+		if ($("blockout_mode")) $("blockout_mode").checked = !!S.settings.blockout;
+		$("blockout_color_control").hidden = !S.settings.blockout;
+		$("b_blockout_png").disabled = $("blockout_fit").disabled = !S.settings.blockout;
 		panels();
 		if (TS.AnimUI) TS.AnimUI.changed();
-		if (S.autoProcess && S.art) processSoon();
+		if ((S.autoProcess || S.settings.blockout) && S.art) processSoon();
 	}
 	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
 	function selChanged() { dirty = true; panels(); }
@@ -163,6 +201,7 @@
 	const readFile = (file, asText) => new Promise((ok, fail) => { const r = new FileReader(); r.onerror = () => fail(new Error("Could not read this file.")); r.onload = () => ok(r.result); asText ? r.readAsText(file) : r.readAsDataURL(file); });
 
 	async function openTilesetFile(file) {
+		S.settings.blockout = false;
 		if (await setTileset(await readFile(file), file.name)) { status(`Loaded ${file.name}`); }
 	}
 
@@ -273,6 +312,7 @@
 	}
 
 	function projectJSON() {
+		if (S.settings.blockout && S.art) processNow(); // Save immediately after an edit, even before the debounce fires.
 		return JSON.stringify({ format: "tileset-studio", version: 2, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
 			settings: S.settings, objects: S.objects, anim: S.anim, references: S.refs }, null, 1);
 	}
@@ -314,11 +354,12 @@
 		S.refs = Array.isArray(p.references) ? p.references : []; S.refActive = S.refs.length ? S.refs[S.refs.length - 1].id : null;
 		S.refs.forEach((r) => loadRefArt(r).catch(() => {}));
 		refPanel();
-		undoStack.length = 0; redoStack.length = 0;
+		undoStack.length = 0; redoStack.length = 0; historySources.clear();
 		setUnsaved(false);
 		if (!p.bundleId || migrated) markUnsaved(); // an older project gets its id now, and its kinds are mapped: autosave keeps them until the project is saved
 		$("snap").value = S.snap;
 		settingsToControls();
+		setOutMode(S.settings.blockout ? "blockout" : "lit");
 		if (TS.AnimUI) TS.AnimUI.projectChanged();
 		changed();
 		status(`Opened project ${p.name}`);
@@ -508,7 +549,7 @@
 
 	const imageDataURL = (img) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d").putImageData(img, 0, 0); return c.toDataURL("image/png"); };
 	// The art as PNG data (the tileset may have been opened from any image type the browser reads).
-	const artDataURL = () => { const a = S.art, img = new ImageData(new Uint8ClampedArray(a.data), a.w, a.h); return imageDataURL(img); };
+	const artDataURL = () => { const a = S.settings.blockout && S.result ? S.result.art : S.art, img = new ImageData(new Uint8ClampedArray(a.data), a.w, a.h); return imageDataURL(img); };
 
 	// One file for Godot (addons/studio_import): the art, every map and the footprints / collision, as `name.export.json`. The
 	// plugin unpacks it next to itself into name.png, name_height.png, name_normal.png, name_pbr.png, name_footprints.json and
@@ -518,7 +559,7 @@
 	async function bundleJSON() {
 		processNow();
 		const images = await TS.AnimUI.albedoImages();
-		const bundle = TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
+		const bundle = TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.result.art, objects: S.objects,
 			settings: S.settings, result: S.result, now: new Date().toISOString(), anim: S.anim,
 			albedoOf: (clip) => images.get(clip.id) || null, encodePNG: (rgba, w, h) => imageDataURL(new ImageData(rgba, w, h)).split(",")[1] });
 		lastAnimReport = bundle.anim || null;
@@ -551,7 +592,8 @@
 			if (workerAgain) { workerAgain = false; processInBackground(); }
 			if (!fresh) return;
 			const r = data.result;
-			r.art = S.art; r.alpha = S.art.alpha; r.proj = TS.Proj.of(S.settings, S.art);
+			if (!r.blockout) { r.art = S.art; r.alpha = S.art.alpha; }
+			r.proj = TS.Proj.of(S.settings, r.art);
 			processed(r, workerT0, data.litNormal, data.checks);
 		};
 		worker.onerror = worker.onmessageerror = () => { noWorker = true; worker = null; workerBusy = false; workerAgain = false; processNow(); };
@@ -568,10 +610,11 @@
 		} catch (err) { noWorker = true; worker = null; processNow(); }
 	}
 	function processNow() {
+		clearTimeout(processTimer);
 		if (!S.art) return;
 		processGen++;
 		const t0 = performance.now();
-		processed(TS.Process.run(S.objects, S.art, S.settings), t0);
+		processed(S.settings.blockout ? TS.Blockout.process(S.objects, S.art, S.settings) : TS.Process.run(S.objects, S.art, S.settings), t0);
 		processMs = performance.now() - t0;
 	}
 	// A new result: show it. From the worker it comes with its pieces, normals and checks, and its image is drawn without blocking.
@@ -579,9 +622,14 @@
 		const roleSig = (r) => (r && r.roles ? r.roles.map((x) => `${x.kind}/${x.mode}/${x.walk}/${x.heightMin}/${x.heightMax}`).join() : "");
 		const before = roleSig(S.result);
 		S.result = result;
+		if (S.settings.blockout) {
+			const a = S.result.art;
+			installSourceArt(a, imageDataURL(new ImageData(a.data, a.w, a.h)));
+		}
+
 		if (roleSig(S.result) !== before) panels(); // the properties / outliner show resolved kind, collision and heights
 		if (!S.result.pieceMap) S.result.pieceMap = TS.Process.pieces(S.objects, S.result, S.settings);
-		output.set(S.result, S.settings, litNormal, !!litNormal);
+		output.set(S.result, S.settings.blockout ? { ...S.settings, relief: 0, cavity: 0 } : S.settings, litNormal, !!litNormal);
 		pieceInfo();
 		const st = S.result.stats;
 		holeCells = null;
@@ -591,15 +639,17 @@
 			` · geometry off the art ${st.unused} px${st.over ? ` · <b class="bad">${st.over} px above 255</b>` : ""}${off.length ? ` · <b class="bad" title="${esc(off.map((o) => o.name).join(", "))}: past the floor plan (the orange lines in the view). The part past it draws and has maps, but no footprint or collision.">${off.length} model${off.length > 1 ? "s" : ""} off the floor plan</b>` : ""} · ${Math.round(performance.now() - t0)} ms`;
 		if (st.unfilled) $("b_nexthole").onclick = nextHole;
 		tileProblems(checks);
+		if (S.result.outside) $("stats").append(` · ${S.result.outside} models cross the canvas edge (PNG clips there)`);
 		asepriteSoon();
 	}
 
 	// --- Aseprite link for the plain (non-animated) tileset: normal.png out, albedo.png back in ---
 
 	let asepriteTimer = 0;
-	const asepriteOn = () => TS.Link && TS.Link.linked() && S.art && !(TS.AnimUI && TS.AnimUI.on);
+	const asepriteOn = () => !S.settings.blockout && TS.Link && TS.Link.linked() && S.art && !(TS.AnimUI && TS.AnimUI.on);
 	function asepriteSoon() { if (asepriteOn()) { clearTimeout(asepriteTimer); asepriteTimer = setTimeout(asepriteSend, 400); } }
 	async function asepriteSend() {
+		if (S.settings.blockout) return status("Blockout is generating the source image. Turn Blockout off to resume Aseprite syncing.");
 		if (TS.Link && TS.Link.linked() && TS.Link.adoptPending) return TS.Link.hello(); // Aseprite's file starts the project: wait for it
 		if (TS.Link && TS.Link.linked() && TS.AnimUI && TS.AnimUI.on) return TS.AnimUI.resend();
 		if (!asepriteOn()) return;
@@ -658,6 +708,7 @@
 	}
 	// Aseprite saved albedo.png: swap the tileset art for it, keeping the models, view and cursor.
 	async function asepriteAlbedo(img) {
+		if(S.settings.blockout)return asepriteState("wait","Blockout is generating the source image. Aseprite albedo updates are paused; save again in Aseprite after turning Blockout off.");
 		if (TS.Link.adoptPending) { // Aseprite's file is the starting point: its tile (any size) becomes the tileset art, models stay
 			TS.Link.adoptPending = false;
 			const keep = S.art ? S.name : "aseprite";
@@ -677,6 +728,7 @@
 		if (img.width !== S.art.w || img.height !== S.art.h)
 			return asepriteState("warn", `Aseprite sent a ${img.width}x${img.height} albedo.png but this tileset is ${S.art.w}x${S.art.h}, so the art was kept. Is Aseprite still on another sprite?`);
 		const url = imageDataURL(img), pic = await loadImage(url);
+		if(S.settings.blockout)return; // Do not let an older async image load replace a new generated frame.
 		S.art = { w: img.width, h: img.height, data: new Uint8ClampedArray(img.data), alpha: Uint8Array.from({ length: img.width * img.height }, (_, i) => img.data[i * 4 + 3]) };
 		S.artURL = url;
 		renderer.setArt(pic, img.width, img.height);
@@ -687,6 +739,7 @@
 	// Asked on every link when a project is open: which side's project is the starting point? The other side is overwritten by it
 	// (layout, tile size, frame count and art). Resolves false when cancelled. With no project open, Aseprite's file starts it.
 	function askImport() {
+		if(S.settings.blockout){status("Turn Blockout off to connect Aseprite. PNG export works independently.");return Promise.resolve(false);}
 		const Link = TS.Link;
 		Link.artPending = null;
 		if (!S.art) { Link.origin = "aseprite"; Link.adoptPending = true; $("as_mode").textContent = "Starting from Aseprite's file."; return Promise.resolve(true); }
@@ -878,9 +931,34 @@
 		status(`Animate mode only poses the rig (G / R keys a model). Switch back to Modelling to ${what}.`);
 		return true;
 	}
+
+	async function newBlockout() {
+		const c=document.createElement("canvas");c.width=c.height=1024;
+		if (!(await openProject(JSON.stringify({format:"tileset-studio",version:2,name:"blockout",tileset:c.toDataURL("image/png"),objects:[],snap:8,cursor:[128,128,0],settings:{...defaultSettings(),projection:"iso",isoTilt:26,isoOrigin:[512,128],blockout:true}})))) return;
+		setOutMode("blockout"); markUnsaved(); status("Blockout ready: use Add or Free Draw (P) as usual. New objects get the selected color automatically.");
+	}
+	function setBlockout(on) {
+		if (!S.art) { $("blockout_mode").checked=false; if(on)newBlockout(); return; }
+		if (noModelling("change blockout mode")) { $("blockout_mode").checked=!!S.settings.blockout; return; }
+		if (S.settings.blockout && !on) processNow(); // Flush the last edit before leaving the mode.
+		pushUndo(); S.settings.blockout=!!on; clearTimeout(asepriteTimer);
+		if (on) { setOutMode("blockout"); if(TS.Link)TS.Link.artPending=null; }
+		else if (output.mode==="blockout")setOutMode("lit");
+		changed(); processNow();
+		status(on?"Blockout enabled: the source PNG updates automatically after geometry and color edits. Aseprite syncing is paused.":"Blockout off: the latest generated PNG stays as the source image. Geometry and colors remain editable.");
+	}
+	async function exportBlockoutPNG() {
+		if(!S.settings.blockout)return toast("Turn Blockout on to export procedural colors.","bad");
+		if(!S.art || !S.objects.length)return toast("Add some models first.","bad");
+		let r; try{r=$("blockout_fit").checked?TS.Blockout.fit(S.objects,S.art,S.settings):TS.Blockout.process(S.objects,S.art,S.settings);}catch(err){return toast(err.message,"bad");}
+		const c=document.createElement("canvas");c.width=r.w;c.height=r.h;c.getContext("2d").putImageData(new ImageData(r.art.data,r.w,r.h),0,0);
+		const blob=await new Promise(ok=>c.toBlob(ok,"image/png"));if(!blob)return toast("PNG export failed.","bad");
+		download(exportName()+"_blockout.png",blob);
+		status("Exported transparent blockout PNG."+(r.outside?` ${r.outside} models cross the canvas edge and are clipped.`:""));
+	}
 	function addPrimitive(kind) {
 		if (noModelling("add models")) return;
-		if (!S.art) return toast("Open a tileset first.", "bad");
+		if (!S.art) return toast("Open a tileset, create a blank canvas, or use File → New isometric blockout first.", "bad");
 		leaveDrawTools();
 		pushUndo();
 		if (S.edit) S.edit = false;
@@ -893,6 +971,7 @@
 			: kind === "plane" ? Mesh.plane(base, T, T)
 			: kind === "point" ? Mesh.newObject("Point", [S.cursor.slice()], [])
 			: Mesh.sphere(base, T / 2, T / 2, T / 2, 12, 8);
+		if(S.settings.blockout)obj.blockoutColor=$("draw_color").value;
 		obj.name = `${obj.name}.${String(S.objects.length + 1).padStart(2, "0")}`;
 		S.objects.push(obj);
 		S.active = obj.id; S.selected = new Set([obj.id]);
@@ -1778,7 +1857,7 @@
 			const isActive = obj.id === S.active, isSel = S.selected.has(obj.id) || !!(pencil?.preview?.add && pencil.preview.object === obj), editing = S.edit && isActive;
 			// Weight painting: each vertex takes a heat colour from its weight on the active bone (blue none, red all), blended across the faces.
 			const heat = TS.AnimUI && !S.edit ? TS.AnimUI.weightHeat(obj) : null;
-			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (isSel ? "s" : "n") + (S.edit ? "e" : "") : null, hit = cacheable && geomCache.get(obj);
+			const cacheable = !editing && !heat, key = cacheable ? Mesh.shapeKey(obj) + (S.settings.blockout ? TS.Blockout.color(obj) : "art") + (isSel ? "s" : "n") + (S.edit ? "e" : "") : null, hit = cacheable && geomCache.get(obj);
 			if (hit && hit.key === key) { triParts.push(hit.tris); lineParts.push(hit.lines); continue; }
 			const tris = [], lines = [];
 			const corners = Mesh.shadingNormals(obj);
@@ -1790,7 +1869,7 @@
 				if (faceMode) vtx(dots, Mesh.faceCentre(obj, f), [0, 0, 1], picked ? [1, 0.6, 0.1, 1] : [0.08, 0.08, 0.1, 1]);
 				const own = Mesh.faceColour(f);
 				for (const triangle of Mesh.faceTriangles(obj, f))
-					for (const k of triangle) vtxFace(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint, own);
+					for (const k of triangle) vtxFace(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : S.settings.blockout ? [...TS.Blockout.rgb(obj), tint[3]] : tint, own);
 			});
 			const edgeCol = editing ? [0.95, 0.95, 1, 0.9] : isSel ? [1, 0.65, 0.3, 0.95] : [0.85, 0.9, 1, 0.35];
 			for (const [k, e] of Mesh.edges(obj)) {
@@ -2012,9 +2091,9 @@
 		const kind=$("pencil_mode").value;
 		const depth=cutting && $("pencil_operation").value==="cut" ? TS.Carve.depth(target,pencil.surface,1,true) : Number($("pencil_thickness").value);
 		const obj=TS.Shape.primitive(pencil.pts,kind,cutting && kind==="sphere" ? depth*2 : depth,Number($("pencil_bevel").value));
-		let normal=pencil.view3d?pencil.anchor.normal:pencil.surface?.normal || ($("pencil_plane").value==="top"?[0,0,1]:[0,1,0]);
+		let normal=pencil.local?pencil.anchor.normal:pencil.surface?.normal || ($("pencil_plane").value==="top"?[0,0,1]:[0,1,0]);
 		const frontY=TS.Shape.frontY(pencil.pts,Math.max(0,S.cursor[2]));
-		const map=p=>pencil.view3d?pencilWorld2D(p):pencil.surface?TS.Shape.surfacePoint(p,pencil.surface):TS.Shape.planePoint($("pencil_plane").value,p,Math.max(0,S.cursor[2]),frontY);
+		const map=p=>pencil.local?pencilWorld2D(p):pencil.surface?TS.Shape.surfacePoint(p,pencil.surface):TS.Shape.planePoint($("pencil_plane").value,p,Math.max(0,S.cursor[2]),frontY);
 		obj.verts=obj.verts.map(([x,y,z])=>v3.add(map([x,y]),v3.scale(normal,cutting?z-depth+0.01:z)));
 		if(TS.Carve.volume(obj)<0)obj.faces.forEach(f=>f.v.reverse());
 		return obj;
@@ -2022,17 +2101,17 @@
 	function pencilHint() {
 		const corners = $("pencil_mode").value === "corners";
 		const help = corners ? "Click corners, then click the first point or press Enter to finish. Backspace removes a corner." :
-			"Drag an outline and release to preview. Scroll for height; Shift+scroll for fine adjustment; click or Enter to apply.";
+			"Drag an outline and release to preview. Use [ / ] for height; Shift for fine adjustment; click or Enter to apply.";
 		const op = $("pencil_operation").value, cut = op !== "add";
 		$("pencil_bevel_row").hidden = !["box","cylinder"].includes($("pencil_mode").value);
 		$("pencil_radius").disabled = pencilPrimitive();
-		$("pencil_snap").disabled = !!pencil?.view3d;
-		$("pencil_plane").disabled = !!pencil?.view3d || !!pencil?.surface;
+		$("pencil_snap").disabled = false;
+		$("pencil_plane").disabled = !!pencil?.anchor || !!pencil?.surface;
 		$("pencil_depth_label").textContent = op === "carve" ? "Carve depth" : "Thickness";
 		$("pencil_depth_row").hidden = op === "cut";
 		$("pencil_finish").textContent = cut ? (pencil?.preview ? "Apply " + op : "Preview " + op) : (pencil?.preview ? "Apply shape" : "Preview shape");
-		$("pencil_help").textContent = (pencilPrimitive() ? "Drag opposite corners of the footprint. Release to preview, scroll for height/depth, then click or Enter to apply. Sphere uses the footprint and height as its three diameters. " : help) + (cut ? " Start on a closed solid's surface. Preview, then Apply / Enter." : " Corner Radius rounds this outline only.") + " Q returns to selection.";
-		status(pencil?.adjusting ? "Preview: scroll adjusts height/depth; Shift+scroll = fine; click or Enter applies; Esc cancels." : "Free Draw: " + help + " Space-drag pans; wheel zooms before drawing; Esc clears.");
+		$("pencil_help").textContent = (pencilPrimitive() ? "Drag opposite corners of the footprint. Release to preview, use [ / ] for height/depth, then click or Enter to apply. Sphere uses the footprint and height as its three diameters. " : help) + (cut ? " Start on a closed solid's surface. Preview, then Apply / Enter." : " Corner Radius rounds this outline only.") + " Q returns to selection.";
+		status(pencil?.adjusting ? "Preview: [ / ] adjust height/depth; Shift = fine; click or Enter applies; Esc cancels." : "Free Draw: " + help + " Space-drag pans; wheel zooms; Esc clears.");
 	}
 	function clearPencil() {
 		if (!pencil) return;
@@ -2066,32 +2145,31 @@
 		return { origin: hit.point.slice(), normal, outline, objectId: hit.obj.id, name: hit.obj.name, face: hit.face };
 	}
 	function pencilPoint(px, py) {
-		if (pencil?.view3d && pencil.anchor) return pencilSample3D(px, py)?.screen || null;
+		if (pencil?.local && pencil.anchor) return pencilSample3D(px, py)?.screen || null;
 		const p = renderer.canvasPoint(px, py).map((v) => Math.round(v * 100) / 100);
 		if ($("pencil_snap").checked) return p.map((v) => TS.snap(v, S.snap));
 		return p;
 	}
 	function pencilSample3D(px, py) {
-		if (!pencil?.anchor) return null;
-		const ray = renderer.ray(px, py), n = pencil.anchor.normal, den = v3.dot(ray.d, n);
-		if (Math.abs(den) < 1e-5) return null;
-		const t = v3.dot(v3.sub(pencil.anchor.origin, ray.o), n) / den;
-		if (!(t > 0)) return null;
-		const point = v3.add(ray.o, v3.scale(ray.d, t)), rel = v3.sub(point, pencil.anchor.origin);
-		return { screen: [v3.dot(rel, pencil.anchor.u), v3.dot(rel, pencil.anchor.v)], point, normal: n.slice() };
+		if(!pencil?.anchor)return null;
+		return TS.Blockout.sample(pencil.anchor,renderer.ray(px,py),$("pencil_snap").checked?S.snap:0);
 	}
-	function pencilWorld2D(p) { return v3.add(pencil.anchor.origin, v3.add(v3.scale(pencil.anchor.u, p[0]), v3.scale(pencil.anchor.v, p[1]))); }
+	function pencilWorld2D(p) { return TS.Blockout.point(pencil.anchor,p); }
 	function pencilSetAnchor(hit, px, py) {
-		const ray = renderer.ray(px, py), normal = hit ? hit.normal : v3.scale(ray.d, -1), origin = hit ? hit.origin : renderer.free.target.slice();
-		let u = v3.cross(Math.abs(normal[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0], normal);
-		u = v3.norm(u); const v = v3.norm(v3.cross(normal, u));
-		pencil.anchor = { origin, normal, u, v };
+		const ray=renderer.ray(px,py);
+		let normal,origin;
+		if(hit){normal=hit.normal;origin=v3.scale(normal,v3.dot(hit.origin,normal));}
+		else if(pencil.view3d){normal=v3.scale(ray.d,-1);origin=renderer.free.target.slice();}
+		else if($("pencil_plane").value==="top"){normal=[0,0,1];origin=[0,0,Math.max(0,S.cursor[2])];}
+		else {normal=[0,1,0];origin=[0,S.cursor[1],0];}
+		pencil.anchor=TS.Blockout.anchor(origin,normal);
 	}
 	function pencilAdd(p) {
+		if(!p)return;
 		const prev = pencil.pts[pencil.pts.length - 1];
 		if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 0.01) {
 			pencil.pts.push(p);
-			if (pencil.view3d) pencil.samples.push({ screen: p.slice(), point: pencilWorld2D(p), normal: pencil.anchor.normal.slice() });
+			if (pencil.local) pencil.samples.push({ screen: p.slice(), point: pencilWorld2D(p), normal: pencil.anchor.normal.slice() });
 		}
 		pencil.error = false; dirty = true;
 	}
@@ -2104,7 +2182,7 @@
 			const op = $("pencil_operation").value, radius = Number($("pencil_radius").value);
 			if (!Number.isFinite(radius) || radius < 0 || radius > 64) throw new Error("Corner radius must be between 0 and 64 px.");
 			if (op === "add" && pencil.preview?.add) {
-				const obj=pencil.preview.object; pushUndo(); S.objects.push(obj); S.active=obj.id; S.selected=new Set([obj.id]); S.edit=false; S.elemSel.clear();
+				const obj=pencil.preview.object; if(S.settings.blockout)obj.blockoutColor=$("draw_color").value; else delete obj.blockoutColor; pushUndo(); S.objects.push(obj); S.active=obj.id; S.selected=new Set([obj.id]); S.edit=false; S.elemSel.clear();
 				clearPencil(); changed(); status(`Added ${obj.name}. Ctrl+Z undoes it.`); return obj;
 			}
 			if (op !== "add") {
@@ -2120,17 +2198,18 @@
 				}
 				const carveOptions = { surface: pencil.surface, depth: Number($("pencil_thickness").value), through: op === "cut", simplify: corners ? 0 : simplify, snap: $("pencil_snap").checked ? S.snap : 0, radius };
 				if (pencilPrimitive()) { carveOptions.cutter=pencilPrimitiveMesh(true,target); carveOptions.radius=0; carveOptions.simplify=0; }
-				if (pencil.view3d) carveOptions.pointAt = (q) => pencilWorld2D(q);
+				if (pencil.local) carveOptions.pointAt = (q) => pencilWorld2D(q);
 				const result = TS.Carve.subtract(target, pencil.pts, carveOptions);
 				pencil.adjusting=true; pencil.preview = { ...result, before: JSON.stringify(target) }; pencil.pointer = null; pencil.hover = null; pencil.error = false;
 				$("pencil_finish").textContent = `Apply ${op}`; dirty = true;
-				status(`Preview on ${target.name}. Scroll adjusts depth (Carve); Shift+scroll is fine. Click / Enter confirms; Esc cancels.`); return result.object;
+				status(`Preview on ${target.name}. [ / ] adjust depth (Carve); Shift is fine. Click / Enter confirms; Esc cancels.`); return result.object;
 			}
-			const obj = pencilPrimitive() ? pencilPrimitiveMesh() : pencil.view3d ? TS.Shape.create3D(pencil.samples, { thickness: Number($("pencil_thickness").value), simplify: corners ? 0 : simplify, radius }) : TS.Shape.create(pencil.pts, {
+			const obj = pencilPrimitive() ? pencilPrimitiveMesh() : pencil.local ? TS.Blockout.extrude(pencil.pts, pencil.anchor, { thickness: Number($("pencil_thickness").value), simplify: corners ? 0 : simplify, radius, snap: $("pencil_snap").checked ? S.snap : 0 }) : TS.Shape.create(pencil.pts, {
 				plane: $("pencil_plane").value, thickness: Number($("pencil_thickness").value), base: Math.max(0, S.cursor[2]),
 				simplify: corners ? 0 : simplify, snap: $("pencil_snap").checked ? S.snap : 0,
 				surface: pencil.surface, radius,
 			});
+			if(S.settings.blockout)obj.blockoutColor=$("draw_color").value;
 			obj.name = `Custom shape.${String(S.objects.length + 1).padStart(2, "0")}`;
 			pencil.preview = {object:obj,add:true}; pencil.adjusting=true; pencil.pointer=null; pencil.hover=null; pencil.error=false;
 			dirty=true; pencilHint(); return obj;
@@ -2143,12 +2222,13 @@
 		const capture = () => {
 			pencil.surface = pencilPickSurface(...mouse); pencil.targetId = pencil.surface?.objectId || null;
 			if ($("pencil_operation").value !== "add" && !pencil.surface) { status("Start Cut / Carve on a visible face of a closed solid."); return false; }
-			if (pencil.view3d) pencilSetAnchor(pencil.surface, ...mouse);
+			if (pencil.local) pencilSetAnchor(pencil.surface, ...mouse);
 			p = pencilPoint(...mouse);
+			if(!p){status("That plane is edge-on. Choose another surface or view.");return false;}
 			return true;
 		};
 		if ($("pencil_mode").value === "corners") {
-			const first = pencil.pts[0], s = first && renderer.toScreen(pencil.view3d ? pencilWorld2D(first) : renderer.proj.toWorld(first[0], first[1], 0));
+			const first = pencil.pts[0], s = first && renderer.toScreen(pencil.local ? pencilWorld2D(first) : renderer.proj.toWorld(first[0], first[1], 0));
 			if (pencil.pts.length >= 3 && Math.hypot(s[0] - mouse[0], s[1] - mouse[1]) <= 10) { pencilFinish(); return; }
 			if (pencil.pts.length >= 256) return status("Pencil: 256 corners reached. Finish this shape or remove a corner.");
 			if (!pencil.pts.length && !capture()) return;
@@ -2182,10 +2262,10 @@
 		const targetText = target ? `${pencil.pts.length ? "Drawing on" : "Surface"}: ${target.name} (face ${target.face + 1})` :
 			pencil.pts.length || !$("pencil_surface").checked ? "Empty space: " + $("pencil_plane").selectedOptions[0].textContent : "Start on a face to draw on it.";
 		if ($("pencil_target").textContent !== targetText) $("pencil_target").textContent = targetText;
-		$("pencil_plane").disabled = !!pencil.surface;
+		$("pencil_plane").disabled = !!pencil.anchor || !!pencil.surface;
 		// The outlined face and label show what the first point will attach to, even with X-ray enabled.
 		if (target) add("polygon", { points: target.outline.map((p) => renderer.toScreen(p).join(",")).join(" "), fill: "#64d9c411", stroke: "#64d9c4", "stroke-width": 1, "stroke-dasharray": "3 4" });
-		const toWorld = (p) => pencil.view3d ? pencilWorld2D(p) : pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : renderer.proj.toWorld(p[0], p[1], 0);
+		const toWorld = (p) => pencil.local ? pencilWorld2D(p) : pencil.surface ? TS.Shape.surfacePoint(p, pencil.surface) : TS.Shape.planePoint($("pencil_plane").value,p,Math.max(0,S.cursor[2]),TS.Shape.frontY(pencil.pts,Math.max(0,S.cursor[2])));
 		const toScreen = (p) => renderer.toScreen(toWorld(p));
 		const corners = $("pencil_mode").value === "corners"; let path = pencil.pts.slice();
 		if(pencilPrimitive() && path.length===4 && $("pencil_mode").value!=="box"){const a=path[0],b=path[2];path=Array.from({length:48},(_,i)=>[(a[0]+b[0])/2+Math.cos(i*Math.PI/24)*(b[0]-a[0])/2,(a[1]+b[1])/2+Math.sin(i*Math.PI/24)*(b[1]-a[1])/2]);}
@@ -2224,7 +2304,7 @@
 			const view3d = S.stay3d && renderer.free.blend >= 0.99;
 			if (!view3d && renderer.free.blend > 0) { anim = null; renderer.free.blend = 0; }
 			S.edit = false; S.elemSel.clear();
-			pencil = tool === "pencil" ? { pts: [], samples: [], hover: null, pointer: null, error: false, surface: null, hoverSurface: null, view3d } : null;
+			pencil = tool === "pencil" ? { pts: [], samples: [], hover: null, pointer: null, error: false, surface: null, hoverSurface: null, view3d, local: view3d || renderer.proj.kind === "iso" } : null;
 			modalBar(); panels();
 		} else if (pencil) pencil = null;
 		press = null; marquee(null);
@@ -2501,13 +2581,6 @@
 		});
 		canvas.addEventListener("wheel", (e) => {
 			e.preventDefault();
-			if (pencil?.adjusting) {
-				if ($("pencil_operation").value === "cut") { status("Cut Through uses the full target depth. Click / Enter applies; Esc cancels."); return; }
-				const delta=e.deltaY || e.deltaX; if(!delta)return;
-				const field=$("pencil_thickness"), minimum=pencilPrimitive() || $("pencil_operation").value==="carve" ? .1 : 0;
-				const next=TS.clamp((Number(field.value)||0)+(delta<0?1:-1)*(e.shiftKey?.1:1),minimum,255);
-				field.value=String(Math.round(next*10)/10); pencil.preview=null; pencilFinish(); return;
-			}
 			if (renderer.free.blend > 0) {
 				// 3D view: the wheel moves the eye in and out (the zoom sets its distance).
 				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); viewMoved = true; }
@@ -2575,6 +2648,14 @@
 		if (tag === "input" || tag === "select" || tag === "textarea") return;
 		let k = e.key.toLowerCase();
 		const ctrl = e.ctrlKey || e.metaKey;
+		if(pencil && (e.code==="BracketLeft" || e.code==="BracketRight" || k==="[" || k==="]") && !ctrl) {
+			e.preventDefault();
+			if($("pencil_operation").value==="cut")return status("Cut Through uses the target's full depth.");
+			const f=$("pencil_thickness"),min=pencilPrimitive() || $("pencil_operation").value==="carve"?.1:0;
+			f.value=String(Math.round(TS.clamp((Number(f.value)||0)+(e.code==="BracketRight" || k==="]"?1:-1)*(e.shiftKey?.1:1),min,255)*10)/10);
+			if(pencil.adjusting){pencil.preview=null;pencilFinish();}else pencilHint();return;
+		}
+
 		// Ctrl+C with text selected on the page copies that text, as in any page; models copy only when no text is selected.
 		if (ctrl && k === "c" && String(window.getSelection()).length) return;
 		if (k === "return" || e.code === "Enter" || e.code === "NumpadEnter") k = "enter";
@@ -2810,6 +2891,7 @@
 				<div class="xyz"><input id="p_w" class="ax-x" type="text" inputmode="decimal" value="${round(b.max[0] - b.min[0])}" title="Size: width (X)"><input id="p_d" class="ax-y" type="text" inputmode="decimal" value="${round(b.max[1] - b.min[1])}" title="Size: depth (Y)"><input id="p_h" class="ax-z" type="text" inputmode="decimal" value="${round(b.max[2] - b.min[2])}" title="Size: height (Z)"></div>
 				<p class="dim" title="Depth (Y) runs into the picture on the ground; height (Z) goes up. In the drawing both run up and down the screen: something 10 px deeper and 10 px taller lands on the same spot.">Top: bottom-centre position. Bottom: width, depth, height.</p>
 			</fieldset>`}
+			${S.settings.blockout ? `<fieldset><legend>Blockout color</legend><label>Color <input id="p_blockcolor" type="color" value="${TS.Blockout.color(o)}"></label><p class="dim">Saved on the object; visible when Blockout is enabled.</p></fieldset>` : ""}
 			<fieldset><legend>${faceSel ? `Material of ${S.elemSel.size} selected face(s)` : multi ? `Material of all ${multi.length} (shows ${o.name})` : "Material"}</legend>
 				${slider("p_rough", "Roughness", faceSel ? fm.roughness : o.mat.roughness)}
 				${slider("p_metal", "Metallic", faceSel ? fm.metallic : o.mat.metallic)}
@@ -2818,6 +2900,7 @@
 				${faceSel ? `<button id="p_clearmat">Use the object's material</button>` : ""}
 			</fieldset>
 			<p class="dim">${o.verts.length} vertices · ${o.faces.length} faces</p>`;
+		if($("p_blockcolor")) $("p_blockcolor").onchange = () => { const value=$("p_blockcolor").value; pushUndo(); for(const t of targets)t.blockoutColor=value; changed(); };
 		const num = (id) => evalNum($(id).value);
 		if ($("p_name")) $("p_name").onchange = () => { pushUndo(); o.name = $("p_name").value; changed(); };
 		$("p_collision").onchange = () => {
@@ -2992,7 +3075,7 @@
 		const geometry = sameGeometry === true && lastGeometry ? lastGeometry : buildGeometry();
 		lastGeometry = geometry;
 		dirty = false; viewMoved = false;
-		renderer.draw(geometry, { backdrop: true, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
+		renderer.draw(geometry, { backdrop: !S.settings.blockout, blockout: !!S.settings.blockout, opacity: TS.AnimUI && TS.AnimUI.painting && !S.edit ? 1 : S.opacity, shade: S.shade, xray: S.xray, belowZ: S.belowZ, refs: S.refs.filter((r) => r.visible) });
 		drawAxes(); drawGizmo(); drawPencil(); if (TS.AnimUI) TS.AnimUI.draw(); if (exchange) exchange.drawPreview();
 	}
 	function frame() {
@@ -3045,7 +3128,7 @@
 		$("pencil_back").onclick = () => { pencilBack(); $("view").focus(); };
 		$("pencil_done").onclick = () => { setTool("select"); $("view").focus(); };
 		$("pencil_mode").onchange = () => { clearPencil(); $("pencil_simplify").disabled = $("pencil_mode").value === "corners"; pencilHint(); };
-		$("pencil_surface").onchange = () => { if (pencil) { if (!pencil.view3d) pencil.surface = $("pencil_surface").checked && pencil.pts.length ? pencilPickSurface(...renderer.toScreen([pencil.pts[0][0], pencil.pts[0][1], 0])) : null; pencil.hoverSurface = null; pencil.error = false; pencil.preview = null; dirty = true; if(pencil.adjusting) pencilFinish(); else pencilHint(); } };
+		$("pencil_surface").onchange = () => { if(pencil)clearPencil(); };
 		$("pencil_operation").onchange = () => { clearPencil(); pencilHint(); };
 		for (const id of ["pencil_plane", "pencil_thickness", "pencil_simplify", "pencil_snap", "pencil_radius", "pencil_bevel"]) $(id).onchange = () => { if (pencil) { pencil.error = false; pencil.preview = null; dirty = true; if(pencil.adjusting) pencilFinish(); else pencilHint(); } };
 		// « / » fold the palette and nav panels (remembered per browser).
@@ -3091,6 +3174,11 @@
 		$("b_tileset").onclick = () => $("f_tileset").click();
 		$("b_project").onclick = () => $("f_project").click();
 		$("b_save").onclick = saveProject;
+		$("b_blockout_new").onclick = newBlockout;
+		$("blockout_mode").onchange = () => setBlockout($("blockout_mode").checked);
+		$("b_blockout_png").onclick = exportBlockoutPNG;
+		$("draw_color").oninput = () => {if(S.settings.blockout && pencil?.preview?.add){pencil.preview.object.blockoutColor=$("draw_color").value;dirty=true;}};
+		$("b_animate").addEventListener("click",e=>{if(S.settings.blockout){e.stopImmediatePropagation();status("Turn Blockout off before animating painted art.");}},true);
 		asepriteInit();
 				for (const b of document.querySelectorAll("#addmenu button")) b.onclick = () => { toggleAddMenu(false); addPrimitive(b.dataset.kind); };
 		$("snap").onchange = () => { S.snap = parseFloat($("snap").value); status(`Snapping: ${snapText()} ([ / ] step it)`); };
@@ -3217,6 +3305,7 @@
 		$("o_zoomout").onclick = () => output.zoomAt(...outCentre(), -1);
 		$("o_fit").onclick = () => output.fit();
 		$("o_copy").onclick = () => { // the clipboard gets the PNG as a promise, so the copy stays inside the click
+			if(!navigator.clipboard?.write || !window.ClipboardItem)return status("Image copying requires a supported browser on localhost or HTTPS. Use Export → Blockout PNG instead.");
 			const png = output.fullResBlob().then((b) => { if (!b) throw new Error("No map to copy yet. Process first."); return b; });
 			navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(
 				() => status("Image copied. Paste it into any app."),
@@ -3300,7 +3389,7 @@
 	TS.api = {
 		state: S, get renderer() { return renderer; }, get output() { return output; },
 		setTool, pencilFinish, get pencil() { return pencil; }, get exchange() { return exchange; },
-		addPrimitive, processNow, processInBackground, get workerBusy() { return workerBusy; }, get workerOn() { return !!worker; }, asepriteSend, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
+		addPrimitive, newBlockout, setBlockout, exportBlockoutPNG, processNow, processInBackground, get workerBusy() { return workerBusy; }, get workerOn() { return !!worker; }, asepriteSend, exportMaps, bundleJSON, addReference, removeReference, get refs() { return S.refs; }, exportName, undo, redo, openTilesetURL, openProject, projectJSON, changed,
 		select: (id) => { S.selected = new Set([id]); S.active = id; selChanged(); },
 		// Internals, for scripted checks.
 		get modal() { return modal; }, get viewLock() { return S.viewLock; }, get hover() { return hover; }, get anim() { return anim; }, get dirty() { return dirty; },

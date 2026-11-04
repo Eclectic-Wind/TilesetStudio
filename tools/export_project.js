@@ -9,7 +9,7 @@ const { encodePNG } = require("./png");
 const ctx = { console, Math, JSON, Map, Set, Float32Array, Uint8Array, Int32Array, Int16Array, Uint8ClampedArray, btoa };
 ctx.window = ctx;
 vm.createContext(ctx);
-for (const f of ["math", "proj", "shape", "mesh", "rig", "process", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
+for (const f of ["math", "proj", "shape", "mesh", "rig", "process", "blockout", "bundle"]) vm.runInContext(fs.readFileSync(path.join(root, "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" });
 const TS = ctx.TS, P = TS.Process;
 
 // Decodes a non-interlaced 8-bit PNG (any colour type) to RGBA8. Throws on anything else.
@@ -73,7 +73,7 @@ const objects = project.objects || [];
 
 // Projects carrying retired kind names (deco, solid, wall, side) are mapped first, as the Studio does on open.
 P.migrateKinds(objects);
-const result = P.run(objects, art, settings);
+const result = settings.blockout ? TS.Blockout.process(objects, art, settings) : P.run(objects, art, settings);
 result.pieceMap = P.pieces(objects, result, settings);
 
 // Animated tiles: each clip's Albedo sheet (a data URL in the project, as Aseprite sent it), decoded for TS.Bundle.anim.
@@ -85,7 +85,7 @@ for (const c of (anim && anim.clips) || []) {
 
 const name = TS.Bundle.exportName(project.name, project.exportName);
 const bundle = TS.Bundle.build({
-	name, bundleId: project.bundleId || crypto.randomUUID(), atlas: project.tileset, art, objects, settings, result, now: new Date().toISOString(),
+	name, bundleId: project.bundleId || crypto.randomUUID(), atlas: settings.blockout ? "data:image/png;base64," + encodePNG(result.art.data, result.art.w, result.art.h).toString("base64") : project.tileset, art: result.art, objects, settings, result, now: new Date().toISOString(),
 	anim, albedoOf: (clip) => sheets.get(clip.id) || null, encodePNG: (rgba, w, h) => encodePNG(rgba, w, h).toString("base64"),
 });
 const text = JSON.stringify(bundle);

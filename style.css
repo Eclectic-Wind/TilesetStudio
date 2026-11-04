@@ -534,3 +534,8 @@ body.animating .timeline.animonly { display: flex; }
 .timeline .kd.e-hold { background: #ff9f43; border-radius: 0; transform: none; }
 .timeline .kd.e-hold.sel { background: #fff; }
 .timeline button.on { border-color: var(--accent); }
+/* Blockout controls */
+.viewbar { flex-wrap: wrap; }
+.viewbar input[type="color"] { width:30px; height:23px; padding:1px; border:1px solid #566170; background:transparent; cursor:pointer; }
+#blockout_color_control[hidden] { display:none; }
+#p_blockcolor { width:60px; height:28px; cursor:pointer; }

@@ -28,6 +28,10 @@ Prefer a local server? Run `serve.ps1` and visit `http://127.0.0.1:8765/`. Over 
 
 The whole tool is this folder, so you can copy it anywhere to hand it out. New here? Press **L** for the animated **Learn** lessons (modelling, animation and the Aseprite link).
 
+## Blockout mode update
+
+Enable **Blockout** in the modeling view, then use the existing **Add** and **Free Draw** tools. Objects receive procedural colors only while the mode is on. The project source PNG updates automatically after geometry and color edits, remains visible when Blockout is turned off, and saves with the project. Colors can be changed in Properties and exported as a transparent PNG. Free Draw now follows isometric floor/surface planes. [Workflow and controls](docs/blockout-mode.md).
+
 ## How it works
 
 **Upload tileset → model over the art → Process → check → Export**
@@ -126,7 +130,7 @@ Window controls sidebar, toolbar, lighting, statistics, references and animation
 The Lighting panel includes Render Scale: 100% (default), 75%, 50%, and 25%. This scales the Lit preview sampling resolution, including animation playback, while maintaining its displayed size and light coordinates. Other map views, processed source maps and exports remain full resolution. The selected scale is remembered in browser preferences. Lower scales trade preview detail for fewer lighting calculations.
 
 ### Free Draw height adjustment
-Finish a freehand/corner outline or drag a primitive footprint to enter a live preview. Scroll up/down adjusts height or Carve depth by 1 px; Shift+scroll adjusts by 0.1 px. Thickness remains editable and synchronized. Click in the modeling viewport or press Enter to commit, or Esc to cancel. Cut Through always uses the full target depth. The wheel returns to normal camera navigation after confirming/canceling. Preview edits do not add undo steps; confirmation creates one undo step.
+Finish a freehand/corner outline or drag a primitive footprint to enter a live preview. [ / ] adjusts height or Carve depth by 1 px; Shift+[ / ] adjusts by 0.1 px. Thickness remains editable and synchronized. Click in the modeling viewport or press Enter to commit, or Esc to cancel. Cut Through always uses the full target depth. The wheel stays available for camera zoom during drawing and preview. Preview edits do not add undo steps; confirmation creates one undo step.
 
 ### Lit renderer comparison (experimental)
 The Lighting panel offers Current (default), GPU, and Compare. GPU moves material and lighting shading to WebGL2 while retaining the reference CPU shadow test. Compare shows Current on the left and GPU on the right; interact with the left pane to synchronize light, zoom, and pan. Both use the same Height, Reach, Render Scale and shadow controls. Only the selected renderer runs outside Compare. GPU maps are cached until processing updates them. WebGL failures, oversized textures and animation playback fall back to Current with a visible message. Project data and exports are unchanged. GPU visual matching and performance require testing on target hardware; this experimental mode does not claim pixel-exact equivalence. Heavy shadow scenes may remain CPU-bound.
