@@ -127,4 +127,23 @@ test("a new link from Studio takes its art again and refits the canvas", functio
   assert(m.session == "two" and m.art == true)
 end)
 
+test("online, an edit waits for Send now; ticking Send every edit sends it at once", function()
+  local bins = 0
+  state.ws = { sendText = function() end, sendBinary = function() bins = bins + 1 end }
+  state.online, state.auto, state.awaiting, state.edited, state.dirty = true, false, nil, nil, false
+  state.meta = { rev = 1, session = state.session }
+  paint(sprite, 5)
+  api.onEdit()
+  assert(state.edited and not state.dirty, "an online edit must wait")
+  api.tick()
+  assert(bins == 0, "sent without Send now")
+  state.edited, state.manualSend, state.dirty = nil, true, true -- the Send now button
+  api.tick()
+  assert(bins > 0 and not state.manualSend, "Send now did not send")
+  state.auto = true
+  api.onEdit()
+  assert(state.dirty and not state.edited, "Send every edit must send")
+  state.ws, state.online, state.auto, state.dirty = nil, nil, false, false
+end)
+
 print(passed .. " passed, " .. failed .. " failed")

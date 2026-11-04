@@ -759,7 +759,7 @@
 		$("as_help_lessons").onclick = () => { help(false); TS.Learn.openSection("aseprite"); };
 		$("as_help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") help(false); });
 		$("as_help").addEventListener("click", (e) => { if (e.target === $("as_help")) help(false); });
-		$("as_send").onclick = asepriteSend;
+		$("as_send").onclick = () => TS.Link.sendNow() || asepriteSend();
 		asepriteState("off", Link.supported ? "Not linked." : "Not linked. This browser can't watch a folder, so use “Link online”.");
 	}
 

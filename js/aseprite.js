@@ -25,7 +25,13 @@
 	let ws = null, wsRoom = "", wsRetry = 0, wsWait = 0, inbox = null;
 	let token = "", verified = false, openedAt = 0, pingTimer = 0, lastPing = 0, lastPong = 0;
 	let beat = null, beatAt = 0, started = 0, linkedAt = 0, artKeep = null, artSent = false, session = "", warnedOld = false;
-	const PING_MS = 5000, GONE_MS = 8000;
+	// PING_MS is long because every relay message counts against Cloudflare's free daily quota (and wakes the hibernating room).
+	const PING_MS = 30000, GONE_MS = 8000;
+	// Online, only the first sheet of a connection goes out by itself; after that the user presses Send (L.sendNow). The folder link
+	// costs nothing, so it always stays live.
+	let sentThisOpen = false, forceNext = false;
+	L.manual = true;
+	L.waiting = null; // [sheet, layout, extra]: the newest sheet that was held back, sent by L.sendNow
 	// The relay (tools/relay): lets any browser link over the internet, no folder access needed. Its address is filled in on deploy.
 	L.RELAY = "wss://tileset-studio-relay.tileset-studio.workers.dev";
 	L.onRelayOpen = null; // () -> void: the relay connected, send the current picture
@@ -94,7 +100,7 @@
 		w.binaryType = "arraybuffer";
 		say("wait", "Connecting to the relay…");
 		w.onopen = () => {
-			wsRetry = 0; token = L.newRoom().slice(0, 12); verified = false; openedAt = Date.now(); lastPing = lastPong = 0;
+			wsRetry = 0; token = L.newRoom().slice(0, 12); verified = false; sentThisOpen = false; openedAt = Date.now(); lastPing = lastPong = 0;
 			say("wait", "Online. Waiting for Aseprite to join with this room code.");
 			if (artKeep) L.artPending = artKeep; // the relay forgot it if it restarted, and a late Aseprite still needs it
 			ping();
@@ -155,6 +161,13 @@
 	L.push = async (sheet, layout, extra) => {
 		if (!dir && !ws) return;
 		if (L.adoptPending) return L.hello(); // Aseprite's file starts the project: no sheet goes out until Studio has taken its size
+		if (!dir && L.manual && sentThisOpen && !forceNext) {
+			L.waiting = [sheet, layout, extra];
+			say("ok", "Changes ready. Press “Send normal map now” to update Aseprite.");
+			return;
+		}
+		forceNext = false; L.waiting = null;
+		if (L.relayOpen()) sentThisOpen = true;
 		const c = document.createElement("canvas");
 		c.width = sheet.width; c.height = sheet.height;
 		c.getContext("2d").putImageData(sheet, 0, 0);
@@ -167,6 +180,10 @@
 		if (L.relayOpen()) { ws.send(meta); if (artBlob) await relaySend(3, artBlob); await relaySend(1, blob); }
 		if (artBlob && (dir || L.relayOpen())) { L.artPending = null; artKeep = art; artSent = true; }
 	};
+
+	// The Send button: the held-back sheet goes out now. Returns null if nothing was held back (the caller renders a fresh one, which
+	// then goes out because forceNext is set).
+	L.sendNow = () => { forceNext = true; const w = L.waiting; return w ? L.push(w[0], w[1], w[2]) : null; };
 
 	// Origin aseprite: tell Aseprite we are waiting for its file (no sheet yet; rev 0 so no normal map is imported).
 	L.hello = async () => {

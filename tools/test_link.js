@@ -95,7 +95,7 @@ const test = async (name, fn) => {
 	});
 	await test("the art flag stays on for the whole link, and every link has its own session", async () => {
 		const t = load(); open(t);
-		t.L.origin = "studio";
+		t.L.origin = "studio"; t.L.manual = false;
 		t.L.artPending = { width: 32, height: 32 };
 		const layout = { w: 32, h: 32, cw: 32, ch: 32, cols: 1, rows: 1, frames: 1 };
 		await t.L.push({ width: 32, height: 32 }, layout);
@@ -110,6 +110,25 @@ const test = async (name, fn) => {
 		const next = JSON.parse(ws(t).sent.find((m) => typeof m === "string" && m.includes('"meta"')));
 		assert.notStrictEqual(next.session, before);
 		assert.strictEqual(next.art, false);
+	});
+
+	await test("online, only the first sheet goes out by itself; Send releases the newest held-back one", async () => {
+		const t = load(); open(t);
+		t.L.origin = "studio";
+		const layout = { w: 32, h: 32, cw: 32, ch: 32, cols: 1, rows: 1, frames: 1 };
+		const metas = () => ws(t).sent.filter((m) => typeof m === "string" && m.includes('"meta"')).length;
+		await t.L.push({ width: 32, height: 32 }, layout);
+		assert.strictEqual(metas(), 1);
+		await t.L.push({ width: 32, height: 32 }, layout);
+		await t.L.push({ width: 32, height: 32 }, layout);
+		assert.strictEqual(metas(), 1);
+		assert(t.L.waiting);
+		await t.L.sendNow();
+		assert.strictEqual(metas(), 2);
+		assert.strictEqual(t.L.waiting, null);
+		ws(t).onopen(); // reconnected: the first sheet goes out again by itself
+		await t.L.push({ width: 32, height: 32 }, layout);
+		assert.strictEqual(metas(), 3);
 	});
 
 	console.log("Folder");

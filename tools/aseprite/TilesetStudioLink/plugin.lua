@@ -290,7 +290,10 @@ local function exportAlbedo()
   end
   -- Changing a layer's name or visibility counts as an edit too: a picture that came out the same is not sent again.
   local key = table.concat({ tostring(meta and meta.clip), tostring(cols), tostring(rows), sheet.bytes })
-  if key == state.lastSent then return end
+  if key == state.lastSent then
+    if state.manualSend then say("Nothing changed since the last send.") end
+    return
+  end
   if not deliver(sheet) then return end
   state.lastSent = key
   if anim and not (isPow2(sheet.width) and isPow2(sheet.height)) then
@@ -564,6 +567,18 @@ local function stop()
   state = nil
 end
 
+-- Online, edits only go out when "Send now" is pressed (or "Send every edit" is ticked): every relay message counts against the
+-- relay's free Cloudflare quota. The folder link is free, so there every edit still goes out.
+local prefs = nil -- plugin.preferences, once init has run (remembers the "Send every edit" box)
+local function manual() return state.ws and not state.auto end
+
+local function onEdit()
+  if not state or state.ignore then return end
+  if manual() then
+    if not state.edited then state.edited = true say("Edited. Press \"Send now\" to update Studio.") end
+  else state.dirty = true end
+end
+
 local function start(folder, relay)
   local sprite = app.sprite
   if not sprite then
@@ -572,7 +587,7 @@ local function start(folder, relay)
     sprite = Sprite(32, 32, ColorMode.RGB)
   end
   stop()
-  state = { sprite = sprite, folder = folder, dirty = true, rev = 0, framesRev = os.time() * 100, started = os.time() }
+  state = { sprite = sprite, folder = folder, dirty = true, rev = 0, framesRev = os.time() * 100, started = os.time(), auto = prefs and prefs.autoSend or false }
   snapshotFrames()
   if not relay then writeHeartbeat() end
   if relay then
@@ -581,16 +596,23 @@ local function start(folder, relay)
       if state then relayReceive(mt, data, err) end
     end }
   end
-  state.listener = sprite.events:on("change", function()
-    if state and not state.ignore then state.dirty = true end
-  end)
+  state.listener = sprite.events:on("change", onEdit)
   if not (rawget(_G, "TSL_TEST") and TSL_TEST.headless) then
     state.dlg = Dialog{ title = "Tileset Studio Link", onclose = stop }
     state.dlg:label{ text = "File: " .. ((sprite.filename and sprite.filename ~= "") and app.fs.fileName(sprite.filename) or "(unsaved sprite)") .. "  (only this file is linked)" }
     state.dlg:label{ id = "folder", text = relay and ("Room: " .. relay.room) or ("Folder: " .. folder) }
     state.dlg:label{ id = "studio", text = relay and "Studio: not seen yet" or "Studio: reads this folder" }
     state.dlg:label{ id = "status", text = "Linked. Paint in the group named Albedo." }
-    state.dlg:button{ text = "Send now", onclick = function() local ok, err = pcall(exportAlbedo) if not ok then say("Error: " .. tostring(err)) end end }
+    if relay then
+      state.dlg:check{ id = "auto", text = "Send every edit (uses up the free relay faster)", selected = state.auto, onclick = function()
+        state.auto = state.dlg.data.auto
+        if prefs then prefs.autoSend = state.auto end
+        if state.auto and state.edited then state.edited = nil state.dirty = true end
+      end }
+      state.dlg:newrow()
+    end
+    -- Sent from the tick, so frame changes here are passed on first, just as for an automatic send.
+    state.dlg:button{ text = "Send now", onclick = function() state.edited = nil state.manualSend = true state.dirty = true end }
     state.dlg:button{ text = "Set up file", onclick = function() local ok, err = pcall(setUpFile) if not ok then say("Error: " .. tostring(err)) end end }
     state.dlg:button{ text = "Fit canvas", onclick = function() local ok, err = pcall(fitCanvas) if not ok then say("Error: " .. tostring(err), true) end end }
     state.dlg:button{ text = "Stop", onclick = function() state.dlg:close() end }
@@ -671,6 +693,7 @@ local function start(folder, relay)
         state.dirty = false
         if syncFrames() then state.awaiting = os.clock() + 6
         elseif not state.awaiting then exportAlbedo() end
+        state.manualSend = nil
       end
       if state.awaiting and os.clock() > state.awaiting then state.awaiting = nil; state.dirty = true end
     end)
@@ -700,6 +723,7 @@ local function relayCommand(plugin)
 end
 
 function init(plugin)
+  prefs = plugin.preferences
   plugin:newCommand{
     id = "TilesetStudioLinkOnline",
     title = "Tileset Studio Link (online)...",
@@ -736,6 +760,6 @@ if rawget(_G, "TSL_TEST") then
   TSL_TEST.api = {
     layoutFor = layoutFor, parseMeta = parseMeta, frameOps = frameOps, frameBytes = frameBytes,
     start = start, tick = function() state.tick() end, fitCanvas = fitCanvas, setUpFile = setUpFile, relayReceive = relayReceive, writeHeartbeat = writeHeartbeat, statusFields = statusFields, setState = function(v) state = v end, getState = function() return state end,
-    exportAlbedo = exportAlbedo, importNormal = importNormal, syncFrames = syncFrames, ensureFrames = ensureFrames, snapshotFrames = snapshotFrames,
+    onEdit = onEdit, exportAlbedo = exportAlbedo, importNormal = importNormal, syncFrames = syncFrames, ensureFrames = ensureFrames, snapshotFrames = snapshotFrames,
   }
 end

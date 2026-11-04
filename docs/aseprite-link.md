@@ -82,7 +82,13 @@ warns too. Fix the canvas and the next edit goes through.
 
 The folder picker is Chromium-only, so there is a second transport that needs no folder access. Studio (in the browser) and the
 extension (in Aseprite) both **dial out** to a tiny relay (`tools/relay`, a Cloudflare Worker) and share a random room code. The relay
-only forwards the PNGs and keeps the latest in memory until everyone has left; it stores nothing.
+only forwards the PNGs and keeps the latest until everyone has left, then deletes it.
+
+**Online, updates are manual.** The relay runs on Cloudflare's free plan, and every message counts against its daily quota, so
+only the first picture of a connection goes out by itself. After that, press **Send now** in Aseprite's link window to send your
+Albedo (and any frames you added or deleted), and **Send normal map now** in Studio's *Aseprite ▾* menu to send the normal map. Tick
+**Send every edit** in Aseprite's link window to go back to live updates (it uses up the quota much faster). The folder link costs
+nothing and stays live. The relay hibernates between messages (Cloudflare's WebSocket Hibernation), and Studio pings only every 30 s.
 
 1. **Requirements:** Aseprite **1.3 or newer** (the extension uses its Lua `WebSocket` API) and the extension
    [`TilesetStudioLink.aseprite-extension`](../tools/aseprite/TilesetStudioLink.aseprite-extension) (double-click to install, or
