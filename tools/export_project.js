@@ -55,6 +55,19 @@ function decodePNG(buf) {
 	return { w, h, data };
 }
 
+// A target's per-frame floor spans in one line: where the block sits and each frame's south edge (the floor y a game sorts that frame by:
+// the last floor row of the frame with something standing on it).
+function floorSummary(t, frames) {
+	const [, ry, rw] = t.rect, bytes = Buffer.from(t.floor, "base64"), W = t.cols * rw, top = ry + t.floorDy, south = [];
+	for (let f = 0; f < frames; f++) {
+		const fx = (f % t.cols) * rw, fy = Math.floor(f / t.cols) * t.floorH;
+		let last = -1;
+		for (let y = 0; y < t.floorH; y++) for (let x = 0; x < rw; x++) if (bytes[((fy + y) * W + fx + x) * 4]) last = y;
+		south.push(last < 0 ? "-" : top + last);
+	}
+	return `      floor spans: rows ${top}..${top + t.floorH - 1} (floorDy ${t.floorDy}, floorH ${t.floorH}), ${Math.round(t.floor.length / 1024)} KB; south edge by frame: ${south.join(" ")}`;
+}
+
 const [inPath, outPath] = process.argv.slice(2);
 if (!inPath || !outPath) {
 	console.error("Usage: node tools/export_project.js <in.studio.json> <out.export.json>");
@@ -107,7 +120,10 @@ if (bundle.anim) {
 	console.log(`anim: ${bundle.anim.clips.length} clip(s)`);
 	for (const c of bundle.anim.clips) {
 		console.log(`  ${c.name}: ${c.frames} frames at ${c.fps} fps, ${c.loop}, shadow ${c.shadow}, collision ${c.collision}`);
-		for (const t of c.targets) console.log(`    piece ${t.piece} (${fp.pieces[t.piece - 1].names.join(" + ")}) ${t.source} rect [${t.rect}] ${t.cols}x${t.rows} frames per sheet, color ${Math.round(t.color.length / 1024)} KB${t.data ? ", data " + Math.round(t.data.length / 1024) + " KB" : ", no data (base frame's height and normal)"}`);
+		for (const t of c.targets) {
+			console.log(`    piece ${t.piece} (${fp.pieces[t.piece - 1].names.join(" + ")}) ${t.source} rect [${t.rect}] ${t.cols}x${t.rows} frames per sheet, color ${Math.round(t.color.length / 1024)} KB${t.data ? ", data " + Math.round(t.data.length / 1024) + " KB" : ", no data (base frame's height and normal)"}`);
+			if (t.floor) console.log(floorSummary(t, c.frames));
+		}
 	}
 	for (const w of bundle.anim.warnings) console.log("  warning: " + w);
 }

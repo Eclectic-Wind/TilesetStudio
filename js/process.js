@@ -672,44 +672,82 @@
 			data[o + 3] = material(has ? r.rough[i] : 1, has ? r.metal[i] : 0) + 1;
 			put16(o, pieceOf(r.owner[i]));
 		}
-		const byte = (v) => TS.clamp(Math.round(v), 0, 255);
 		let gaps = 0;
 		for (let k = 0; k < W * rows; k++) {
-			if (floor.top[k] < 0) continue;
+			const fp = P.floorPoint(floor, k, pieceOf);
+			if (!fp) continue;
 			const o = (W * H + k) * 4;
-			// The solid runs here, bottom to top. Crossings merge into one run while they touch (within 0.5 px) and belong to one piece;
-			// a run is {a, b, piece}: its bottom, top and piece.
-			const prs = [], runs = [];
-			for (let j = floor.pairStart[k]; j < floor.pairStart[k + 1]; j++) prs.push([floor.pairA[j], floor.pairB[j], floor.pairObj[j]]);
-			prs.sort((p, q) => p[0] - q[0]);
-			for (const [a, b, oi] of prs) {
-				const piece = pieceOf(oi), last = runs[runs.length - 1];
-				if (last && last.piece === piece && a <= last.b + 0.5) last.b = Math.max(last.b, b);
-				else runs.push({ a, b, piece });
-			}
-			let under = floor.bottom[k], top = floor.top[k], topPiece = pieceOf(floor.owner[k]);
-			let lo = -1, hi = 0, upper = topPiece, lower = topPiece;
-			if (runs.length) {
-				under = runs[0].a; top = runs[runs.length - 1].b; topPiece = runs[runs.length - 1].piece;
-				upper = lower = topPiece;
-				// The topmost piece's lowest run and the run under it: that boundary is the gap, whatever its size.
-				const j = runs.findIndex((run) => run.piece === topPiece);
-				if (j > 0) { lo = runs[j - 1].b; hi = Math.max(lo, runs[j].a); lower = runs[j - 1].piece; upper = runs[j].piece; }
-				else {
-					// Otherwise the tallest gap, as before.
-					let best = MIN_GAP;
-					for (let q = 0; q + 1 < runs.length; q++) {
-						const gap = runs[q + 1].a - runs[q].b;
-						if (gap >= best) { best = gap; lo = runs[q].b; hi = runs[q + 1].a; lower = runs[q].piece; upper = runs[q + 1].piece; }
-					}
-				}
-			}
-			data[o] = byte(top) + 1 > 255 ? 255 : byte(top) + 1;
-			data[o + 1] = byte(under);
-			if (lo >= 0) { data[o + 2] = Math.min(255, byte(lo) + 1); data[o + 3] = byte(hi); gaps++; }
-			put16(o, upper); put16(o + 2, lower);
+			if (P.putFloorPoint(data, o, fp)) gaps++;
+			put16(o, fp.upper); put16(o + 2, fp.lower);
 		}
 		return { w: W, h: H, rows, materials, highlights: !!settings.packHighlights, data, pieces, gaps };
+	};
+
+	const byte = (v) => TS.clamp(Math.round(v), 0, 255);
+	// One floor point of a floorField as the floor rows of maps.data store it, or null where nothing stands. pieceOf(model index) -> the
+	// piece number (0 = none) the gap rule needs; a field of ONE piece (an animated piece posed alone) passes a constant.
+	// -> {top, under, lo, hi, upper, lower}: the highest top, the lowest underside, the gap (lo..hi; lo = -1 for none) and the piece above
+	// / below it. P.maps and the animated tiles' per-frame floor spans (Bundle.anim) both read the field through this one function.
+	P.floorPoint = (floor, k, pieceOf) => {
+		if (floor.top[k] < 0) return null;
+		// The solid runs here, bottom to top. Crossings merge into one run while they touch (within 0.5 px) and belong to one piece;
+		// a run is {a, b, piece}: its bottom, top and piece.
+		const prs = [], runs = [];
+		for (let j = floor.pairStart[k]; j < floor.pairStart[k + 1]; j++) prs.push([floor.pairA[j], floor.pairB[j], floor.pairObj[j]]);
+		prs.sort((p, q) => p[0] - q[0]);
+		for (const [a, b, oi] of prs) {
+			const piece = pieceOf(oi), last = runs[runs.length - 1];
+			if (last && last.piece === piece && a <= last.b + 0.5) last.b = Math.max(last.b, b);
+			else runs.push({ a, b, piece });
+		}
+		let under = floor.bottom[k], top = floor.top[k], topPiece = pieceOf(floor.owner[k]);
+		let lo = -1, hi = 0, upper = topPiece, lower = topPiece;
+		if (runs.length) {
+			under = runs[0].a; top = runs[runs.length - 1].b; topPiece = runs[runs.length - 1].piece;
+			upper = lower = topPiece;
+			// The topmost piece's lowest run and the run under it: that boundary is the gap, whatever its size.
+			const j = runs.findIndex((run) => run.piece === topPiece);
+			if (j > 0) { lo = runs[j - 1].b; hi = Math.max(lo, runs[j].a); lower = runs[j - 1].piece; upper = runs[j].piece; }
+			else {
+				// Otherwise the tallest gap, as before.
+				let best = MIN_GAP;
+				for (let q = 0; q + 1 < runs.length; q++) {
+					const gap = runs[q + 1].a - runs[q].b;
+					if (gap >= best) { best = gap; lo = runs[q].b; hi = runs[q + 1].a; lower = runs[q].piece; upper = runs[q + 1].piece; }
+				}
+			}
+		}
+		return { top, under, lo, hi, upper, lower };
+	};
+	// A floor point's four bytes at data[o..o+3]: R top + 1, G underside, B gap bottom + 1, A gap top (the maps.data floor row form).
+	// -> true when it has a gap.
+	P.putFloorPoint = (data, o, fp) => {
+		data[o] = Math.min(255, byte(fp.top) + 1);
+		data[o + 1] = byte(fp.under);
+		if (fp.lo < 0) return false;
+		data[o + 2] = Math.min(255, byte(fp.lo) + 1);
+		data[o + 3] = byte(fp.hi);
+		return true;
+	};
+	// Where a set of models can cover floor points: a box {x0, y0, x1, y1} (inclusive, clamped to the W x rows plan), or null when
+	// nowhere. The triangle bounds floorField loops over, tightened to the pixel centres it samples: a cheap bound for sizing before
+	// the field has run (the animated tiles' per-frame floor blocks).
+	P.floorReach = (objects, W, rows) => {
+		let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+		const slack = 0.01;
+		for (const obj of objects) {
+			for (const t of Mesh.triangles(obj)) {
+				const a = obj.verts[t.a], b = obj.verts[t.b], c = obj.verts[t.c];
+				if (Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9) continue;
+				// A floor point is the pixel centre (x + 0.5, y + 0.5): the first column with a centre at or past the triangle's west
+				// edge, the last with one at or before its east edge (and the same for rows).
+				x0 = Math.min(x0, Math.max(0, Math.ceil(Math.min(a[0], b[0], c[0]) - 0.5 - slack)));
+				x1 = Math.max(x1, Math.min(W - 1, Math.floor(Math.max(a[0], b[0], c[0]) - 0.5 + slack)));
+				y0 = Math.min(y0, Math.max(0, Math.ceil(Math.min(a[1], b[1], c[1]) - 0.5 - slack)));
+				y1 = Math.max(y1, Math.min(rows - 1, Math.floor(Math.max(a[1], b[1], c[1]) - 0.5 + slack)));
+			}
+		}
+		return x0 <= x1 && y0 <= y1 ? { x0, y0, x1, y1 } : null;
 	};
 
 	// Version 2 adds each model's `collision` ({mode, polygons}) and the rule it was made with; the version 1 fields stay, so an

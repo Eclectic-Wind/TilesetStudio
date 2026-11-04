@@ -2,7 +2,7 @@
 
 Version 6 only **adds** to version 5 (below): every version 5 field keeps its shape, and a reader that ignores `anim` gets the base frame of every animated piece as an ordinary still tile (the atlas, `maps.data`, `maps.pieces` and the piece table are unchanged: no frame lives in the atlas grid, no cell moves, frames add no pieces and no paintable tiles).
 
-New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about: **flipbooks** (frames painted in Aseprite), **static shadow and collision**. When bones move a target's models in the clip, the target also carries each frame's height, normal and material in `data`. A reader that ignores `data` still works, with the base frame's lighting. `source: "rig"` (frames rendered with no painting) is reserved and not written.
+New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about: **flipbooks** (frames painted in Aseprite), **static shadow and collision**. When bones move a target's models in the clip, the target also carries each frame's height, normal and material in `data` and (oblique projection) each frame's **exact floor spans** in `floor`, so the shadow of a swinging door comes from the 3D model like a static piece's does (the clip then says `shadow: "frames"`; see *Floor spans* below). A reader that ignores `data` and `floor` still works, with the base frame's lighting and shadow. `source: "rig"` (frames rendered with no painting) is reserved and not written.
 
 ## `anim`
 
@@ -11,7 +11,7 @@ anim: {
   clips: [{
     name, fps, frames,
     loop: "loop" | "once" | "pingpong",   // what happens at the last frame. Playback itself (auto-play, from code) is the game's
-    shadow: "static",                    // the base frame's: "frames" is reserved
+    shadow: "static" | "frames",         // "static": the base frame's. "frames": the targets that carry `floor` have their own shadow per frame (one without `floor` keeps the base frame's). A reader that does not know "frames" reads "static"
     collision: "static",                 // always the base frame's
     targets: [{
       piece,                             // the animated piece: its number in footprints.pieces (1-based), as pieceIndex
@@ -19,32 +19,68 @@ anim: {
       cols, rows,                        // the frames are packed cols per row, left to right then down, each w x h (frame f at ((f % cols) * w, floor(f / cols) * h))
       source: "flipbook",                // "rig" reserved
       color: "<base64 PNG>",             // cols*w x rows*h RGBA: the frames' albedo, as painted (transparent pixels show what is behind)
-      data?: "<base64>"                  // present when bones move the target's models: raw bytes like maps.data, packed like color (cols*w x rows*h x 4 bytes).
+      data?: "<base64>",                 // present when bones move the target's models: raw bytes like maps.data, packed like color (cols*w x rows*h x 4 bytes).
                                          // Each pixel is maps.data's art-row form: R height, G B normal, A material + 1 (an index into maps.materials); 0,0,0,0 = no paint here.
                                          // Absent = every frame reuses the base frame's height, normal and material: read maps.data at `rect`
+      floor?: "<base64>",                // present with `data`, oblique only: each frame's exact floor spans, raw bytes packed like color (cols*w x rows*floorH x 4). See *Floor spans*
+      floorDy?: int,                     // with `floor`: floor y of a frame block's first row, relative to rect[1] (floor y = rect[1] + floorDy + row). Can be negative; may reach south of the rect
+      floorH?: int                       // with `floor`: rows per frame
     }]
   }],
   warnings: [string]                     // for the artist, as the Animate panel shows them
 }
 ```
 
-- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame (height, normal and material come from `data` when it is there). A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
+- The game draws the target **instead of** the base piece while the clip plays (transparent frame pixels show what is behind, not the base art), and keeps the piece's sort row, shadow, collision and `walk` as in the base frame (height, normal and material come from `data` when it is there; shadow and sort row from the frame's `floor` spans when they are there). A frame can be smaller than `rect`: it is transparent where it paints nothing. `rect` can reach past the base art (a door swinging open): pixels painted over another piece's art are not counted, since they belong to that piece in a whole-tileset sheet.
 - The frame count and the sheet: the Studio takes each frame from the clip's Albedo sheet (`Rig.layout` cells of the whole tileset), crops it to `rect` and packs the crops. `rows * cols >= frames`; `cols` is at most 2048 / w.
 - `piece` is the piece the clip's models belong to (models are chosen per clip). The whole piece is swapped, so the frames must show the whole piece, not only the models that change.
-- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame (with `data`: that frame's posed models) has no surface, so height and normal are flat there; a rect reaching south of the piece's base row (oblique), which the game sorts by.
+- A clip target is **not exported** (and `warnings` says why) when: the clip has no Albedo sheet or its size is not `Rig.layout` of the tileset for `frames`; the piece holds stairs (`walk: "stairs"`: a moving walk surface is not supported); the models have no art on the canvas. Warnings only (still exported): a frame with no painted pixel; pixels painted where the base frame (with `data`: that frame's posed models) has no surface, so height and normal are flat there; a rect reaching south of the piece's base row (oblique), which a game that does not read `floor` sorts by (with `floor`, each frame's own south edge is in it); isometric with moving models (the shadow stays the base frame's).
+
+## Floor spans: the shadow of a moving piece (`floor`, `floorDy`, `floorH`)
+
+Written for a target whose models **move** in the clip (the same condition as `data`), **oblique projection only**. They are the floor rows of `maps.data` for each frame: what a static piece gets once in `maps`, a moving piece gets per frame, computed from the posed geometry by the same code (`Process.floorField` -> `Process.floorPoint`), so hidden faces, undersides and gaps (a door's grille or slot, a cart's shelves) are exact, not inferred from the art. This is an addition **inside version 6** (no version bump): all three fields are new and optional, found by being there. A reader that ignores them still gets today's behaviour: the base frame's shadow. A reader that meets `shadow: "frames"` and does not know it should read it as `"static"`.
+
+```
+floor:   base64 raw bytes, cols*w x rows*floorH x 4  (w = rect[2]); frame f's block is the floorH rows starting at
+         row floor(f / cols) * floorH, columns starting at (f % cols) * w   (packed exactly like color / data, but floorH tall)
+floorDy: int   floor y of a frame block's first row, relative to rect[1]: floor y = rect[1] + floorDy + j. Can be negative; the block may reach south of the rect
+floorH:  int   rows per frame
+```
+
+Pixel (i, j) of frame f's block is the **floor point** (x, y) = (`rect[0] + i`, `rect[1] + floorDy + j`): its column is the art column (an oblique floor point's x is its art column), its row is floor-plan y, the same plan as `maps.data`'s floor rows (a floor point is drawn at canvas (x, y - z)). Its four bytes are `maps.data`'s floor-row form, unchanged:
+
+| byte | meaning |
+|---|---|
+| R | highest top above the floor point, `top + 1` (px, 1-255; **0 = nothing stands here**, the frame's piece does not cover this point) |
+| G | lowest underside (px; 0 = it stands on the floor) |
+| B | `gap bottom + 1` of the tallest hole between the piece's solid spans there (0 = no gap) |
+| A | gap top (px) |
+
+Heights are px above the floor in absolute model z (the asset modelled at local z = 0; the game offsets a storey), clamped to 0-255 like `maps.data`. The gap is the tallest hole of at least 3 px between the spans (a door with a window or letter slot: a gap where the slot is, solid above and below).
+
+- **Only this piece, posed.** Each frame's block comes from the target piece's own models at that frame's pose, alone. At a floor point where another piece also stands (a wall piece above a doorway), `maps` holds the base pose's merged spans, and `maps.pieces` says which piece owns each half; the frame's block holds this piece's spans only, so the game replaces this piece's contribution while the clip plays and keeps the other pieces'.
+- **Same sampling as the static floor rows.** A floor point is a pixel centre (x + 0.5, y + 0.5) inside a triangle of the posed model, so a part thinner than 1 px can fall between points (a static piece has the same limit). A leaf 3 px or more thick, swung through any angle, is a solid 4-connected line on the floor: no dots. Measured on the Ward's doors: every frame of the white door (9), the red door (28) and the two-leaf door (8) is one component per leaf.
+- **The rect holds the floor columns.** `rect` grows (in whole cells, as for painted pixels) so every floor point of every frame has its column inside `rect`, even where a frame paints nothing there. Floor **rows** are not limited to the rect: `floorDy` / `floorH` cover every row any frame stands on (a leaf swung open reaches further south than the art does).
+- **The frame's south edge needs no field.** It is `rect[1] + floorDy + j` for the **largest** row `j` of frame f's block with R > 0, the same definition as `footprints.pieces[].base` ("the largest floor row its footprint covers"); the north edge `back` is the smallest. Sort the frame by its south edge. The white door's south edge by frame is 158 159 160 173 183 190 193 194 194 (the piece's static `base` is 158).
+- **What the game does** (the importer's job): while the clip plays, stamp the current frame's block into the dynamic heightfield at (`rect[0]`, `rect[1] + floorDy`) in place of the piece's static floor points (the points `maps.pieces` gives to this piece), the same way a static piece's rows are read; sort the piece by the frame's south edge.
+- **Not written** (shadow stays the base frame's, `shadow` stays `"static"` for that target): a clip that only repaints (no bone moves the target's models), the isometric projection (a floor point's column is not its art column there; `warnings` says so), a stairs piece (already not animated).
+
+Sizes, measured: the white door's block is 576 x 42 px (9 frames of 64 wide, `floorDy` 89, `floorH` 42, 126 KB as base64); the red door's 2016 x 100 px (21 x 2 cells of 96 wide, `floorDy` 89, `floorH` 50, 1 MB as base64, 4% of its points filled).
 
 ## Making one in the Studio
 
 1. Model and paint the base frame as usual; the animated thing should be its own piece (its models joined by footprint, or one `piece` name).
 2. Animate mode: pick or add a clip, set the frame count and fps. Paint each frame in Aseprite's **Albedo** group (the link sends the sheet), or load an Albedo sheet.
 3. In the clip's **Clip** section: select the models the flipbook animates, press **Use selected models**; set **Loop**. The **Export ▾** menu lists each animated clip with what is exported and any warnings; its **Export** tick leaves out a clip that should not go into the bundle.
-4. Export ▸ Godot bundle. `node tools/export_project.js in.studio.json out.export.json` does the same headless and prints the targets and their sizes (each clip's `albedo` sheet is a data URL in the project).
+4. Export ▸ Godot bundle. `node tools/export_project.js in.studio.json out.export.json` does the same headless and prints the targets and their sizes (and, for a moving piece, where its floor block sits and each frame's south edge) (each clip's `albedo` sheet is a data URL in the project).
 
 The sample: `node tools/make_anim_sample.js` writes `samples/AnimSample.studio.json` and `samples/AnimSample.export.json` (a TV box with an 8-frame static clip, a flat puddle with a 6-frame ripple, painted headless).
 
 ## Not in this round
 
-`source: "rig"`, `shadow: "frames"` and per-frame floor spans, animated collision, frame de-duplication, isometric (untested; the rect is in canvas px either way).
+`source: "rig"`, animated collision (below), frame de-duplication, per-frame floor spans in the isometric projection (the shadow stays the base frame's; the rect is in canvas px either way, but a floor point's column is not its art column there).
+
+**Animated collision**, what it would take: `collision` stays `"static"` (the base frame's) for now. The data to build it is already there, the posed piece's floor spans: a floor point blocks where a solid span reaches into `[collision.step, collision.body]` (R - 1 above the step and G, or the part under the gap, below the body), exactly the mask the Studio builds for footprint mode. Studio side, `Process.run` already computes each frame's `collision` for the posed piece (it is how `floor` is made), so exporting per-frame polygons (`collision: "frames"`, floor px like `collision.polygons`) is plumbing, about 30 lines plus this schema. What is not decided is policy, and it is the game's: footprint mode pulls the mask in for the feet box (3 px each side, 8 px at the south edge), which erases a door leaf 6 px thick seen side-on, so a swinging leaf needs its own rule (no pull-in, or a strip along the leaf), and the game must rebuild its collision shapes each frame and say what blocks the doorway while the door is open. Not built until those are chosen.
 
 ---
 

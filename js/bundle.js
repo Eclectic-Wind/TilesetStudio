@@ -30,20 +30,24 @@
 			return best;
 		};
 	};
-	// One flipbook frame processed like the base frame: the piece's models at this frame's pose under this frame's paint.
-	const frameSurface = (objs, anim, clip, f, sheet, lay, W, H, settings) => {
+	// One flipbook frame processed like the base frame: the piece's models at this frame's pose (posed) under this frame's paint.
+	const frameSurface = (posed, f, sheet, lay, W, H, settings) => {
 		const [ox, oy] = TS.Rig.cellOrigin(lay, f), rgba = new Uint8ClampedArray(W * H * 4), alpha = new Uint8Array(W * H);
 		for (let y = 0; y < H; y++) {
 			rgba.set(sheet.data.subarray(((oy + y) * sheet.width + ox) * 4, ((oy + y) * sheet.width + ox + W) * 4), y * W * 4);
 			for (let x = 0; x < W; x++) alpha[y * W + x] = rgba[(y * W + x) * 4 + 3];
 		}
-		return TS.Process.run(TS.Rig.posedObjects(objs, anim, clip, f), { w: W, h: H, data: rgba, alpha }, settings);
+		return TS.Process.run(posed, { w: W, h: H, data: rgba, alpha }, settings);
 	};
+	// A field made of ONE piece's models (the posed animated piece alone): every model is the same piece, so P.floorPoint's gap rule
+	// finds the tallest hole between its spans, as for a lone piece in the static maps.
+	const lonePiece = (oi) => (oi >= 0 ? 1 : 0);
 
 	// Animated tiles (bundle version 6, docs/export-schema.md): per clip with a `models` scope, one target per piece those models
 	// belong to. The base frame stays in the atlas; the target holds the frames as cell-aligned rects of the piece's art, packed `cols`
 	// per row, as a PNG of the Aseprite Albedo frames. A clip that only repaints reuses the base frame's height, normal and material;
-	// when bones move the piece, `data` carries them per frame.
+	// when bones move the piece, `data` carries them per frame, and (oblique) `floor` the exact floor spans of the posed piece per frame
+	// (P.floorPoint's form, the same as the floor rows of maps.data), with floorDy / floorH placing the block (clip.shadow = "frames").
 	// p: {anim (project anim: clips[{name, fps, frames, loop, export, models: [object id]}]), objects, settings, result (with pieceMap),
 	//     art: {w, h}, albedoOf(clip) -> {width, height, data RGBA} | null (the clip's Albedo sheet, Rig.layout cells),
 	//     materials (maps.materials), encodePNG(rgba, w, h) -> base64 PNG (no prefix); dry: true skips building the sheets (warnings only)}
@@ -85,6 +89,18 @@
 					if (r.alpha[i] > cut && r.owner[i] >= 0 && pm.pieceOf[r.owner[i]] === piece) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
 				}
 				if (x1 < 0) { warnings.push(`clip "${clip.name}" / ${names}: no art on the canvas, not animated`); continue; }
+				// Bones move this piece in the clip: each frame gets the height, normal and material of the posed models under its own
+				// paint, and (oblique) the exact floor spans of the posed models. The floor block shares the rect's columns (a floor
+				// point's x is its art column), so the rect grows to hold the columns the posed models cover in any frame.
+				const pieceObjs = pm.pieces[piece].objs.map((oi) => p.objects[oi]), moves = pieceObjs.some((o) => Rig.modelMoves(a, clip, o));
+				const posed = moves && !p.dry ? Array.from({ length: frames }, (_, f) => Rig.posedObjects(pieceObjs, a, clip, f)) : null;
+				let reach = null; // the floor points the posed models cover in any frame: {x0, y0, x1, y1}
+				if (posed && oblique)
+					for (const ps of posed) {
+						const q = P.floorReach(ps, W, r.floor.rows);
+						if (q) reach = reach ? { x0: Math.min(reach.x0, q.x0), y0: Math.min(reach.y0, q.y0), x1: Math.max(reach.x1, q.x1), y1: Math.max(reach.y1, q.y1) } : q;
+					}
+				if (reach) { x0 = Math.min(x0, reach.x0); x1 = Math.max(x1, reach.x1); }
 					// A frame can paint past the base art (a door swinging open), so the rect grows to hold it. Pixels over another piece's
 					// art are that piece's in the sheet, and don't count.
 					for (let f = 0; f < frames; f++) {
@@ -99,17 +115,26 @@
 				if (oblique) {
 					let base = 0;
 					for (const oi of pm.pieces[piece].objs) for (const i of r.floor.covers[oi]) { const row = (i / W) | 0; if (row > base) base = row; }
-					if (ry + rh > Math.ceil((base + 1) / T) * T) warnings.push(`clip "${clip.name}" / ${names}: the frames reach south of the piece's base row (${base}); the game sorts it by that row`);
+					if (ry + rh > Math.ceil((base + 1) / T) * T) warnings.push(`clip "${clip.name}" / ${names}: the frames reach south of the piece's base row (${base}); the game sorts it by that row${reach ? " (the floor spans give each frame its own south edge)" : ""}`);
 				}
 				const cols = Math.max(1, Math.min(frames, Math.floor(MAX_SHEET / rw))), rows = Math.ceil(frames / cols);
 				const out = p.dry ? null : new Uint8ClampedArray(cols * rw * rows * rh * 4);
-				// Bones move this piece in the clip: each frame gets the height, normal and material of the posed models under its own paint.
-				const pieceObjs = pm.pieces[piece].objs.map((oi) => p.objects[oi]), moves = pieceObjs.some((o) => Rig.modelMoves(a, clip, o));
-				const data = moves && !p.dry ? new Uint8Array(out.length) : null, matOf = materialLookup(p.materials || []), flat = data && r.proj.toMapNormal([0, 0, 1]);
+				if (moves && !oblique && !p.dry) warnings.push(`clip "${clip.name}" / ${names}: isometric, so the shadow stays the base frame's (per-frame floor spans are only written for the oblique projection)`);
+				// The floor block: per frame, the floor points over the rect's columns and the rows the posed models cover in any frame, packed like the frames.
+				const floorDy = reach ? reach.y0 - ry : 0, floorH = reach ? reach.y1 - reach.y0 + 1 : 0;
+				const floorOut = reach ? new Uint8Array(cols * rw * rows * floorH * 4) : null;
+				const data = posed ? new Uint8Array(out.length) : null, matOf = materialLookup(p.materials || []), flat = data && r.proj.toMapNormal([0, 0, 1]);
 				let outside = 0, outsideFrame = -1;
 				for (let f = 0; f < frames; f++) {
 					const [ox, oy] = Rig.cellOrigin(lay, f), dx = (f % cols) * rw, dy = Math.floor(f / cols) * rh;
-					const fr = data ? frameSurface(pieceObjs, a, clip, f, sheet, lay, W, H, p.settings) : null;
+					const fr = data ? frameSurface(posed[f], f, sheet, lay, W, H, p.settings) : null;
+					if (floorOut) {
+						const fx = (f % cols) * rw, fy = Math.floor(f / cols) * floorH;
+						for (let j = 0; j < floorH; j++) for (let i = 0; i < rw; i++) {
+							const fp = P.floorPoint(fr.floor, (reach.y0 + j) * W + rx + i, lonePiece);
+							if (fp) P.putFloorPoint(floorOut, ((fy + j) * cols * rw + fx + i) * 4, fp);
+						}
+					}
 					let any = 0;
 					for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
 						const s = ((oy + ry + y) * sheet.width + ox + rx + x) * 4, bi = (ry + y) * W + rx + x;
@@ -131,10 +156,12 @@
 					if (!any) warnings.push(`clip "${clip.name}" / ${names}: frame ${f + 1} is empty`);
 				}
 				if (outside) warnings.push(`clip "${clip.name}" / ${names}: ${outside} painted pixel(s) (first in frame ${outsideFrame}) lie outside ${moves ? "the posed models" : "the piece's base art"}, where height and normal are flat`);
-				targets.push({ piece: piece + 1, rect: [rx, ry, rw, rh], cols, rows, source: "flipbook", ...(moves && p.dry ? { moves: true } : {}),
-					...(out ? { color: p.encodePNG(out, cols * rw, rows * rh) } : {}), ...(data ? { data: base64(data) } : {}) });
+				targets.push({ piece: piece + 1, rect: [rx, ry, rw, rh], cols, rows, source: "flipbook", ...(moves && p.dry ? { moves: true, ...(oblique ? { floor: true } : {}) } : {}),
+					...(out ? { color: p.encodePNG(out, cols * rw, rows * rh) } : {}), ...(data ? { data: base64(data) } : {}),
+					...(floorOut ? { floor: base64(floorOut), floorDy, floorH } : {}) });
 			}
-			if (targets.length) clips.push({ name: clip.name, fps: clip.fps | 0 || 8, frames, loop: ["once", "pingpong"].includes(clip.loop) ? clip.loop : "loop", shadow: "static", collision: "static", targets });
+			if (targets.length) clips.push({ name: clip.name, fps: clip.fps | 0 || 8, frames, loop: ["once", "pingpong"].includes(clip.loop) ? clip.loop : "loop",
+				shadow: targets.some((t) => t.floor) ? "frames" : "static", collision: "static", targets });
 		}
 		return clips.length || warnings.length ? { clips, warnings } : null;
 	};
