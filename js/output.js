@@ -155,12 +155,13 @@
 				const img = new ImageData(Math.max(1, Math.ceil(r.w * scale)), Math.max(1, Math.ceil(rows * scale)));
 				// Animating: Normals shows the clip's current frame, so playback runs here too (Lit takes its frame in render()).
 				const anim = this.mode === "normals" && TS.AnimUI && TS.AnimUI.frameImage && TS.AnimUI.frameImage(img, {width:r.w,height:rows});
-				if (!anim && sliced && shown && shown.width === img.width && shown.height === img.height && !["heightfield", "collision", "pieces", "kind"].includes(this.mode)) {
+				if (!anim && sliced && shown && shown.width === img.width && shown.height === img.height && !["blockout", "heightfield", "collision", "pieces", "kind"].includes(this.mode)) {
 					this.off = shown;
 					this._sliceImage(img);
 					return;
 				}
 				if (anim) { /* drawn */ }
+				else if (this.mode === "blockout") img.data.set(r.art.data);
 				else if (this.mode === "heightfield") this._heightfield(img);
 				else if (this.mode === "collision") this._collision(img);
 				else if (this.mode === "pieces") this._pieces(img);

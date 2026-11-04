@@ -163,7 +163,7 @@ The outline may extend beyond the starting face; it does not wrap around edges o
 surface. On a warped face, the triangle under the first point supplies the plane. Clear the outline (or undo all its corners)
 to pick a different face. Starting in empty space, or unchecking surface placement, uses the **Empty space** setting below.
 
-- **Freehand:** press and drag around the object's outline, then release. The outline closes automatically and becomes one object.
+- **Freehand:** press and drag around the object's outline, then release. The outline closes automatically and enters a preview; click or press Enter to apply it.
 - **Click corners:** click each corner; click the green first point, press **Enter**, or click **Finish shape** to close it. **Backspace** / **Undo point** removes the last corner.
 - **Empty space / Upright front:** the drawn outline becomes the front face; **Thickness** adds depth behind it. Its lowest point sits at the 3D cursor's height (normally the floor).
 - **Empty space / Flat top:** the outline becomes the top face of a slab. **Thickness** sets its height above the cursor's height. The drawn face stays aligned with the art.
@@ -172,13 +172,15 @@ to pick a different face. Starting in empty space, or unchecking surface placeme
 - **Snap outline to grid** is optional; when enabled it uses the header's Snap step. Reduce the step for small shapes.
 
 **Esc / Clear / right-click** clears an unfinished outline. **Q / Done** returns to selection. Space-drag and middle-drag pan;
-the wheel zooms. Drawing uses the tileset view; choosing Pencil from 3D returns to that view. Mouse, pen and single-touch drawing
+the wheel zooms. Free Draw works in top-down, isometric and the held 3D camera. In isometric view its footprint and snapping follow the drawing plane. Use [ / ] to adjust preview thickness, or Shift+[ / ] for 0.1 px changes. Mouse, pen and single-touch drawing
 are supported; a second finger cancels the current freehand stroke and starts pan/zoom.
 
 Each finished outline is an ordinary named model: select, move, resize, duplicate, delete, or **Tab** to edit its vertices and faces.
 One shape is one undo step. Save project, autosave and exports include it. Shapes with thickness use footprint collision by default;
 change that in Properties. Simple concave outlines (such as L and U shapes) are supported. Crossed outlines and holes within an
 outline are not supported; the tool leaves an invalid outline visible so you can clear/redraw it, or remove a corner.
+
+See [Blockout mode](blockout-mode.md) for procedural colors with the existing Add and Free Draw tools.
 
 ### Existing modelling tools
 

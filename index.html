@@ -23,6 +23,7 @@
 				<label class="exportname" id="tilt_row" title="Isometric tilt: the camera's elevation, 10° to 80°. Lower is flatter, 30° is the 2:1 pixel-art look, 35.26° true isometric. Tiles are 64 px wide and 64·sin(tilt) px tall.">Tilt
 						<input id="s_tilt" type="number" min="10" max="80" step="any" value="26"> °</label>
 			<hr>
+			<button id="b_blockout_new">New isometric blockout</button>
 			<button id="b_save" title="Save the project (Ctrl+S)">Save project <kbd>Ctrl+S</kbd></button>
 			<hr>
 			<button id="b_import3d" title="Import 3D / stamp: pick models from a glTF (.glb, with bones and animation), a Wavefront OBJ or another Studio project, then add them or stamp them over your art">Import 3D / stamp…</button>
@@ -78,6 +79,8 @@
 				<button data-export="bundle" class="primary-item" title="One file for Godot: the art, all maps and the collision. Drop it anywhere under res:// and the Studio Import plugin unpacks it and builds name_tileset.tres">Godot bundle (one .json) ★ <kbd>Ctrl+Shift+E</kbd></button>
 				<div id="exp_anim" class="expanim" hidden></div>
 				<hr>
+				<label title="Fit the PNG around all models without changing the project canvas or painted artwork."><input id="blockout_fit" type="checkbox" checked> Fit PNG to all models</label>
+				<button id="b_blockout_png">Blockout PNG (transparent)</button>
 				<button id="b_export3d" title="3D models: the scene or the selection as glTF (with bones and animation) or Wavefront OBJ, for Blender and other 3D tools">3D models (glTF / OBJ)…</button>
 			</div>
 		</div>
@@ -111,7 +114,7 @@
 			<label title="Round corners on this Free Draw outline before creating, cutting or carving. This does not bevel existing mesh edges.">Corner radius <input id="pencil_radius" type="number" min="0" max="64" step="0.5" value="0"> px</label>
 			<label id="pencil_bevel_row">Edge bevel <input id="pencil_bevel" type="number" min="0" max="64" step="0.5" value="0"> px</label>
 			<label><input id="pencil_snap" type="checkbox"> Snap outline to grid</label>
-			<p id="pencil_help" class="dim">Draw an outline and release to preview. Scroll for height, Shift+scroll for fine adjustment. Click or Enter applies; Esc cancels.</p>
+			<p id="pencil_help" class="dim">Draw an outline and release to preview. [ / ] for height, Shift for fine adjustment. Click or Enter applies; Esc cancels.</p>
 			<div class="pencilactions"><button id="pencil_finish" class="primary">Finish shape</button><button id="pencil_back" title="Remove the last corner (Backspace)">Undo point</button><button id="pencil_clear">Clear</button><button id="pencil_done">Done (Q)</button></div>
 		</div>
 			<details class="sec" open id="sec_models">
@@ -150,6 +153,8 @@
 		</aside>
 	<section class="view">
 			<div class="viewbar" id="viewbar">
+				<label title="Generate object colors and automatically update the project source PNG after edits. The latest image stays when turned off; Aseprite sync pauses."><input id="blockout_mode" type="checkbox"> Blockout</label>
+				<label id="blockout_color_control" hidden title="Automatically applied to objects made with Add and Free Draw while Blockout is on; change existing objects in Properties.">Object color <input id="draw_color" type="color" value="#b87864"></label>
 				<label title="Grid step for moving, scaling, extruding and placing; Shift or &quot;fine&quot; = half the step, a typed number is exact. Default 1 px (one texel); off = no snapping">Snap
 					<select id="snap" title="Snapping for moving, scaling and placing. 1 = whole pixels (texels). Off = free, no snapping"><option>32</option><option>16</option><option>8</option><option>4</option><option>2</option><option selected>1</option><option value="0">off</option></select></label>
 				<label title="What the models' faces show. Art on models: the tileset's art (an imported model's base colours where there is no art). Base colours: the colours an imported model came with (its material, texture or vertex colours), a guide to paint from. Solid: plain grey.">Show <select id="shade"><option value="art">art on models</option><option value="base">base colours</option><option value="solid">solid</option></select></label>
@@ -255,6 +260,7 @@
 	<section class="output">
 		<div id="outmodes" class="tabs">
 			<button data-mode="lit" class="on">Lit</button>
+			<button data-mode="blockout" title="The current albedo image without lights or editor overlays">Color</button>
 			<span class="grp"><button class="grphead">Maps</button><div class="sub"><button data-mode="height">Height</button><button data-mode="normals">Normals</button><button data-mode="roughness">Rough</button><button data-mode="metallic">Metal</button></div></span>
 			<button data-mode="holes">Holes</button>
 			<span class="grp"><button class="grphead">Plan</button><div class="sub"><button data-mode="heightfield" title="The floor plan seen from above: colour = top height, stripes = open underneath">Floor</button><button data-mode="collision" title="The floor plan: red = what blocks the player (bright = the exported collision, outlined), orange = strip models' strips; the 24x12 feet box follows the pointer">Collision</button><button data-mode="kind" title="Models tinted by their resolved kind: green floor, blue deco, orange solid, magenta wall, cyan side. A small rug or a 2 px bump shows up as floor.">Kind</button><button data-mode="pieces" title="How the engine groups the art into pieces per 32 px tile cell: colour = piece, cell border = the piece the engine reads the cell as, red = conflict, yellow = floating">Pieces</button></div></span>
@@ -370,6 +376,7 @@
 <script src="js/carve.js"></script>
 <script src="js/render.js"></script>
 <script src="js/process.js"></script>
+<script src="js/blockout.js"></script>
 <script src="js/bundle.js"></script>
 <script src="js/rig.js"></script>
 <script src="js/aseprite.js"></script>

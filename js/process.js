@@ -518,6 +518,7 @@
 	// The rim works in world space (its tangents come from the projection), and the map vector is made from the result.
 	P.worldNormal = (r, i, settings) => {
 		let n = [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]];
+		if (r.blockout) return n; // Flat blockout colors are not painted relief.
 		const proj = r.proj || TS.Proj.of(settings, r.art);
 		if (settings.cavity > 0) n = cavity(proj, r, i, n, settings.cavity);
 		return n;

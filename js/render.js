@@ -34,6 +34,12 @@
 		vec3 own = (u_mode >= 2 && v_base.a > 0.5) ? v_base.rgb : vec3(0.62, 0.66, 0.72);
 		vec3 base = (u_mode == 2 && art.a > 0.05 && inside) ? art.rgb : own;
 		vec3 c = base * lit;
+		if(u_mode == 4) {
+			float shade = n.z > 0.7 ? 1.0 : n.y > 0.5 ? 0.82 : n.x > 0.5 ? 0.68 : 0.76;
+			c = mix(v_col.rgb * shade, vec3(1.0,0.55,0.15),v_col.a);
+			if(under)c=mix(c,vec3(1.0,0.15,0.15),0.65);
+			o=vec4(c,u_opacity);return;
+		}
 		c = mix(c, v_col.rgb, v_col.a);                                  // selection tint
 		if (under) c = mix(c, vec3(1.0, 0.15, 0.15), 0.65);
 		o = vec4(c, u_opacity);
@@ -378,12 +384,12 @@
 			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 			const free = this.free.blend > 0;
 			// X-ray: faces stay see-through (also in 3D) and don't hide anything, so wires, vertices and face dots behind them show.
-			const opacity = opts.xray ? Math.min(free ? 0.4 : opts.opacity, 0.4) : free ? 1 : opts.opacity;
+			const opacity = opts.blockout && !opts.xray ? 1 : opts.xray ? Math.min(free ? 0.4 : opts.opacity, 0.4) : free ? 1 : opts.opacity;
 			// Faces sit a little behind their own wires and dots, so those win the depth test on the surface they belong to.
 			gl.enable(gl.POLYGON_OFFSET_FILL);
 			gl.polygonOffset(1, 2);
 			if (geometry.tris.length && opacity > 0.001) {
-				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.shade === "base" ? 3 : opts.shade === "art" || free ? 2 : 1);
+				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.blockout ? 4 : opts.shade === "base" ? 3 : opts.shade === "art" || free ? 2 : 1);
 				gl.uniform1f(gl.getUniformLocation(this.prog, "u_opacity"), opacity);
 				gl.depthMask(!opts.xray);
 				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris, true);
