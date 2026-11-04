@@ -16,7 +16,8 @@ Next time, repeat steps 2 to 4. Aseprite remembers the code, so you only press *
 
 ## The words
 
-- **Normal map:** which way each part of the shape faces. Studio sends it to Aseprite as the locked layer **Normal (Studio)**, a guide for your shading.
+- **Reference:** what Studio sends to Aseprite as the locked layer **Normal (Studio)**, a guide under your painting: the models' base
+  colours (the colours an imported model came with), else the tileset art on them, grey where they have neither. (It used to be the normal map, hence the layer's name.)
 - **Albedo:** the plain colours you paint, without lighting. Only the **Albedo** group goes back to Studio.
 - **Room code:** how the two programs find each other online. Treat it like a password.
 - **Relay:** the small online service that passes pictures between the two programs.

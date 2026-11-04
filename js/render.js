@@ -7,19 +7,19 @@
 	const FREE_FOV = (40 * Math.PI) / 180;
 
 	const VS = `#version 300 es
-	in vec3 a_pos; in vec3 a_nrm; in vec4 a_col;
+	in vec3 a_pos; in vec3 a_nrm; in vec4 a_col; in vec4 a_base;
 	uniform mat4 u_vp; uniform vec2 u_art; uniform float u_point; uniform vec2 u_uvoff;
 	uniform vec3 u_pr0; uniform vec3 u_pr1; uniform vec2 u_po;       // the projection's canvas x / y rows and offset (TS.Proj matrix)
-	out vec3 v_nrm; out vec4 v_col; out vec2 v_uv; out vec3 v_pos;
+	out vec3 v_nrm; out vec4 v_col; out vec2 v_uv; out vec3 v_pos; out vec4 v_base;
 	void main() {
 		gl_Position = u_vp * vec4(a_pos, 1.0);
 		gl_PointSize = u_point;
-		v_nrm = a_nrm; v_col = a_col; v_pos = a_pos;
+		v_nrm = a_nrm; v_col = a_col; v_pos = a_pos; v_base = a_base;
 		v_uv = (vec2(dot(u_pr0, a_pos) + u_po.x, dot(u_pr1, a_pos) + u_po.y) - u_uvoff) / u_art;
 	}`;
 	const FS = `#version 300 es
 	precision highp float;
-	in vec3 v_nrm; in vec4 v_col; in vec2 v_uv; in vec3 v_pos;
+	in vec3 v_nrm; in vec4 v_col; in vec2 v_uv; in vec3 v_pos; in vec4 v_base;
 	uniform sampler2D u_tex; uniform int u_mode; uniform float u_opacity; uniform int u_hasArt; uniform vec3 u_light; uniform int u_cut; uniform int u_below;
 	out vec4 o;
 	void main() {
@@ -30,7 +30,9 @@
 		vec4 art = u_hasArt == 1 ? texture(u_tex, v_uv) : vec4(0.0);
 		bool inside = v_uv.x >= 0.0 && v_uv.y >= 0.0 && v_uv.x <= 1.0 && v_uv.y <= 1.0;
 			if (u_cut == 1 && !(art.a > 0.05 && inside)) discard;                  // reference faces: only where its art is
-		vec3 base = (u_mode == 2 && art.a > 0.05 && inside) ? art.rgb : vec3(0.62, 0.66, 0.72);
+		// u_mode 1 solid grey, 2 the art (the face's base colour where it has no art), 3 base colours. v_base.a: the face has one.
+		vec3 own = (u_mode >= 2 && v_base.a > 0.5) ? v_base.rgb : vec3(0.62, 0.66, 0.72);
+		vec3 base = (u_mode == 2 && art.a > 0.05 && inside) ? art.rgb : own;
 		vec3 c = base * lit;
 		c = mix(c, v_col.rgb, v_col.a);                                  // selection tint
 		if (under) c = mix(c, vec3(1.0, 0.15, 0.15), 0.65);
@@ -381,14 +383,14 @@
 			gl.enable(gl.POLYGON_OFFSET_FILL);
 			gl.polygonOffset(1, 2);
 			if (geometry.tris.length && opacity > 0.001) {
-				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.shade === "art" || free ? 2 : 1);
+				gl.uniform1i(gl.getUniformLocation(this.prog, "u_mode"), opts.shade === "base" ? 3 : opts.shade === "art" || free ? 2 : 1);
 				gl.uniform1f(gl.getUniformLocation(this.prog, "u_opacity"), opacity);
 				gl.depthMask(!opts.xray);
-				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris);
+				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris, true);
 			} else if (geometry.tris.length && !opts.xray) {
 				// Invisible faces still hide what's behind them (opacity 0 without X-ray).
 				gl.colorMask(false, false, false, false);
-				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris);
+				this._stream(geometry.tris, gl.TRIANGLES, this.kept.tris, true);
 				gl.colorMask(true, true, true, true);
 			}
 			// Reference models in 3D: their faces carry the reference's own art (the flat backdrop is hidden there), fading in with 3D.
@@ -402,7 +404,7 @@
 					gl.uniform2f(loc("u_art"), g.w, g.h); gl.uniform2f(loc("u_uvoff"), g.dx, g.dy);
 					gl.uniform1i(loc("u_mode"), g.art ? 2 : 1);
 					gl.uniform1f(loc("u_opacity"), g.opacity * this.free.blend);
-					this._stream(g.tris, gl.TRIANGLES);
+					this._stream(g.tris, gl.TRIANGLES, null, true);
 				}
 				gl.bindTexture(gl.TEXTURE_2D, this.tex);
 				gl.uniform1i(loc("u_cut"), 0); gl.uniform1i(loc("u_hasArt"), this.art.has ? 1 : 0);
@@ -439,20 +441,22 @@
 			return new Float32Array(out);
 		}
 
-		_stream(data, mode, kept) {
-			const gl = this.gl, stride = 40;
+		// Faces carry their base colour too (wide: 14 floats a vertex, see app.js vtxFace); wires and points don't (10).
+		_stream(data, mode, kept, wide) {
+			const gl = this.gl, stride = wide ? 56 : 40;
 			gl.bindBuffer(gl.ARRAY_BUFFER, kept ? kept.buf : this.buf);
 			if (!kept || kept.data !== data) {
 				gl.bufferData(gl.ARRAY_BUFFER, data, kept ? gl.DYNAMIC_DRAW : gl.STREAM_DRAW);
 				if (kept) kept.data = data;
 			}
-			const attrs = [["a_pos", 3, 0], ["a_nrm", 3, 12], ["a_col", 4, 24]];
+			const attrs = [["a_pos", 3, 0], ["a_nrm", 3, 12], ["a_col", 4, 24], ...(wide ? [["a_base", 4, 40]] : [])];
+			if (!wide) { const b = gl.getAttribLocation(this.prog, "a_base"); if (b >= 0) gl.vertexAttrib4f(b, 0, 0, 0, 0); }
 			const locs = attrs.map(([n, size, off]) => {
 				const loc = gl.getAttribLocation(this.prog, n);
 				if (loc >= 0) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, off); }
 				return loc;
 			});
-			gl.drawArrays(mode, 0, data.length / 10);
+			gl.drawArrays(mode, 0, data.length / (wide ? 14 : 10));
 			locs.forEach((loc) => loc >= 0 && gl.disableVertexAttribArray(loc));
 		}
 	}

@@ -234,7 +234,61 @@
 		return { data: out, n, count };
 	}
 
-	// opts: {scale (pixels per glTF unit)}. Returns {objects, rig}; rig is null when the file has no bones or animation. Model ids
+	// --- base colours: each triangle gets its material's colour (times its vertex colours and its texture under it), kept on the
+	// face as f.col for reference only ---
+	const toLin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+	const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+	const TEX_MAX = 1024; // textures are only sampled for a colour per face: a big one is read smaller
+
+	// The file's images, decoded: [ImageData | null] by image index. Decoding is async, so this runs before G.read, which takes the
+	// result as opts.images. A picture that can't be read is null (its faces keep the material colour).
+	G.images = async function (buffer, files) {
+		let gl, bufs;
+		try { ({ json: gl, bufs } = parseContainer(buffer, files)); } catch (e) { return []; }
+		return Promise.all((gl.images || []).map(async (im) => {
+			try {
+				let blob;
+				if (im.bufferView !== undefined) {
+					const v = gl.bufferViews[im.bufferView];
+					blob = new Blob([new Uint8Array(bufs[v.buffer || 0], v.byteOffset || 0, v.byteLength)], { type: im.mimeType || "image/png" });
+				} else if (/^data:/.test(im.uri || "")) blob = await (await fetch(im.uri)).blob();
+				else { const f = files && files[decodeURIComponent(im.uri || "")]; if (!f) return null; blob = new Blob([f]); }
+				const bmp = await createImageBitmap(blob), k = Math.min(1, TEX_MAX / Math.max(bmp.width, bmp.height));
+				const c = document.createElement("canvas");
+				c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+				const g = c.getContext("2d");
+				g.drawImage(bmp, 0, 0, c.width, c.height);
+				return g.getImageData(0, 0, c.width, c.height);
+			} catch (e) { return null; }
+		}));
+	};
+
+	// A primitive's colour per triangle: (corners: 3 vertex indices of the primitive) -> "#rrggbb", or null when the primitive has no
+	// material and no vertex colours (it has no base colour of its own then).
+	function primColour(gl, bufs, prim, images) {
+		const m = prim.material !== undefined && gl.materials ? gl.materials[prim.material] : null;
+		const COL = prim.attributes.COLOR_0 !== undefined ? readAccessor(gl, bufs, prim.attributes.COLOR_0) : null;
+		if (!m && !COL) return null;
+		const pbr = (m && m.pbrMetallicRoughness) || {}, factor = pbr.baseColorFactor || [1, 1, 1, 1];
+		const ti = pbr.baseColorTexture, tex = ti && gl.textures ? gl.textures[ti.index] : null, img = tex && tex.source !== undefined ? images[tex.source] : null;
+		const uvAt = img ? prim.attributes["TEXCOORD_" + (ti.texCoord || 0)] : undefined, UV = uvAt !== undefined ? readAccessor(gl, bufs, uvAt) : null;
+		const texel = (u, v) => { // wraps (glTF's default REPEAT); linear colour
+			const w = img.width, h = img.height, x = (((Math.floor(u * w)) % w) + w) % w, y = (((Math.floor(v * h)) % h) + h) % h, i = (y * w + x) * 4;
+			return [toLin(img.data[i] / 255), toLin(img.data[i + 1] / 255), toLin(img.data[i + 2] / 255)];
+		};
+		return (ids) => {
+			const c = factor.slice(0, 3);
+			if (COL) for (let k = 0; k < 3; k++) c[k] *= (COL.data[ids[0] * COL.n + k] + COL.data[ids[1] * COL.n + k] + COL.data[ids[2] * COL.n + k]) / 3;
+			if (UV && img) { // the corners and the middle, averaged
+				const uv = ids.map((i) => [UV.data[i * 2], UV.data[i * 2 + 1]]), mid = [(uv[0][0] + uv[1][0] + uv[2][0]) / 3, (uv[0][1] + uv[1][1] + uv[2][1]) / 3];
+				const s = [...uv, mid, mid].map(([u, v]) => texel(u, v));
+				for (let k = 0; k < 3; k++) c[k] *= s.reduce((a, t) => a + t[k], 0) / s.length;
+			}
+			return Mesh.colourHex(c.map(toSrgb));
+		};
+	}
+
+	// opts: {scale (pixels per glTF unit), images (from G.images)}. Returns {objects, rig}; rig is null when the file has no bones or animation. Model ids
 	// (1..) and bone ids ("b1"..) are the file's own and are re-numbered when added to a project.
 	G.read = function (buffer, opts = {}) {
 		const scale = opts.scale > 0 ? opts.scale : 1;
@@ -276,7 +330,7 @@
 		gl.meshes && nodes.forEach((nd, ni) => {
 			if (nd.mesh === undefined) return;
 			const mesh = gl.meshes[nd.mesh], skin = nd.skin !== undefined ? gl.skins[nd.skin] : null;
-			const pts = [], tris = [], joints = [], weights = [];
+			const pts = [], tris = [], triCol = [], joints = [], weights = [];
 			for (const prim of mesh.primitives) {
 				const mode = prim.mode === undefined ? 4 : prim.mode;
 				if (mode < 4 || !prim.attributes || prim.attributes.POSITION === undefined) continue;
@@ -284,9 +338,12 @@
 				for (let i = 0; i < P.count; i++) pts.push([P.data[i * 3], P.data[i * 3 + 1], P.data[i * 3 + 2]]);
 				let ix;
 				if (prim.indices !== undefined) ix = readAccessor(gl, bufs, prim.indices).data; else ix = Array.from({ length: P.count }, (_, i) => i);
-				if (mode === 4) for (let i = 0; i + 2 < ix.length; i += 3) tris.push([ix[i] + base, ix[i + 1] + base, ix[i + 2] + base]);
-				else if (mode === 5) for (let i = 0; i + 2 < ix.length; i++) tris.push(i % 2 ? [ix[i + 1] + base, ix[i] + base, ix[i + 2] + base] : [ix[i] + base, ix[i + 1] + base, ix[i + 2] + base]);
-				else for (let i = 1; i + 1 < ix.length; i++) tris.push([ix[0] + base, ix[i] + base, ix[i + 1] + base]);
+				const local = [];
+				if (mode === 4) for (let i = 0; i + 2 < ix.length; i += 3) local.push([ix[i], ix[i + 1], ix[i + 2]]);
+				else if (mode === 5) for (let i = 0; i + 2 < ix.length; i++) local.push(i % 2 ? [ix[i + 1], ix[i], ix[i + 2]] : [ix[i], ix[i + 1], ix[i + 2]]);
+				else for (let i = 1; i + 1 < ix.length; i++) local.push([ix[0], ix[i], ix[i + 1]]);
+				const colour = primColour(gl, bufs, prim, opts.images || []);
+				for (const t of local) { tris.push(t.map((i) => i + base)); triCol.push(colour ? colour(t) : null); }
 				if (skin && prim.attributes.JOINTS_0 !== undefined && prim.attributes.WEIGHTS_0 !== undefined) {
 					const J = readAccessor(gl, bufs, prim.attributes.JOINTS_0), W = readAccessor(gl, bufs, prim.attributes.WEIGHTS_0);
 					for (let i = 0; i < P.count; i++) { joints.push([0, 1, 2, 3].map((k) => skin.joints[J.data[i * 4 + k]])); weights.push([0, 1, 2, 3].map((k) => W.data[i * 4 + k])); }
@@ -337,7 +394,7 @@
 					exact = true;
 					rest.forEach((p, v) => { verts.push(p.slice()); source.push(v); });
 					for (const f of ex.faces) faces.push(Object.assign({}, f));
-				} else for (const t of list) { const f = t.map(add); if (new Set(f).size === 3) faces.push({ v: f }); }
+				} else list.forEach((t, ti) => { const f = t.map(add); if (new Set(f).size === 3) faces.push(triCol[ti] ? { v: f, col: triCol[ti] } : { v: f }); });
 				if (!faces.length) continue;
 				const o = { id: nextId++, name: label, verts, faces, mat: { roughness: 0.7, metallic: 0 }, solid: true, smooth: 30 };
 				if (exact && ex.props) Object.assign(o, JSON.parse(JSON.stringify(ex.props)));

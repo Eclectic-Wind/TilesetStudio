@@ -163,13 +163,25 @@
 		const axes = [0, 1, 2].filter((i) => i !== drop);
 		return TS.Shape.triangulate(face.v.map((i) => axes.map((k) => obj.verts[i][k])));
 	};
+	// A face's base colour, f.col ("#rrggbb", sRGB, from an imported model's material, texture or vertex colours): [r, g, b] 0..1, or
+	// null when it has none. Only a reference (the view's "base colours", the sheet Aseprite gets); the art still paints the tile.
+	const colCache = new Map();
+	M.faceColour = (f) => {
+		const c = f && f.col;
+		if (!c) return null;
+		let rgb = colCache.get(c);
+		if (!rgb) { const n = parseInt(c.slice(1), 16); rgb = [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; colCache.set(c, rgb); }
+		return rgb;
+	};
+	// [r, g, b] 0..1 -> "#rrggbb".
+	M.colourHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, "0")).join("");
 	// [{a, b, c, face}] (vertex indices).
 	// Fingerprint of an object's shape (vertices, face winding, smoothing). Models are edited in place, so caches compare this
 	// instead of a version number.
 	M.shapeKey = (obj) => {
 		let h = obj.smooth || 0;
 		for (const p of obj.verts) h = (h * 31 + p[0] * 7.31 + p[1] * 3.17 + p[2] * 1.93) % 1e9;
-		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; h = (h * 3 + (f.smooth === undefined ? 0 : f.smooth ? 2 : 1)) % 1e9; }
+		for (const f of obj.faces) { h = (h * 17 + f.v.length) % 1e9; for (const i of f.v) h = (h * 13 + i + 1) % 1e9; h = (h * 3 + (f.smooth === undefined ? 0 : f.smooth ? 2 : 1)) % 1e9; if (f.col) h = (h * 7 + parseInt(f.col.slice(1), 16)) % 1e9; }
 		return h + ":" + obj.verts.length + ":" + obj.faces.length;
 	};
 	// Axis-aligned box round an object: {min, max}. Cached like the triangles.
@@ -472,10 +484,10 @@
 		for (const o of others) {
 			const base = into.verts.length;
 			into.verts.push(...o.verts.map((p) => p.slice()));
-			for (const f of o.faces) into.faces.push({ v: f.v.map((i) => i + base), mat: f.mat || (JSON.stringify(o.mat) !== JSON.stringify(into.mat) ? Object.assign({}, o.mat) : undefined), smooth: f.smooth });
+			for (const f of o.faces) into.faces.push({ v: f.v.map((i) => i + base), mat: f.mat || (JSON.stringify(o.mat) !== JSON.stringify(into.mat) ? Object.assign({}, o.mat) : undefined), smooth: f.smooth, col: f.col });
 			for (const [a, b] of o.lines || []) (into.lines || (into.lines = [])).push([a + base, b + base]);
 		}
-		for (const f of into.faces) { if (!f.mat) delete f.mat; if (f.smooth === undefined) delete f.smooth; }
+		for (const f of into.faces) { if (!f.mat) delete f.mat; if (f.smooth === undefined) delete f.smooth; if (!f.col) delete f.col; }
 	};
 
 	M.deleteVerts = (obj, idx) => {
@@ -543,6 +555,7 @@
 			f.v = one;
 			const g = { v: two };
 			if (f.mat) g.mat = f.mat;
+			if (f.col) g.col = f.col;
 			obj.faces.push(g);
 			split.add(f); split.add(g);
 			cuts.push(key(loop[lo], loop[hi]));
@@ -632,17 +645,17 @@
 				const a = f.v[i], b = f.v[(i + 1) % f.v.length], on = edges.get(key(a, b)).faces;
 				if (on.filter((x) => sel.has(x)).length === 1) {
 					const nb = on.find((x) => !sel.has(x));
-					walls.push({ v: [a, b, dup(b), dup(a)], a, b, da: dup(a), db: dup(b), nb: nb === undefined ? -1 : nb });
+					walls.push({ v: [a, b, dup(b), dup(a)], a, b, da: dup(a), db: dup(b), nb: nb === undefined ? -1 : nb, col: f.col });
 				}
 			}
 		}
 		// A lone sheet (nothing beside its rim: a plane, a drawn outline filled with F) keeps a flipped copy where it was, so
 		// pulling it out makes a closed solid rather than an open-bottomed shell.
 		const sheet = walls.length && walls.every((w) => w.nb < 0);
-		const bottoms = sheet ? [...sel].map((fi) => ({ v: obj.faces[fi].v.slice().reverse(), mat: obj.faces[fi].mat })) : [];
+		const bottoms = sheet ? [...sel].map((fi) => ({ v: obj.faces[fi].v.slice().reverse(), mat: obj.faces[fi].mat, col: obj.faces[fi].col })) : [];
 		for (const fi of sel) obj.faces[fi].v = obj.faces[fi].v.map(dup);
-		for (const w of walls) { w.fi = obj.faces.length; obj.faces.push({ v: w.v }); delete w.v; }
-		for (const b of bottoms) { if (!b.mat) delete b.mat; obj.faces.push(b); }
+		for (const w of walls) { w.fi = obj.faces.length; obj.faces.push(w.col ? { v: w.v, col: w.col } : { v: w.v }); delete w.v; delete w.col; }
+		for (const b of bottoms) { if (!b.mat) delete b.mat; if (!b.col) delete b.col; obj.faces.push(b); }
 		return { verts: [...remap.values()], normal: v3.norm(normal), walls };
 	};
 
@@ -665,7 +678,7 @@
 			}
 			for (let i = 0; i < count; i++) {
 				const j = (i + 1) % count;
-				obj.faces.push({ v: [f.v[i], f.v[j], ring[j], ring[i]], mat: f.mat, smooth: f.smooth });
+				obj.faces.push({ v: [f.v[i], f.v[j], ring[j], ring[i]], mat: f.mat, smooth: f.smooth, col: f.col });
 			}
 			f.v = ring;
 			inner.push(...ring);
@@ -787,7 +800,7 @@
 		for (const { fi, i } of ring.faces) {
 			const f = obj.faces[fi], v = [0, 1, 2, 3].map((k) => f.v[(i + k) % 4]);
 			const m01 = mid(v[0], v[1]), m23 = mid(v[2], v[3]);
-			newFaces.push({ v: [v[0], m01, m23, v[3]], mat: f.mat, smooth: f.smooth }, { v: [m01, v[1], v[2], m23], mat: f.mat, smooth: f.smooth });
+			newFaces.push({ v: [v[0], m01, m23, v[3]], mat: f.mat, smooth: f.smooth, col: f.col }, { v: [m01, v[1], v[2], m23], mat: f.mat, smooth: f.smooth, col: f.col });
 		}
 		// Other faces on a ring edge get its new point, so no T-junctions.
 		obj.faces.forEach((f, fi) => {

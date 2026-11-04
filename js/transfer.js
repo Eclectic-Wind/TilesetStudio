@@ -14,6 +14,7 @@
 			if (src.faces.some(f => !f || !Array.isArray(f.v) || f.v.length < 3 || f.v.length > 4096 || !f.v.every(index))) throw new Error(`Object ${n + 1} has an invalid face.`);
 			if (src.lines && (!Array.isArray(src.lines) || src.lines.some(l => !Array.isArray(l) || l.length !== 2 || !l.every(index)))) throw new Error(`Object ${n + 1} has an invalid edge.`);
 			const o = clone(src);
+			for (const f of o.faces) if (f.col !== undefined && !/^#[0-9a-f]{6}$/i.test(f.col)) delete f.col; // a base colour is "#rrggbb" or nothing
 			o.name = String(o.name || `Model ${n + 1}`); o.mat = o.mat || { roughness: 0.7, metallic: 0 };
 			o.solid = o.solid !== false; o.smooth = Number.isFinite(o.smooth) ? o.smooth : 30;
 			return o;
@@ -72,10 +73,22 @@
 		}
 		return { bones, bind, paint, clips };
 	};
+	// The diffuse colours (Kd) of a .mtl file: Map material name -> "#rrggbb".
+	T.readMTL = function (text) {
+		const out = new Map(); let name = null;
+		for (const raw of String(text || "").split(/\r?\n/)) {
+			const [key, ...parts] = raw.replace(/#.*/, "").trim().split(/\s+/);
+			if (key === "newmtl") name = parts.join(" ");
+			else if (key === "Kd" && name !== null && parts.length >= 3 && parts.slice(0, 3).every((p) => Number.isFinite(Number(p)))) out.set(name, TS.Mesh.colourHex(parts.slice(0, 3).map(Number)));
+		}
+		return out;
+	};
+	// options: {scale, up, mtl (T.readMTL of the file's .mtl, when picked with it)}. A face takes its material's Kd, or the average
+	// of its corners' vertex colours ("v x y z r g b"), as its base colour f.col (reference only).
 	T.readOBJ = function (text, options = {}) {
-		const scale = options.scale === undefined ? 1 : options.scale, up = options.up || "z";
+		const scale = options.scale === undefined ? 1 : options.scale, up = options.up || "z", mtl = options.mtl || new Map();
 		if (!Number.isFinite(scale) || scale <= 0 || scale > 100000) throw new Error("Pixels per OBJ unit must be above 0 and at most 100,000.");
-		const vertices = [], groups = []; let current = null, smooth = false, hasObjects = false, name = "Imported mesh";
+		const vertices = [], vcols = [], groups = []; let current = null, smooth = false, hasObjects = false, name = "Imported mesh", material = null;
 		const group = () => current || (current = { name, faces: [], lines: [], points: [], smooth: false });
 		const flush = () => { if (current && (current.faces.length || current.lines.length || current.points.length)) groups.push(current); current = null; };
 		let lineNo = 0;
@@ -94,14 +107,19 @@
 				let p = parts.slice(0, 3).map(Number); if (p.some(v => !Number.isFinite(v))) error("invalid coordinate.");
 				if (up === "y") p = [p[0], -p[2], p[1]];
 				vertices.push(p.map(v => v * scale)); if (vertices.length > 200000) error("import limit is 200,000 vertices.");
+				const rgb = parts.length >= 6 ? parts.slice(3, 6).map(Number) : null;
+				vcols.push(rgb && rgb.every(Number.isFinite) ? rgb : null);
 			} else if (key === "o" || (key === "g" && !hasObjects)) {
 				flush(); name = parts.join(" ") || "Imported mesh"; if (key === "o") hasObjects = true;
 			} else if (key === "s") { smooth = parts[0] !== "off" && parts[0] !== "0";
+			} else if (key === "usemtl") { material = parts.join(" ");
 			} else if (key === "f") {
 				if (parts.length < 3 || parts.length > 4096) error("a polygon needs 3–4,096 corners.");
 				let v = parts.map(idx); if (v.at(-1) === v[0]) v.pop();
 				if (new Set(v).size < 3) error("degenerate polygon.");
-				group().faces.push({ v }); group().smooth ||= smooth;
+				const vc = v.every(i => vcols[i]) ? TS.Mesh.colourHex([0, 1, 2].map(k => v.reduce((a, i) => a + vcols[i][k], 0) / v.length)) : null;
+				const col = mtl.get(material) || vc;
+				group().faces.push(col ? { v, col } : { v }); group().smooth ||= smooth;
 			} else if (key === "l") { const v = parts.map(idx); for (let i = 1; i < v.length; i++) group().lines.push([v[i - 1], v[i]]);
 			} else if (key === "p") group().points.push(...parts.map(idx));
 		}
@@ -109,7 +127,7 @@
 		if (!groups.length && vertices.length) groups.push({ name, faces: [], lines: [], points: vertices.map((_, i) => i), smooth: false });
 		const objects = groups.map((g, n) => {
 			const used = new Map(), verts = [], local = i => { if (!used.has(i)) { used.set(i, verts.length); verts.push(vertices[i].slice()); } return used.get(i); };
-			const faces = g.faces.map(f => ({ v: f.v.map(local) })), lines = g.lines.map(l => l.map(local)); g.points.forEach(local);
+			const faces = g.faces.map(f => (f.col ? { v: f.v.map(local), col: f.col } : { v: f.v.map(local) })), lines = g.lines.map(l => l.map(local)); g.points.forEach(local);
 			return { id: n + 1, name: g.name, verts, faces, lines, mat: { roughness: 0.7, metallic: 0 }, solid: true, smooth: g.smooth ? 30 : 0 };
 		});
 		return T.validate(objects);

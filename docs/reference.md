@@ -94,6 +94,11 @@ including sheets such as 416 x 256; their pixels are not resized or padded.
 - **OBJ:** check **Pixels per unit** and **File up axis**. The default is 1 pixel per unit, Z up. A model made in metre-sized
   units may need a larger value, such as 32 pixels per unit. Y-up imports convert `(x, y, z)` to Studio `(x, -z, y)`.
 - **Studio project:** shows its embedded source artwork and the existing models. Scale and geometry are kept as authored.
+- **Base colours.** Each face keeps the colour the model came with, as a guide only (the art still paints the tile): glTF reads the
+  material's base colour times its vertex colours and its base colour texture (sampled per face); FBX the material colour and vertex
+  colours (not textures); OBJ each material's `Kd` from its `.mtl` (pick it together with the `.obj`) or `v x y z r g b` vertex colours.
+  **Show ▸ base colours** shows them on the models, *art on models* shows them where a face has no art, and the Aseprite link's reference
+  layer is made from them. Edits that split a face (knife, loop cut, inset, extrude) keep its colour.
 - Drag a box that fully contains the parts you want. Click a face to select one part; Shift-click toggles it, and Shift-drag
   adds parts. The checklist also lets you select obscured parts. Wheel zooms; right-drag pans; **Frame selected** zooms in.
 - **Add at cursor** places the group at the 3D cursor with its lowest point at the cursor's height. **Add at original position**
@@ -121,7 +126,7 @@ build the basic model in Studio, refine it in Blender (Import ▸ glTF 2.0) and 
   weight on each face, because Studio cannot bend a model. Rigid rigs (one part per bone, or parts parented to bones) come back whole.
 - **Faces.** glTF carries triangles. A Studio-made model keeps its quads and materials on return when its vertex and triangle counts
   are unchanged (they are stored in the file); anything re-saved or rebuilt by Blender comes back as triangles with vertices welded.
-- **Not transferred:** textures, UVs, scale animation, morph targets, cameras and lights. Export from Blender as **glTF Binary (.glb)**
+- **Not transferred:** textures and UVs (a face keeps only its base colour, see *Base colours* above), scale animation, morph targets, cameras and lights. Export from Blender as **glTF Binary (.glb)**
   (a separate-files .gltf cannot be read in the browser), with Y up (the default) and *Apply Modifiers* on.
 - **Adding.** Add at cursor / at original position bring the bones and clips along (appended to your existing ones: Animate shows them);
   a stamp does not.

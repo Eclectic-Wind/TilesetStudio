@@ -58,9 +58,12 @@
 		message(text, error = false) { $("source_message").textContent = text; $("source_message").classList.toggle("bad", error); }
 		async loadSource(raw, name, files = {}) {
 			const token = ++this.generation; let objects, image = null, kind, warning = "", rig = null;
-			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value), files }); objects = T.validate(res.objects); rig = res.rig; }
+			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const images = await TS.Gltf.images(raw, files); if (token !== this.generation) return; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value), files, images }); objects = T.validate(res.objects); rig = res.rig; }
 				else if (/.fbx$/i.test(name)) { kind = "fbx"; objects = T.validate(TS.Fbx.read(raw, { scale: Number($("source_units").value), up: $("source_up").value }).objects); }
-			else if (/\.obj$/i.test(name)) { kind = "obj"; objects = T.readOBJ(raw, { scale: Number($("source_units").value), up: $("source_up").value }); }
+			else if (/\.obj$/i.test(name)) { // its .mtl (picked with it) gives the faces their base colours
+				kind = "obj"; const mtlName = Object.keys(files).find(n => /\.mtl$/i.test(n));
+				objects = T.readOBJ(raw, { scale: Number($("source_units").value), up: $("source_up").value, mtl: mtlName ? T.readMTL(new TextDecoder().decode(files[mtlName])) : null });
+			}
 			else {
 				const p = JSON.parse(raw); if (p.format !== "tileset-studio") throw new Error("Choose a glTF .glb, a Tileset Studio .studio.json project or a Wavefront .obj mesh.");
 				kind = "studio"; objects = T.validate(p.objects);

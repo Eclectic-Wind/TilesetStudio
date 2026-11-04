@@ -604,11 +604,14 @@
 		if (TS.Link && TS.Link.linked() && TS.AnimUI && TS.AnimUI.on) return TS.AnimUI.resend();
 		if (!asepriteOn()) return;
 		if (!S.result) processNow();
+		// Aseprite's reference layer shows the models' base colours (else the art on them), grey where the models have neither.
 		const n = TS.Process.images(S.result, S.settings).normal, w = S.art.w, h = S.art.h;
+		const ref = TS.Rig.frameColours(S.objects, { bones: [] }, null, 0, w, h, S.settings, S.art);
+		for (let i = 0; i < w * h; i++) if (n.data[i * 4 + 3] && !ref.data[i * 4 + 3]) ref.data.set([150, 150, 150, 255], i * 4);
 		TS.Link.expected = { w, h };
 		try {
-			await TS.Link.push(n, { w, h, cw: w, ch: h, cols: 1, rows: 1, frames: 1 });
-			asepriteState("ok", `Sent normal.png (${w}x${h}) at ${new Date().toLocaleTimeString()}.`);
+			await TS.Link.push(ref, { w, h, cw: w, ch: h, cols: 1, rows: 1, frames: 1 });
+			asepriteState("ok", `Sent the base colour reference (${w}x${h}) at ${new Date().toLocaleTimeString()}.`);
 		} catch (e) { asepriteState("warn", "Could not write to the folder: " + e.message); }
 	}
 	// Green only means Aseprite is really there and nothing is wrong on its side.
@@ -1718,6 +1721,8 @@
 	// --- view geometry ---
 
 	const vtx = (out, p, n, c) => out.push(p[0], p[1], p[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3]);
+	// A face corner: also the face's base colour (r, g, b, 1), or 0, 0, 0, 0 when it has none (the renderer's wide layout).
+	const vtxFace = (out, p, n, c, b) => out.push(p[0], p[1], p[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3], b ? b[0] : 0, b ? b[1] : 0, b ? b[2] : 0, b ? 1 : 0);
 
 	// Per-object face and wire vertices, reused while the object's shape and look are unchanged (models are edited in place,
 	// so the shape is fingerprinted rather than versioned).
@@ -1783,8 +1788,9 @@
 				const tint = picked ? [...sel, 0.55] : faceMode && hv && hv.key === fi ? [1, 1, 1, 0.3] : isSel && !S.edit ? [...sel, 0.18] : [0, 0, 0, 0];
 				// Face dots (centres) to aim at in face mode; X-ray shows the ones behind too.
 				if (faceMode) vtx(dots, Mesh.faceCentre(obj, f), [0, 0, 1], picked ? [1, 0.6, 0.1, 1] : [0.08, 0.08, 0.1, 1]);
+				const own = Mesh.faceColour(f);
 				for (const triangle of Mesh.faceTriangles(obj, f))
-					for (const k of triangle) vtx(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint);
+					for (const k of triangle) vtxFace(tris, obj.verts[f.v[k]], corners[fi][k], heat ? heat[f.v[k]] : tint, own);
 			});
 			const edgeCol = editing ? [0.95, 0.95, 1, 0.9] : isSel ? [1, 0.65, 0.3, 0.95] : [0.85, 0.9, 1, 0.35];
 			for (const [k, e] of Mesh.edges(obj)) {
@@ -1857,7 +1863,8 @@
 			for (const m of r.meshes) {
 				for (const f of m.faces) {
 					const n = Mesh.faceNormal(m, f);
-					for (let i = 1; i + 1 < f.v.length; i++) for (const k of [0, i, i + 1]) vtx(gt, at(m.verts[f.v[k]]), n, [0, 0, 0, 0]);
+					const own = Mesh.faceColour(f);
+					for (let i = 1; i + 1 < f.v.length; i++) for (const k of [0, i, i + 1]) vtxFace(gt, at(m.verts[f.v[k]]), n, [0, 0, 0, 0], own);
 					for (let i = 0; i < f.v.length; i++) { const a = m.verts[f.v[i]], b = m.verts[f.v[(i + 1) % f.v.length]]; vtx(ghostLines, at(a), [0, 0, 1], [0.92, 0.92, 0.95, 0.8 * r.opacity]); vtx(ghostLines, at(b), [0, 0, 1], [0.92, 0.92, 0.95, 0.8 * r.opacity]); }
 				}
 			}

@@ -428,14 +428,17 @@
 		return TS.Process.images(r, st).normal;
 	};
 
-	// The tileset's art carried along with the posed models: each pixel of the frame takes the colour of the rest-pose pixel its surface
-	// point came from (the nearest surface wins). Transparent where no model covers; art = {w, h, data} (RGBA).
+	// The reference Aseprite gets: each pixel of the frame takes the base colour of the face in front (f.col, an imported model's
+	// colours), else the tileset's art carried along with the posed models (the colour of the rest-pose pixel its surface point came
+	// from). Transparent where no model covers, or the face has neither; art = {w, h, data} (RGBA). With no bones (or anim
+	// {bones: []}) it is the rest pose.
 	R.frameColours = (objects, anim, clip, frame, w, h, settings, art) => {
 		const posed = R.posedObjects(objects, anim, clip, frame), proj = TS.Proj.of(settings, { w, h });
 		const out = new ImageData(w, h), depth = new Float32Array(w * h).fill(-Infinity), Mesh = TS.Mesh;
 		posed.forEach((obj, oi) => {
 			const rest = objects[oi];
 			obj.faces.forEach((f) => {
+				const own = Mesh.faceColour(f), ownPx = own && [...own.map((c) => Math.round(c * 255)), 255];
 				for (const ids of Mesh.faceTriangles(obj, f)) {
 					const p = ids.map((k) => obj.verts[f.v[k]]), q = ids.map((k) => rest.verts[f.v[k]]);
 					const s = p.map((v) => proj.toCanvas(v)), r = q.map((v) => proj.toCanvas(v)), d = p.map((v) => proj.depth(v));
@@ -453,7 +456,8 @@
 						const ax = Math.floor(w0 * r[0][0] + w1 * r[1][0] + w2 * r[2][0]), ay = Math.floor(w0 * r[0][1] + w1 * r[1][1] + w2 * r[2][1]);
 						const ok = ax >= 0 && ay >= 0 && ax < art.w && ay < art.h && art.data[(ay * art.w + ax) * 4 + 3];
 						depth[i] = dz;
-						if (ok) out.data.set(art.data.subarray((ay * art.w + ax) * 4, (ay * art.w + ax) * 4 + 4), i * 4);
+						if (ownPx) out.data.set(ownPx, i * 4);
+						else if (ok) out.data.set(art.data.subarray((ay * art.w + ax) * 4, (ay * art.w + ax) * 4 + 4), i * 4);
 						else out.data.fill(0, i * 4, i * 4 + 4);
 					}
 				}
