@@ -326,7 +326,7 @@
 	}
 
 	// The Processing panel shows the open project's settings.
-	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_relief", "relief", parseFloat], ["s_cavity", "cavity", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16], ["s_wallh", "wallHeight", parseInt, 0, 255], ["s_wallt", "wallThickness", parseInt, 0, 255]];
+	const SETTING_IDS = [["s_fill", "fill", parseInt], ["s_cavity", "cavity", parseFloat], ["s_alpha", "alphaCut", parseInt], ["s_body", "body", parseFloat], ["s_step", "step", parseFloat], ["s_walk", "walkOverHeight", parseInt, 0, 16], ["s_wallh", "wallHeight", parseInt, 0, 255], ["s_wallt", "wallThickness", parseInt, 0, 255]];
 	function settingsToControls() {
 		for (const [id, key] of SETTING_IDS) if ($(id)) $(id).value = S.settings[key];
 		syncProjection();

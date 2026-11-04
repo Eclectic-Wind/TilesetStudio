@@ -290,7 +290,7 @@
 	P.walkOver = (settings = {}) => settings.walkOverHeight ?? 2;
 	P.wallHeight = (settings = {}) => settings.wallHeight ?? 48;
 	P.wallThickness = (settings = {}) => settings.wallThickness ?? 24;
-	P.defaultSettings = () => ({ projection: "oblique", alphaCut: 13, fill: 2, relief: 0.5, cavity: 1, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
+	P.defaultSettings = () => ({ projection: "oblique", alphaCut: 13, fill: 2, cavity: 1, packHighlights: true, body: 40, step: 4, walkOverHeight: 2, wallHeight: 48, wallThickness: 24 });
 
 	// Kinds that are no longer valid map on every load: deco and solid -> furn, wall -> wall_h, side -> wall_v (the old names of the
 	// same things, from versions 1-3 and from projects saved before furn existed). Mutates the objects; -> how many changed.
@@ -514,12 +514,11 @@
 
 	// --- maps ---
 
-	// The world normal (east, south, up) of art pixel i with the relief bump and the depth rim: relief and cavity work in world space
-	// (their tangents come from the projection), and the map vector is made from the result.
+	// The world normal (east, south, up) of art pixel i: the model's own normal with the depth rim. The art's colours never change it.
+	// The rim works in world space (its tangents come from the projection), and the map vector is made from the result.
 	P.worldNormal = (r, i, settings) => {
 		let n = [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]];
 		const proj = r.proj || TS.Proj.of(settings, r.art);
-		if (settings.relief > 0) n = relief(proj, r, i, n, settings.relief);
 		if (settings.cavity > 0) n = cavity(proj, r, i, n, settings.cavity);
 		return n;
 	};
@@ -527,8 +526,8 @@
 	// (oblique: (east, up, south); isometric: screen space).
 	P.mapNormal = (r, i, settings) => (r.proj || TS.Proj.of(settings, r.art)).toMapNormal(P.worldNormal(r, i, settings));
 
-	// The world normals (east, south, up) with the relief bump, per art pixel: what the Lit view shades with, so it matches the map.
-	// prev (optional): {result, normals, relief, cavity} from the last call. Only pixels near a change are worked out again.
+	// The world normals (east, south, up) per art pixel: what the Lit view shades with, so it matches the map.
+	// prev (optional): {result, normals, cavity} from the last call. Only pixels near a change are worked out again.
 	P.litNormals = (r, settings, prev) => {
 		const N = r.w * r.h, dirty = prev ? litDirty(r, settings, prev) : null, out = dirty ? prev.normals.slice() : new Float32Array(N * 3);
 		for (let i = 0; i < N; i++) {
@@ -539,10 +538,10 @@
 		}
 		return out;
 	};
-	// The art pixels whose lit normal can differ from prev's (relief reads 1 px round a pixel, cavity CAVITY_REACH), or null to do them all.
+	// The art pixels whose lit normal can differ from prev's (the depth rim reads CAVITY_REACH px round a pixel), or null to do them all.
 	function litDirty(r, settings, prev) {
 		const q = prev.result, W = r.w, H = r.h, N = W * H;
-		if (q.art !== r.art || prev.relief !== settings.relief || prev.cavity !== settings.cavity || !q.proj || !r.proj || q.proj.kind !== r.proj.kind || String(q.proj.matrix) !== String(r.proj.matrix)) return null;
+		if (q.art !== r.art || prev.cavity !== settings.cavity || !q.proj || !r.proj || q.proj.kind !== r.proj.kind || String(q.proj.matrix) !== String(r.proj.matrix)) return null;
 		const R = CAVITY_REACH, dirty = new Uint8Array(N), limit = N >> 4;
 		let changed = 0;
 		for (let i = 0; i < N; i++) {
@@ -556,34 +555,13 @@
 	}
 
 	// Unit world vectors in the surface's tangent plane (normal n) that draw as canvas right and canvas up, or null when the surface
-	// is edge-on. The oblique relief and rim keep their own tangents (below); this is the same idea taken from the projection.
+	// is edge-on. The oblique depth rim keeps its own tangents (below); this is the same idea taken from the projection.
 	function tangents(proj, n) {
 		const nd = v3.dot(n, proj.dir);
 		if (Math.abs(nd) < 1e-6) return null;
 		const lift = (sx, sy) => { const a = proj.toWorld(0, 0, 0), b = proj.toWorld(sx, sy, 0); return [b[0] - a[0], b[1] - a[1], b[2] - a[2]]; };
 		const along = (e) => v3.norm(v3.sub(e, v3.scale(proj.dir, v3.dot(n, e) / nd)));
 		return { u: along(lift(1, 0)), v: along(lift(0, -1)) };
-	}
-
-	// The art's shading as a little bump, within one surface (same model, similar normal), clamped.
-	function relief(proj, r, i, n, strength) {
-		const W = r.w, x = i % W, y = (i / W) | 0, d = r.art.data;
-		const lum = (q) => (d[q * 4] * 0.3 + d[q * 4 + 1] * 0.59 + d[q * 4 + 2] * 0.11) / 255;
-		const same = (q) => q >= 0 && q < W * r.h && !isNaN(r.height[q]) && r.owner[q] === r.owner[i] &&
-			r.normal[q * 3] * n[0] + r.normal[q * 3 + 1] * n[1] + r.normal[q * 3 + 2] * n[2] > 0.7 && r.alpha[q] > 0;
-		const l = lum(i);
-		const at = (dx, dy) => { const qx = x + dx, qy = y + dy; if (qx < 0 || qy < 0 || qx >= W || qy >= r.h) return l; const q = qy * W + qx; return same(q) ? lum(q) : l; };
-		const gx = TS.clamp((at(1, 0) - at(-1, 0)) * 0.5 * strength, -0.2, 0.2), gy = TS.clamp((at(0, 1) - at(0, -1)) * 0.5 * strength, -0.2, 0.2);
-		if (proj.kind !== "oblique") {
-			// Brighter = higher: the normal leans away from the brighter side, along the screen's right and up on this surface.
-			const t = tangents(proj, n);
-			return t ? v3.norm(v3.add(v3.sub(n, v3.scale(t.u, gx)), v3.scale(t.v, gy))) : n;
-		}
-		const top = Math.abs(n[2]) >= 0.7;
-		// Along the surface: u to the right, v up the screen.
-		const u = top ? [1, 0, 0] : v3.norm([-n[1], n[0], 0]);
-		const v = top ? [0, -1, 0] : [0, 0, 1];
-		return v3.norm(v3.add(v3.sub(n, v3.scale(u, gx)), v3.scale(v, gy)));
 	}
 
 	// Depth as a rim: a pixel within a few px of a wall that stands well above its own surface (a drawer let into a front, a

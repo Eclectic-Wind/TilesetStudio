@@ -13,7 +13,7 @@ self.onmessage = ({ data: { gen, objects, settings, newArt } }) => {
 	r.pieceMap = P.pieces(objects, r, settings);
 	const litNormal = P.litNormals(r, settings, prev);
 	// The next run's normals only redo what changed since this one: keep what they compare against (the originals are transferred).
-	prev = { result: { art, proj: r.proj, height: r.height.slice(), normal: r.normal.slice(), owner: r.owner.slice() }, normals: litNormal.slice(), relief: settings.relief, cavity: settings.cavity };
+	prev = { result: { art, proj: r.proj, height: r.height.slice(), normal: r.normal.slice(), owner: r.owner.slice() }, normals: litNormal.slice(), cavity: settings.cavity };
 	const checks = { columns: P.clashes(r.pieceMap), shared: P.cellOwnership(objects, r, settings).clashes.filter((c) => !c.samePiece) };
 	// The page puts its own art and projection (which holds functions) back.
 	delete r.art; delete r.alpha; delete r.proj;

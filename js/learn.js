@@ -486,7 +486,7 @@
 		const cx = cv.getContext("2d"); cx.drawImage(atlas, 0, 0);
 		const px = cx.getImageData(0, 0, cv.width, cv.height), alpha = new Uint8Array(cv.width * cv.height);
 		for (let i = 0; i < alpha.length; i++) alpha[i] = px.data[i * 4 + 3];
-		const settings = { alphaCut: 13, fill: 2, relief: 0.5, body: 40, step: 4, walkOverHeight: 2 }, objects = JSON.parse(JSON.stringify(B().objects));
+		const settings = { alphaCut: 13, fill: 2, body: 40, step: 4, walkOverHeight: 2 }, objects = JSON.parse(JSON.stringify(B().objects));
 		const r = TS.Process.run(objects, { w: cv.width, h: cv.height, alpha, data: px.data }, settings), own = TS.Process.cellOwnership(objects, r, settings);
 		const key = (o) => (o.name === "Plane.01" ? "char" : o.name === "Box.02" ? "floor" : "wall");
 		cellData = { cells: {}, clashes: own.clashes };

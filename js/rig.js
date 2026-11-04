@@ -421,7 +421,7 @@
 		const posed = R.posedObjects(objects, anim, clip, frame);
 		const alpha = new Uint8Array(w * h).fill(255);
 		const art = { w, h, data: new Uint8ClampedArray(w * h * 4), alpha };
-		const st = Object.assign({}, settings, { fill: 0, relief: 0, alphaCut: 0 });
+		const st = Object.assign({}, settings, { fill: 0, alphaCut: 0 });
 		const r = TS.Process.run(posed, art, st);
 		for (let i = 0; i < w * h; i++) if (isNaN(r.height[i])) alpha[i] = 0;
 		r.alpha = alpha;

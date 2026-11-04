@@ -41,13 +41,13 @@
 
 		// litNormal: already worked out (by the processing worker). sliced: draw the new image a little at a time, see _sliceImage.
 		set(result, settings, litNormal, sliced) {
-			const prev = this.result && this.litNormal && this._litFrom ? { result: this.result, normals: this.litNormal, relief: this._litFrom.relief, cavity: this._litFrom.cavity } : null;
+			const prev = this.result && this.litNormal && this._litFrom ? { result: this.result, normals: this.litNormal, cavity: this._litFrom.cavity } : null;
 			this.result = result;
 			if(this.gpu)this.gpu.source=null;
 			this.settings = settings;
 			this._prisms = null;
 			this.litNormal = litNormal || (result ? TS.Process.litNormals(result, settings, prev) : null);
-			this._litFrom = result ? { relief: settings.relief, cavity: settings.cavity } : null;
+			this._litFrom = result ? { cavity: settings.cavity } : null;
 			if (result && !this.light.on) { const q = this.proj().toWorld(result.w * 0.25, result.h * 0.9, 0); this.light.x = q[0]; this.light.y = q[1]; this.light.on = true; }
 			this.render(sliced);
 		}
