@@ -146,4 +146,24 @@ test("online, an edit waits for Send now; ticking Send every edit sends it at on
   state.ws, state.online, state.auto, state.dirty = nil, nil, false, false
 end)
 
+test("the reference arrives as layer Reference (Studio), renaming an old Normal (Studio) layer", function()
+  local old = sprite:newLayer()
+  old.name = "Normal (Studio)"
+  local pic = Image(32, 32, ColorMode.RGB)
+  pic:drawPixel(3, 4, Color{ r = 192, g = 57, b = 43, a = 255 })
+  pic:saveAs(path("ref_in.png"))
+  state.meta = { rev = 2, session = state.session, cw = 32, ch = 32 }
+  assert(api.importNormal(path("ref_in.png")), "not imported")
+  local refs, olds = 0, 0
+  for _, l in ipairs(sprite.layers) do
+    if l.name == "Reference (Studio)" then refs = refs + 1 end
+    if l.name == "Normal (Studio)" then olds = olds + 1 end
+  end
+  assert(refs == 1 and olds == 0, "layers: " .. refs .. " reference, " .. olds .. " old")
+  local cel = old:cel(1)
+  assert(cel and cel.image:getPixel(3, 4) == app.pixelColor.rgba(192, 57, 43, 255), "the picture is not in the renamed layer")
+  assert(not old.isEditable, "the layer must stay locked")
+  os.remove(path("ref_in.png"))
+end)
+
 print(passed .. " passed, " .. failed .. " failed")

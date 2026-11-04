@@ -16,8 +16,9 @@ Next time, repeat steps 2 to 4. Aseprite remembers the code, so you only press *
 
 ## The words
 
-- **Reference:** what Studio sends to Aseprite as the locked layer **Normal (Studio)**, a guide under your painting: the models' base
-  colours (the colours an imported model came with), else the tileset art on them, grey where they have neither. (It used to be the normal map, hence the layer's name.)
+- **Reference:** what Studio sends to Aseprite as the locked layer **Reference (Studio)**, a guide under your painting: the models' base
+  colours (the colours an imported model came with), else the tileset art on them, grey where they have neither. A file linked by an
+  older version has the layer **Normal (Studio)**: the next picture renames it.
 - **Albedo:** the plain colours you paint, without lighting. Only the **Albedo** group goes back to Studio.
 - **Room code:** how the two programs find each other online. Treat it like a password.
 - **Relay:** the small online service that passes pictures between the two programs.
@@ -44,7 +45,7 @@ The Aseprite sprite is **one tile big** (the size of your tileset) and every ani
 - **Each clip has its own frames**, marked by a tag named `<clip name> [<clip id>]` (extension 1.3 or newer). Pick another clip in Studio and the
   link moves to its tag; the other clips' frames are not touched. A clip seen for the first time takes the frames already there if the file has no
   tags yet, else a new empty range at the end (nothing is sent back until you paint in it, so the sheet Studio keeps for the clip is safe). Keep the tag's `[id]`; a deleted clip's tag and frames stay until you remove them.
-- **Studio to Aseprite.** Studio's normal map appears on each frame in the locked layer **Normal (Studio)**. Change the frame count in Studio and
+- **Studio to Aseprite.** Studio's reference appears on each frame in the locked layer **Reference (Studio)**. Change the frame count in Studio and
   Aseprite adds or removes frames at the end of the clip's tag (one undo step there). The frame length follows the clip's fps.
 - **Aseprite to Studio.** Paint each frame inside the group **Albedo**. The extension lays every frame out in Studio's sheet grid and sends it.
 - **Adding and deleting frames in Aseprite** changes the clip in Studio: a **deleted** frame takes its key with it and later keys move up one;
@@ -58,7 +59,7 @@ Both programs watch one folder. This works from a GitHub Pages / https page; the
 
 | Direction | File | Content |
 |---|---|---|
-| Studio → Aseprite | `normal.png`, `studio_link.json` | the normal sheet; the json (written last) has `rev` and the sheet size |
+| Studio → Aseprite | `normal.png`, `studio_link.json` | the reference sheet (the file name is from when it was the normal map); the json (written last) has `rev` and the sheet size |
 | Aseprite → Studio | `albedo.png` | the flattened group named **Albedo**, saved on every edit that changes it |
 | Aseprite → Studio | `aseprite_status.json` | the extension's heartbeat: file name, size, frames, anything wrong |
 
@@ -71,7 +72,7 @@ never overwrite the tileset art. An older extension is told to update (its pictu
 1. Install `tools/aseprite/TilesetStudioLink.aseprite-extension` (double-click it, or Edit ▸ Preferences ▸ Extensions ▸ Add Extension). Needs Aseprite 1.3+.
 2. In Studio: *Aseprite ▾ ▸ Link a shared folder…* (*Link Aseprite…* in the Animate panel opens the same menu) and pick an empty folder. Studio writes `normal.png` and `studio_link.json` into it.
 3. In Aseprite, open your file (with none open, the extension offers a new one), then *File ▸ Scripts ▸ Tileset Studio Link…* and
-   pick any file in that folder. A layer **Normal (Studio)** appears (locked, kept up to date as you change the rig).
+   pick any file in that folder. A layer **Reference (Studio)** appears (locked, kept up to date as you change the rig).
 4. Press **Set up file** in the link window: it switches the file to RGB and puts the layers already there into a group called **Albedo**
    (one undo step). Draw in that group. Each edit is flattened and sent; Studio shows it in the preview.
 
@@ -87,7 +88,7 @@ only forwards the PNGs and keeps the latest until everyone has left, then delete
 
 **Online, updates are manual.** The relay runs on Cloudflare's free plan, and every message counts against its daily quota, so
 only the first picture of a connection goes out by itself. After that, press **Send now** in Aseprite's link window to send your
-Albedo (and any frames you added or deleted), and **Send normal map now** in Studio's *Aseprite ▾* menu to send the normal map. Tick
+Albedo (and any frames you added or deleted), and **Send reference now** in Studio's *Aseprite ▾* menu to send the reference. Tick
 **Send every edit** in Aseprite's link window to go back to live updates (it uses up the quota much faster). The folder link costs
 nothing and stays live. The relay hibernates between messages (Cloudflare's WebSocket Hibernation), and Studio pings only every 30 s.
 
@@ -96,7 +97,7 @@ nothing and stays live. The relay hibernates between messages (Cloudflare's WebS
    Edit ▸ Preferences ▸ Extensions ▸ Add Extension). The same download link is in Studio's *Aseprite ▾* menu.
 2. In Studio: *Aseprite ▾ ▸ Link online (any browser)* and copy the room code.
 3. In Aseprite: *File ▸ Scripts ▸ Tileset Studio Link (online)…*, paste the room code, *Link*. The rest is as above (layer
-   **Normal (Studio)**, group **Albedo**).
+   **Reference (Studio)**, group **Albedo**).
 
 The room code is the only secret: anyone with it can read and send pictures in that room, so treat it like a password. It is kept
 in the browser between visits; **Use a new room code** swaps it for a fresh random one at once, cutting off the old code, and you
@@ -104,9 +105,9 @@ paste the new one into Aseprite. Deploying your
 own relay: `cd tools/relay && npx wrangler login && npx wrangler deploy`, then put its address in `L.RELAY` (js/aseprite.js) and `RELAY`
 (the extension's plugin.lua).
 
-The non-animated tileset uses the same link: the *Aseprite ▾* menu in the top bar sends the tileset's normal map and can take
+The non-animated tileset uses the same link: the *Aseprite ▾* menu in the top bar sends the tileset's reference and can take
 Aseprite's `albedo.png` back as the tileset art.
 
-**No link at all:** use *Download normal sheet* and *Load albedo sheet…* (same size checks).
+**No link at all:** use *Download reference sheet* and *Load albedo sheet…* (same size checks).
 
 Tests: `node tools/test_link.js` covers Studio's side of the link and `tools/aseprite/test_headless.lua` runs the extension in Aseprite's batch mode. Aseprite's WebSocket and dialogs don't run in batch mode, so those follow the documented 1.3 API.

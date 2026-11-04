@@ -643,8 +643,8 @@
 		step(1, !online || (Link.relayOpen() && p) ? "done" : "now", online ? (!Link.relayOpen() ? "Connecting to the relay…" : p ? "Room code" : "Copy this room code") : "Folder linked");
 		step(2, p ? "done" : "now", p ? `Aseprite joined: ${p.file}` : "Join from Aseprite",
 			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : `In Aseprite: File ▸ Scripts ▸ Tileset Studio Link${online ? " (online)…, paste the code, press Link" : "…, and pick any file in this folder"}.`);
-		if (adopting) step(3, p ? "now" : "", "Normal map arrives", "After Studio has taken the Aseprite file.");
-		else step(3, p && p.normal ? "done" : p ? "now" : "", p && p.normal ? "Normal map is in Aseprite" : "Normal map arrives", p && p.normal ? "Locked layer Normal (Studio)." : "");
+		if (adopting) step(3, p ? "now" : "", "Reference arrives", "After Studio has taken the Aseprite file.");
+		else step(3, p && p.normal ? "done" : p ? "now" : "", p && p.normal ? "Reference is in Aseprite" : "Reference arrives", p && p.normal ? "Locked layer Reference (Studio): the models' base colours." : "");
 		const sent = Link.lastAlbedo ? `Last picture received at ${new Date(Link.lastAlbedo).toLocaleTimeString()}.` : "";
 		step(4, p && p.problem ? "bad" : Link.lastAlbedo ? "done" : p ? "now" : "", "Paint in the group named Albedo", p && p.problem ? p.problem : sent || (p ? "No group yet? Press Set up file in Aseprite's link window." : ""));
 	}

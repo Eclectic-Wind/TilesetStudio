@@ -361,10 +361,10 @@
 		}
 		const c = document.createElement("canvas");
 		c.width = sheet.sheet.width; c.height = sheet.sheet.height;
-		c.getContext("2d").putImageData(sheet.sheet, 0, 0);
+		c.getContext("2d").putImageData(colourSheet(sheet.sheet, sheet.layout, clip()), 0, 0); // the reference, as Aseprite gets it
 		c.toBlob((b) => {
 			const a = document.createElement("a");
-			a.href = URL.createObjectURL(b); a.download = `${api().exportName()}_${clip().name.replace(/\W+/g, "_")}_normal.png`;
+			a.href = URL.createObjectURL(b); a.download = `${api().exportName()}_${clip().name.replace(/\W+/g, "_")}_reference.png`;
 			document.body.append(a); a.click(); a.remove();
 			setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 		}, "image/png");
@@ -440,7 +440,7 @@
 			<p id="an_sheetinfo" class="dim">${sheetText()}</p>
 			<div class="arow"><button id="an_link" title="Link to Aseprite online or through a shared folder, and see each step of the link">${Link.linked() ? "Link status…" : "Link Aseprite…"}</button>${Link.linked() ? '<button id="an_unlink">Unlink</button>' : ""}</div>
 			<p class="linkline"><span id="an_linkdot" class="dot ${linkState[0]}"></span><span id="an_linkstate" class="linkstate ${linkState[0]}">${esc(linkState[1])}</span></p>
-			<div class="arow"><button id="an_dl" title="Download the normal-map sheet as a PNG to put in Aseprite">Download normal sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`);
+			<div class="arow"><button id="an_dl" title="Download the reference sheet (the models' base colours, the same picture Aseprite gets) as a PNG to paint over in any program">Download reference sheet</button><button id="an_ld" title="Load a flattened Albedo sheet PNG from Aseprite (must match the sheet size)">Load albedo sheet…</button></div>`);
 		// The panel is rebuilt on every edit: keep its scroll, and let Tab reach the next field though the one it left is gone.
 		const scroller = body.closest(".sec")?.parentElement, top = scroller ? scroller.scrollTop : 0;
 		body.innerHTML = h;

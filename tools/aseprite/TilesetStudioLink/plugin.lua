@@ -1,6 +1,7 @@
 -- Tileset Studio Link for Aseprite (1.3 or newer).
 --
--- Studio -> Aseprite: its normal-map sheet is shown as a locked layer "Normal (Studio)" under your art, one cel per timeline frame.
+-- Studio -> Aseprite: its reference sheet (the models' base colours, else the art on them) is shown as a locked layer
+-- "Reference (Studio)" under your art, one cel per timeline frame. (The files and fields still say "normal": it was the normal map once.)
 -- Aseprite -> Studio: every edit flattens the group named "Albedo" (all frames) into one sheet and sends it as albedo.png.
 --
 -- The sprite is ONE TILE big (the size of Studio's tileset) and each Studio animation frame is a real frame on the timeline.
@@ -17,7 +18,9 @@
 -- rewriting aseprite_status.json. Both carry this file's name and size and anything wrong here, so Studio can show them.
 
 local ALBEDO_GROUP = "albedo"
-local NORMAL_LAYER = "Normal (Studio)"
+local REF_LAYER = "Reference (Studio)"
+local OLD_REF_LAYER = "Normal (Studio)" -- its name before: a file that has it gets it renamed
+local function isRefLayer(l) return l.name == REF_LAYER or l.name == OLD_REF_LAYER end
 local state = nil
 
 local function join(folder, name)
@@ -101,7 +104,7 @@ local function clipTag(sprite, id)
 end
 
 -- The linked frames: first frame and how many. Studio's older meta has no clip, and then the whole timeline is linked.
--- Nil when the clip has no frames here yet (the next normal map from Studio makes them).
+-- Nil when the clip has no frames here yet (the next reference from Studio makes them).
 local function clipRange(sprite, meta)
   if not (meta and meta.anim and meta.clip) then return 1, #sprite.frames end
   local tag = clipTag(sprite, meta.clip)
@@ -434,13 +437,13 @@ local function importNormal(path)
   local sprite = state.sprite
   local meta = state.meta
   local sheet = Image{ fromFile = path or join(state.folder, "normal.png") }
-  if not sheet then say("Could not read Studio's normal map picture.", true) return false end
+  if not sheet then say("Could not read Studio's reference picture.", true) return false end
   local anim = meta and meta.anim
   local cw, ch = (meta and meta.cw) or sheet.width, (meta and meta.ch) or sheet.height
   local cols = (meta and meta.cols) or 1
   if cw ~= sprite.width or ch ~= sprite.height then
     state.pending = path
-    say("Studio sent its normal map, but its tiles are " .. cw .. "x" .. ch .. " and this canvas is " .. sprite.width .. "x" .. sprite.height .. ". Press \"Fit canvas\" (or use Sprite > Canvas Size) to make the canvas one tile.", true)
+    say("Studio sent its reference, but its tiles are " .. cw .. "x" .. ch .. " and this canvas is " .. sprite.width .. "x" .. sprite.height .. ". Press \"Fit canvas\" (or use Sprite > Canvas Size) to make the canvas one tile.", true)
     return false
   end
   state.problem, state.pending = nil, nil
@@ -450,14 +453,15 @@ local function importNormal(path)
   local first, count = 1, 1
   if anim then first, count = clipRange(sprite, meta) end
   state.ignore = true
-  app.transaction("Tileset Studio normals", function()
+  app.transaction("Tileset Studio reference", function()
     local layer
     for _, l in ipairs(sprite.layers) do
-      if l.name == NORMAL_LAYER then layer = l end
+      if isRefLayer(l) then layer = l end
     end
-    if not layer then
+    if layer then layer.name = REF_LAYER
+    else
       layer = sprite:newLayer()
-      layer.name = NORMAL_LAYER
+      layer.name = REF_LAYER
       pcall(function() layer.stackIndex = 1 end)
     end
     layer.isEditable = true
@@ -482,7 +486,7 @@ local function importNormal(path)
   if fresh then state.awaiting = nil; state.dirty = false
   elseif state.awaiting or framesChanged or layoutChanged then state.awaiting = nil; state.dirty = true else state.dirty = false end
   app.refresh()
-  say("Received Studio's normal map (rev " .. tostring(state.rev) .. (anim and (", " .. count .. " frames") or "") .. ") as layer \"" .. NORMAL_LAYER .. "\".")
+  say("Received Studio's reference (rev " .. tostring(state.rev) .. (anim and (", " .. count .. " frames") or "") .. ") as layer \"" .. REF_LAYER .. "\".")
   return true
 end
 
@@ -521,7 +525,7 @@ local function importArt(path)
   say("Received the tileset's art as layer \"Studio art\" in the Albedo group.")
 end
 
--- Make the canvas exactly one tile (keeps the art at the top left), then bring in the normal map that was waiting.
+-- Make the canvas exactly one tile (keeps the art at the top left), then bring in the reference that was waiting.
 local function fitCanvas()
   local meta = state and state.meta
   if not meta or not meta.cw then say("Nothing from Studio yet.", true) return end
@@ -541,7 +545,7 @@ local function setUpFile()
     app.transaction("Tileset Studio set up file", function()
       local art = {}
       for _, l in ipairs(sprite.layers) do
-        if l.name ~= NORMAL_LAYER then art[#art + 1] = l end
+        if not isRefLayer(l) then art[#art + 1] = l end
       end
       local group = sprite:newGroup()
       group.name = "Albedo"
@@ -652,11 +656,11 @@ local function start(folder, relay)
           onSprite(function() state.sprite:crop(0, 0, m.cw, m.ch) end)
           state.ignore = false
           state.dirty = true
-          if not state.ws then state.rev = 0 end -- the normal map that was refused for the old size is read again
+          if not state.ws then state.rev = 0 end -- the reference that was refused for the old size is read again
         end
       end
       if state.pending and m and m.cw == state.sprite.width and m.ch == state.sprite.height then
-        onSprite(importNormal, state.pending) -- the canvas was resized by hand: the waiting normal map can go in now
+        onSprite(importNormal, state.pending) -- the canvas was resized by hand: the waiting reference can go in now
       end
       if state.meta and state.meta.art and not state.artDone then
         local artPath = state.ws and state.artPath or join(state.folder, "art.png")
@@ -669,7 +673,7 @@ local function start(folder, relay)
       end
       if state.ws then
         if state.normalPath and state.meta and state.meta.adopt then
-          state.normalPath = nil -- this file starts the project: a normal map left in the relay's cache is stale
+          state.normalPath = nil -- this file starts the project: a reference left in the relay's cache is stale
         elseif state.normalPath and state.meta then
           local path = state.normalPath
           state.normalPath = nil

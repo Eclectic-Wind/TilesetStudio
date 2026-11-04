@@ -20,7 +20,7 @@ Make your models move. You don't need Aseprite or any setup to start. Press **L*
 
 ## Getting the frames into your game
 
-Studio moves the shape, but the colours of each frame are painted by you. Either use the live [Aseprite link](aseprite-link.md), or press *Download normal sheet*, paint over it in any program and press *Load albedo sheet…* with a picture of the same size. Then, in the panel's *Clip* section, select the models and press *Use selected models*, and export with *Export ▾ → Godot bundle*. The *Export ▾* menu lists every animated clip with an *Export* tick, what it sends to the game and any warnings.
+Studio moves the shape, but the colours of each frame are painted by you. Either use the live [Aseprite link](aseprite-link.md), or press *Download reference sheet* (the models in their base colours, the picture Aseprite gets), paint over it in any program and press *Load albedo sheet…* with a picture of the same size. Then, in the panel's *Clip* section, select the models and press *Use selected models*, and export with *Export ▾ → Godot bundle*. The *Export ▾* menu lists every animated clip with an *Export* tick, what it sends to the game and any warnings.
 
 ## Reference
 
@@ -70,7 +70,7 @@ Every frame is rendered through the normal Process pipeline into one **normal-ma
 power-of-two columns and rows (8 frames of 128x128 = 4x2 cells = 512x256). Empty pixels are transparent. The frame on screen renders
 first and the rest follow a few at a time (the panel counts down), so a long clip never freezes the page. Frames are kept by pose: an edit
 only redoes the frames it changes, and frames with the same pose share a picture. Aseprite gets the sheet once
-it is whole, and *Download normal sheet* finishes it on the spot. A power-of-two tileset always
+it is whole, and *Download reference sheet* finishes it on the spot. A power-of-two tileset always
 gives a power-of-two sheet. Rigging is saved in the `.studio.json` project (`anim`), including the last Albedo sheet received.
 
 glTF export carries each deforming model's skin weights (automatic or painted, up to four bones per vertex) and its whole skeleton; a skinned model imported from glTF stays one model and keeps its weights as painted ones. The Albedo preview is the whole

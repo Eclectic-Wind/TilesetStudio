@@ -98,7 +98,8 @@ including sheets such as 416 x 256; their pixels are not resized or padded.
   material's base colour times its vertex colours and its base colour texture (sampled per face); FBX the material colour and vertex
   colours (not textures); OBJ each material's `Kd` from its `.mtl` (pick it together with the `.obj`) or `v x y z r g b` vertex colours.
   **Show ▸ base colours** shows them on the models, *art on models* shows them where a face has no art, and the Aseprite link's reference
-  layer is made from them. Edits that split a face (knife, loop cut, inset, extrude) keep its colour.
+  layer is made from them. Edits that split a face (knife, loop cut, inset, extrude) keep its colour. **Export ▸ 3D models ▸ glTF**
+  writes them back as plain materials (one per colour), so Blender shows them too.
 - Drag a box that fully contains the parts you want. Click a face to select one part; Shift-click toggles it, and Shift-drag
   adds parts. The checklist also lets you select obscured parts. Wheel zooms; right-drag pans; **Frame selected** zooms in.
 - **Add at cursor** places the group at the 3D cursor with its lowest point at the cursor's height. **Add at original position**

@@ -156,14 +156,14 @@
 
 	const toBlob = (img) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d").putImageData(img, 0, 0); return new Promise((ok) => c.toBlob(ok, "image/png")); };
 
-	// Send the normal sheet (ImageData) and its layout to Aseprite. extra: {anim: true, fps} when an animation is being linked (then
+	// Send the reference sheet (ImageData: base colours, see Rig.frameColours) and its layout to Aseprite. extra: {anim: true, fps} when an animation is being linked (then
 	// Aseprite's timeline follows the frame count; otherwise only frame 1 is linked).
 	L.push = async (sheet, layout, extra) => {
 		if (!dir && !ws) return;
 		if (L.adoptPending) return L.hello(); // Aseprite's file starts the project: no sheet goes out until Studio has taken its size
 		if (!dir && L.manual && sentThisOpen && !forceNext) {
 			L.waiting = [sheet, layout, extra];
-			say("ok", "Changes ready. Press “Send normal map now” to update Aseprite.");
+			say("ok", "Changes ready. Press “Send reference now” to update Aseprite.");
 			return;
 		}
 		forceNext = false; L.waiting = null;

@@ -740,10 +740,10 @@
 		caps: [
 			{ t: 0, say: "Studio draws the shading of every frame.", sub: "That picture is the normal map: it tells the game's light which way each pixel faces. All frames share one big picture, the sheet." },
 			{ t: 6, say: "Keep tile sizes at a power of two.", sub: "16, 32, 64, 128 and so on. Then the sheet always fits: 8 frames of 128 × 128 make a 512 × 256 sheet." },
-			{ t: 11, say: "Studio moves the shape. The colours are painted by you.", sub: "The game shows painted frames (the Albedo). Paint them with the Aseprite link, or use Download normal sheet and Load albedo sheet." },
+			{ t: 11, say: "Studio moves the shape. The colours are painted by you.", sub: "The game shows painted frames (the Albedo). Paint them with the Aseprite link, or use Download reference sheet and Load albedo sheet." },
 			{ t: 17.5, say: "Then choose what the clip animates, and export.", sub: "In the panel's Clip section: select the models and press Use selected models. Then Export ▾ → Godot bundle." },
 		],
-		extra: `<p class="kindnote"><b>No Aseprite?</b> Any paint program works: press <b>Download normal sheet</b>, paint the frames over it in your program, then press <b>Load albedo sheet…</b> with a picture of the same size. The Aseprite link only does this live.</p>
+		extra: `<p class="kindnote"><b>No Aseprite?</b> Any paint program works: press <b>Download reference sheet</b>, paint the frames over it in your program, then press <b>Load albedo sheet…</b> with a picture of the same size. The Aseprite link only does this live.</p>
 		<div class="row"><button id="l_section_as" class="primary">Set up the Aseprite link →</button></div>`,
 		make() {
 			return (g, t) => {
@@ -754,7 +754,7 @@
 				const sized = seg(t, 6, 7);
 				text(g, "8 frames · 4 × 2 cells · 512 × 256 sheet", gx + cell * 2, gy + rows * cell + 22, C.ok, 12, "center", sized);
 				// the three stages on the way to the game
-				const stops = [["Normal sheet", "shading, from Studio", "#9a9aff", 0], ["Albedo", "colours, painted by you", C.amber, 11], ["Godot bundle", "Export ▾", C.ok, 17.5]];
+				const stops = [["Reference sheet", "a guide, from Studio", "#9a9aff", 0], ["Albedo", "colours, painted by you", C.amber, 11], ["Godot bundle", "Export ▾", C.ok, 17.5]];
 				stops.forEach(([name, sub, col, at], i) => {
 					const y = 62 + i * 92, a = i ? seg(t, at, at + 1) : 1;
 					g.save(); g.globalAlpha = 0.25 + 0.75 * a; g.fillStyle = "#1d2029"; g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.roundRect(392, y, 280, 62, 8); g.fill(); g.stroke(); g.restore();
@@ -772,10 +772,10 @@
 		section: "aseprite", title: "What the link does", dur: 22,
 		caps: [
 			{ t: 0, say: "Paint in Aseprite and see it on your models straight away.", sub: "Studio knows the shape. Aseprite is where you paint the pixels. The link passes pictures between them." },
-			{ t: 3, say: "Studio sends a shading guide: the normal map.", sub: "It appears in Aseprite as a locked layer called Normal (Studio). It shows which way each part of the shape faces." },
+			{ t: 3, say: "Studio sends a painting guide: the reference.", sub: "It appears in Aseprite as a locked layer called Reference (Studio): the models in their base colours, the colours an imported model came with." },
 			{ t: 7.4, say: "You paint the colours: the Albedo.", sub: "Albedo just means the plain colours, without lighting. Draw inside the group called Albedo and each edit goes back to Studio." },
 			{ t: 12, say: "Studio lights your painting.", sub: "Your colours land on the models at once, lit by the lamp." },
-			{ t: 16.5, say: "Change the pose and the guide follows.", sub: "If you're animating, turn a bone in Studio and the Normal (Studio) layer updates. Then paint over the new pose." },
+			{ t: 16.5, say: "Change the pose and the guide follows.", sub: "If you're animating, turn a bone in Studio and the Reference (Studio) layer updates. Then paint over the new pose." },
 		],
 		make() {
 			const models = sampleModels();
@@ -806,12 +806,12 @@
 				g.fillStyle = "#1b1d25"; g.fillRect(lx, ly, 80, 244);
 				g.fillStyle = painted > 0 && painted < 1 ? "#3a3326" : "#23252e"; g.fillRect(lx + 3, ly + 6, 74, 34);
 				text(g, "▾ Albedo", lx + 8, ly + 18, C.amber, 11, "left"); text(g, "group", lx + 8, ly + 31, C.dim, 10, "left");
-				if (sent > 0) { g.globalAlpha = sent; g.fillStyle = "#23252e"; g.fillRect(lx + 3, ly + 44, 74, 34); text(g, "Normal", lx + 8, ly + 56, "#a9a9ff", 11, "left"); text(g, "(Studio) 🔒", lx + 8, ly + 69, C.dim, 10, "left"); g.globalAlpha = 1; }
+				if (sent > 0) { g.globalAlpha = sent; g.fillStyle = "#23252e"; g.fillRect(lx + 3, ly + 44, 74, 34); text(g, "Reference", lx + 8, ly + 56, "#a9a9ff", 11, "left"); text(g, "(Studio) 🔒", lx + 8, ly + 69, C.dim, 10, "left"); g.globalAlpha = 1; }
 				// the traffic between them
 				const down = pulse(t, 3, 5.6) + pulse(t, 16.5, 22), up = pulse(t, 11.2, 13.8);
 				arrow(g, [328, 138], [392, 138], "#8c8cff", 0.25 + 0.75 * Math.min(1, down), 4);
 				arrow(g, [392, 236], [328, 236], C.amber, 0.25 + 0.75 * Math.min(1, up), 4);
-				pill(g, 360, 112, "normal map", "#8c8cff", 0.55 + 0.45 * Math.min(1, down), 12);
+				pill(g, 360, 112, "reference", "#8c8cff", 0.55 + 0.45 * Math.min(1, down), 12);
 				pill(g, 360, 262, "your painting", C.amber, 0.55 + 0.45 * Math.min(1, up), 12);
 			};
 		},

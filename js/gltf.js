@@ -3,6 +3,9 @@
 // Axes: Studio is X east, Y south (depth), Z up; glTF is Y up, so Studio (x, y, z) is glTF (x, z, -y). That is Blender's own
 // mapping, so Studio's axes read the same as Blender's. Distances: `scale` is pixels per glTF unit.
 //
+// Base colours (f.col): written as one plain material per colour (one primitive per colour, all on the model's vertices); read from the
+// material's base colour, vertex colours and base colour texture.
+//
 // Rig: a Studio bone turns about its head and moves by `pos`; its children ride along (see rig.js). That is exactly a glTF joint whose
 // local translation is (head - parent head) + pos and whose local rotation is the bone's turn, with the inverse bind matrix a plain
 // translation by -head. A bound model exports as a mesh skinned with its deform weights (automatic or painted; 100% to its bone if rigid).
@@ -111,14 +114,20 @@
 			skin = { joints: bones.map((_, i) => i), inverseBindMatrices: addAcc(ibm, "MAT4", F, bones.length) };
 		}
 
-		const meshes = [];
+		const meshes = [], materials = [], matOf = new Map();
+		const materialFor = (hex) => { // a base colour -> a plain material of that colour (glTF colours are linear)
+			if (!matOf.has(hex)) {
+				const rgb = Mesh.faceColour({ col: hex }).map(toLin);
+				materials.push({ name: "Base " + hex, pbrMetallicRoughness: { baseColorFactor: [...rgb, 1], metallicFactor: 0, roughnessFactor: 0.8 } });
+				matOf.set(hex, materials.length - 1);
+			}
+			return matOf.get(hex);
+		};
 		for (const o of objects) {
 			const tris = Mesh.triangles(o);
 			if (!tris.length) continue; // lines and points have no glTF counterpart worth keeping
 			const pos = new Float32Array(o.verts.length * 3), min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
 			o.verts.forEach((p, i) => { const g = toG(p).map((v) => v / scale); pos.set(g, i * 3); for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], g[k]); max[k] = Math.max(max[k], g[k]); } });
-			const idx = new Uint32Array(tris.length * 3);
-			tris.forEach((t, i) => idx.set([t.a, t.b, t.c], i * 3));
 			const attributes = { POSITION: addAcc(pos, "VEC3", F, o.verts.length, 34962, { min, max }) };
 			const bone = useRig && Rig.bone(anim, anim.bind[o.id]);
 			if (bone && boneIdx.has(bone.id)) {
@@ -134,7 +143,17 @@
 				attributes.JOINTS_0 = addAcc(j, "VEC4", U16, o.verts.length, 34962);
 				attributes.WEIGHTS_0 = addAcc(w, "VEC4", F, o.verts.length, 34962);
 			}
-			meshes.push({ name: o.name, primitives: [{ attributes, indices: addAcc(idx, "SCALAR", U32, idx.length, 34963), mode: 4 }] });
+			// One primitive per base colour (f.col), all on the same vertices; a face with no colour gets no material.
+			const byCol = new Map();
+			for (const t of tris) { const c = o.faces[t.face].col || ""; if (!byCol.has(c)) byCol.set(c, []); byCol.get(c).push(t); }
+			const primitives = [...byCol].map(([c, list]) => {
+				const idx = new Uint32Array(list.length * 3);
+				list.forEach((t, i) => idx.set([t.a, t.b, t.c], i * 3));
+				const prim = { attributes, indices: addAcc(idx, "SCALAR", U32, idx.length, 34963), mode: 4 };
+				if (c) prim.material = materialFor(c);
+				return prim;
+			});
+			meshes.push({ name: o.name, primitives });
 			// Everything Studio knows about the model that glTF has no place for, so it can come back whole.
 			const extra = {};
 			for (const k of Object.keys(o)) if (!["id", "name", "verts", "faces", "lines", "hidden"].includes(k)) extra[k] = o[k];
@@ -174,6 +193,7 @@
 
 		const json = { asset: { version: "2.0", generator: "Tileset Studio" }, scene: 0, scenes: [{ nodes: sceneNodes }], nodes, meshes, accessors, bufferViews: views, buffers: [{ byteLength: offset }] };
 		if (skin) json.skins = [skin];
+		if (materials.length) json.materials = materials;
 		if (animations.length) json.animations = animations;
 		const jsonBytes = new TextEncoder().encode(JSON.stringify(json)), jpad = (4 - (jsonBytes.length % 4)) % 4;
 		const jlen = jsonBytes.length + jpad, total = 12 + 8 + jlen + 8 + offset;
@@ -330,12 +350,14 @@
 		gl.meshes && nodes.forEach((nd, ni) => {
 			if (nd.mesh === undefined) return;
 			const mesh = gl.meshes[nd.mesh], skin = nd.skin !== undefined ? gl.skins[nd.skin] : null;
-			const pts = [], tris = [], triCol = [], joints = [], weights = [];
+			const pts = [], tris = [], triCol = [], joints = [], weights = [], baseOf = new Map(); // POSITION accessor -> its first vertex in pts
 			for (const prim of mesh.primitives) {
 				const mode = prim.mode === undefined ? 4 : prim.mode;
 				if (mode < 4 || !prim.attributes || prim.attributes.POSITION === undefined) continue;
-				const P = readAccessor(gl, bufs, prim.attributes.POSITION), base = pts.length;
-				for (let i = 0; i < P.count; i++) pts.push([P.data[i * 3], P.data[i * 3 + 1], P.data[i * 3 + 2]]);
+				const P = readAccessor(gl, bufs, prim.attributes.POSITION), shared = baseOf.has(prim.attributes.POSITION); // Studio writes one primitive per base colour on the same vertices
+				const base = shared ? baseOf.get(prim.attributes.POSITION) : pts.length;
+				baseOf.set(prim.attributes.POSITION, base);
+				if (!shared) for (let i = 0; i < P.count; i++) pts.push([P.data[i * 3], P.data[i * 3 + 1], P.data[i * 3 + 2]]);
 				let ix;
 				if (prim.indices !== undefined) ix = readAccessor(gl, bufs, prim.indices).data; else ix = Array.from({ length: P.count }, (_, i) => i);
 				const local = [];
@@ -344,7 +366,8 @@
 				else for (let i = 1; i + 1 < ix.length; i++) local.push([ix[0], ix[i], ix[i + 1]]);
 				const colour = primColour(gl, bufs, prim, opts.images || []);
 				for (const t of local) { tris.push(t.map((i) => i + base)); triCol.push(colour ? colour(t) : null); }
-				if (skin && prim.attributes.JOINTS_0 !== undefined && prim.attributes.WEIGHTS_0 !== undefined) {
+				if (shared) { /* its vertices (and their weights) are in already */ }
+				else if (skin && prim.attributes.JOINTS_0 !== undefined && prim.attributes.WEIGHTS_0 !== undefined) {
 					const J = readAccessor(gl, bufs, prim.attributes.JOINTS_0), W = readAccessor(gl, bufs, prim.attributes.WEIGHTS_0);
 					for (let i = 0; i < P.count; i++) { joints.push([0, 1, 2, 3].map((k) => skin.joints[J.data[i * 4 + k]])); weights.push([0, 1, 2, 3].map((k) => W.data[i * 4 + k])); }
 				} else for (let i = 0; i < P.count; i++) { joints.push([-1, -1, -1, -1]); weights.push([0, 0, 0, 0]); }
