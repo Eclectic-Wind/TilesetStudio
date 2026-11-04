@@ -9,8 +9,8 @@
 // Rig: a Studio bone turns about its head and moves by `pos`; its children ride along (see rig.js). That is exactly a glTF joint whose
 // local translation is (head - parent head) + pos and whose local rotation is the bone's turn, with the inverse bind matrix a plain
 // translation by -head. A bound model exports as a mesh skinned with its deform weights (automatic or painted; 100% to its bone if rigid).
-// Reading goes the other way and accepts any rig: each skinned mesh is cut into one model per bone (by the bone with most weight on
-// each face), because Studio bones do not bend a model.
+// Reading goes the other way and accepts any rig: each skinned mesh stays one model, bound to the bone with most weight, and keeps
+// its skin weights as painted weights.
 "use strict";
 (function () {
 	const G = (TS.Gltf = {});
@@ -339,10 +339,27 @@
 			const pw = parent[i] >= 0 ? world[parent[i]] : mat4FromTRS([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
 			info.set(i, { R0: toSRot(matFromQuat(local[i][1])), t0: toS(local[i][0]).map((v) => v * scale), Rp0: toSRot(mat4Rot(pw)) });
 		}
-		bones.forEach((b) => { // a tail toward the first child makes the bones draw sensibly
-			const kid = bones.find((c) => c.parent === b.id);
-			if (kid) b.tail = kid.head.slice();
-		});
+		// glTF keeps no tails. Blender writes each joint with its local +Y along the bone, so a tail goes that way: as far as the child
+		// that sits on that line (the bone it connects to), else as long as its parent bone (hands, toes, the head). A file whose joints
+		// don't follow that has its tails aimed at the first child. Bones only turn about their heads; the tail is for drawing and picking.
+		const yAxis = (i) => v3.norm(toS(v3.sub(mat4Apply(world[i], [0, 1, 0]), mat4Apply(world[i], [0, 0, 0]))));
+		const lenOf = new Map();
+		for (const i of jointOrder) {
+			const b = boneOfNode.get(i), kids = jointOrder.filter((k) => boneOfNode.get(k).parent === b.id).map((k) => boneOfNode.get(k));
+			const dir = yAxis(i);
+			let len = 0;
+			for (const k of kids) {
+				const d = v3.sub(k.head, b.head), along = v3.dot(d, dir);
+				if (along > 1e-6 && along >= 0.99 * v3.len(d) && (!len || along < len)) len = along;
+			}
+			if (len) b.tail = v3.add(b.head, v3.scale(dir, len));
+			else if (kids.length && kids.some((k) => v3.dist(k.head, b.head) > 1e-6)) b.tail = kids.find((k) => v3.dist(k.head, b.head) > 1e-6).head.slice();
+			else {
+				const pl = b.parent ? lenOf.get(b.parent) : 0;
+				b.tail = v3.add(b.head, v3.scale(dir[0] || dir[1] || dir[2] ? dir : [0, 0, 1], pl ? pl * 0.6 : 8));
+			}
+			lenOf.set(b.id, v3.dist(b.head, b.tail));
+		}
 
 		// models
 		const objects = [], bind = {}, paint = {};
@@ -351,6 +368,9 @@
 			if (nd.mesh === undefined) return;
 			const mesh = gl.meshes[nd.mesh], skin = nd.skin !== undefined ? gl.skins[nd.skin] : null;
 			const pts = [], tris = [], triCol = [], joints = [], weights = [], baseOf = new Map(); // POSITION accessor -> its first vertex in pts
+			// A negative scale (a mirrored object) turns the faces inside out; the winding is swapped back. A skinned mesh is placed by
+			// its joints, not its node.
+			const w = world[ni], mirrored = !skin && w[0] * (w[5] * w[10] - w[9] * w[6]) - w[4] * (w[1] * w[10] - w[9] * w[2]) + w[8] * (w[1] * w[6] - w[5] * w[2]) < 0;
 			for (const prim of mesh.primitives) {
 				const mode = prim.mode === undefined ? 4 : prim.mode;
 				if (mode < 4 || !prim.attributes || prim.attributes.POSITION === undefined) continue;
@@ -365,7 +385,7 @@
 				else if (mode === 5) for (let i = 0; i + 2 < ix.length; i++) local.push(i % 2 ? [ix[i + 1], ix[i], ix[i + 2]] : [ix[i], ix[i + 1], ix[i + 2]]);
 				else for (let i = 1; i + 1 < ix.length; i++) local.push([ix[0], ix[i], ix[i + 1]]);
 				const colour = primColour(gl, bufs, prim, opts.images || []);
-				for (const t of local) { tris.push(t.map((i) => i + base)); triCol.push(colour ? colour(t) : null); }
+				for (const t of local) { tris.push((mirrored ? [t[0], t[2], t[1]] : t).map((i) => i + base)); triCol.push(colour ? colour(t) : null); }
 				if (shared) { /* its vertices (and their weights) are in already */ }
 				else if (skin && prim.attributes.JOINTS_0 !== undefined && prim.attributes.WEIGHTS_0 !== undefined) {
 					const J = readAccessor(gl, bufs, prim.attributes.JOINTS_0), W = readAccessor(gl, bufs, prim.attributes.WEIGHTS_0);

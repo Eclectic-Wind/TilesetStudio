@@ -15,7 +15,7 @@
 					if (main.size > 40 * 1024 * 1024) throw new Error("Use a source file smaller than 40 MB.");
 					const binary = TS.Gltf.looksLikeGltf(main.name) || /.fbx$/i.test(main.name), files = {};
 					for (const f of picked) if (f !== main) files[f.name] = await f.arrayBuffer();
-					await this.loadSource(binary ? await main.arrayBuffer() : await api.readFile(main, true), main.name, files);
+					await this.loadSource(binary ? await main.arrayBuffer() : await api.readFile(main, true), main.name, files, true);
 				} catch (err) { this.message(err.message, true); }
 			};
 			$("source_close").onclick = () => this.closeSource();
@@ -28,6 +28,7 @@
 			$("source_stamp").onclick = () => { if (!this.hasSelection()) return; this.closeSource(); this.api.setTool("stamp"); };
 			$("source_add").onclick = () => this.addAtCursor();
 			$("source_keep").onclick = () => this.addInPlace();
+			$("source_units").addEventListener("input", () => { this.unitsSet = true; }); // typed by hand: kept for later files too
 			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (["obj", "gltf", "fbx"].includes(this.source?.kind)) this.loadSource(this.source.raw, this.source.name, this.source.files).catch(err => this.message(err.message, true)); };
 			for (const id of ["stamp_scale", "stamp_base", "stamp_x", "stamp_y"]) $(id).oninput = () => this.controls();
 			$("stamp_snap").onchange = () => this.api.changed();
@@ -56,8 +57,9 @@
 			window.addEventListener("resize", () => { if ($("source_dialog").classList.contains("open")) this.drawSource(); });
 		}
 		message(text, error = false) { $("source_message").textContent = text; $("source_message").classList.toggle("bad", error); }
-		async loadSource(raw, name, files = {}) {
+		async loadSource(raw, name, files = {}, fresh = false) {
 			const token = ++this.generation; let objects, image = null, kind, warning = "", rig = null;
+			if (fresh) this.autoScale = null;
 			if (TS.Gltf.looksLikeGltf(name)) { kind = "gltf"; const images = await TS.Gltf.images(raw, files); if (token !== this.generation) return; const res = TS.Gltf.read(raw, { scale: Number($("source_units").value), files, images }); objects = T.validate(res.objects); rig = res.rig; }
 				else if (/.fbx$/i.test(name)) { kind = "fbx"; objects = T.validate(TS.Fbx.read(raw, { scale: Number($("source_units").value), up: $("source_up").value }).objects); }
 			else if (/\.obj$/i.test(name)) { // its .mtl (picked with it) gives the faces their base colours
@@ -72,6 +74,17 @@
 				}
 			}
 			if (token !== this.generation) return;
+			// A model file's units are rarely pixels (Blender writes metres): a new one is sized to stand about two tiles tall, unless a
+			// scale was typed by hand. The size picked shows in the box and in the message, to change.
+			if (fresh && !this.unitsSet && kind !== "studio") {
+				const s = Number($("source_units").value) || 1;
+				const ext = (k) => { let lo = Infinity, hi = -Infinity; for (const o of objects) for (const p of o.verts) { if (p[k] < lo) lo = p[k]; if (p[k] > hi) hi = p[k]; } return hi - lo; };
+				const size = Math.max(ext(0), ext(1), ext(2));
+				if (size > 0) {
+					const want = s * 64 / size, mag = Math.pow(10, Math.floor(Math.log10(want))), nice = Math.round(want / mag * 10) / 10 * mag;
+					if (Math.abs(nice - s) / s > 0.01) { $("source_units").value = +nice.toPrecision(2); this.autoScale = +nice.toPrecision(2); return this.loadSource(raw, name, files); }
+				}
+			}
 			// A project's own canvas is drawn in the projection it was made in; a mesh file has none (oblique).
 			const proj = kind === "studio" ? TS.Proj.of(JSON.parse(raw).settings, image && { w: image.width }) : TS.Proj.OBLIQUE;
 			this.source = { name, raw, kind, objects, image, rig, proj, files }; this.selected.clear();
@@ -79,8 +92,9 @@
 			this.end(); this.api.setTool("select");
 			$("source_filter").value = ""; $("source_name").textContent = name;
 			$("source_obj_options").hidden = kind === "studio"; $("source_up_wrap").hidden = kind === "gltf";
-			const rigText = rig ? ` with ${rig.bones.length} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""}` : "";
-			this.message(`${objects.length} model(s)${rigText}. ${kind === "gltf" ? "Check the scale (pixels per unit). Bones and animation come along when you add the models at the cursor or at their original position (not as a stamp). Each model follows one bone; a mesh that bends across several bones is cut into one model per bone." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : kind === "fbx" ? "FBX imports mesh geometry in its bind pose (no bones or animation yet). Check the scale (pixels per unit; FBX files are often in centimetres) and the up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
+			const used = rig && T.rigFor(rig, objects.map(o => o.id)); // a file can carry armatures nothing is skinned to
+			const rigText = rig ? ` with ${used ? used.bones.length : 0} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""}` : "";
+			this.message(`${objects.length} model(s)${rigText}. ${this.autoScale ? `Sized to about 64 px tall (${this.autoScale} pixels per unit); change it above if you need. ` : ""}${kind === "gltf" ? "Bones, weights and animation come along when you add the models at the cursor or at their original position (not as a stamp)." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : kind === "fbx" ? "FBX imports mesh geometry in its bind pose (no bones or animation yet). Check the scale (pixels per unit; FBX files are often in centimetres) and the up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
 			this.selectionChanged(); this.fit();
 		}
 		showSource() { $("source_dialog").classList.add("open"); this.list(); this.fit(); $("source_load").focus(); }
