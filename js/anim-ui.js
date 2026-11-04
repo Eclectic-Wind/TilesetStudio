@@ -433,7 +433,7 @@
 				${["X", "Y", "Z"].map((n, i) => `<div class="vrow"><span class="ax-${n.toLowerCase()}" title="Turn about ${n}">Turn ${n}</span><input id="an_rr${i}" type="range" min="-180" max="180" step="1" value="${round(pose.rot[i])}">${numField("an_r" + i, pose.rot[i])}</div>`).join("")}
 				${bone.connected && bone.parent ? '<p class="dim">Connected: turns only (its head stays on the parent tip).</p>' : vecRow("Move", "an_p", pose.pos)}
 				<div class="arow"><button id="an_keydel" title="Remove this frame's key"${key ? "" : " disabled"}>Remove key</button><button id="an_keyrest" title="Back to the rest pose on this frame (keeps a key)">Rest here</button></div>
-				<p class="dim">Changing a value keys it on this frame. Or drag the bone's tip in the view (turns about the depth axis).</p></div>`);
+				<p class="dim">Changing a value keys it on this frame. Or drag the bone's tip in the view (turns about the depth axis); to move it in depth drag its green Y arrow, or press G then Y.</p></div>`);
 		}
 		h += section("weights", "Weights", weightsPanel(a, bone));
 		h += section("sheet", "Preview &amp; Aseprite", `<div class="arow"><label title="What the preview below shows. The big Lit / Normals tab on the right plays the same frames.">Preview <select id="an_pmode"><option value="lit"${previewMode === "lit" ? " selected" : ""}>Lit</option><option value="normal"${previewMode === "normal" ? " selected" : ""}>Normal</option><option value="albedo"${previewMode === "albedo" ? " selected" : ""}>Albedo</option></select></label></div><canvas id="an_prev" class="prev" title="This frame, lit by the normal map and your Albedo. Move the pointer over it to move the light."></canvas>
@@ -882,7 +882,7 @@
 		if (!showGizmos || !bone || drag || paintMode) return;
 		const M = mats.get(bone.id), H = Rig.apply(M, bone.head), T = Rig.apply(M, bone.tail), d = viewDir();
 		const len = Math.hypot(T[0] - H[0], T[1] - H[1], T[2] - H[2]), R3 = TS.clamp(len * 0.45, 8, 40), L = TS.clamp(len * 0.6, 12, 48);
-		const lk = S().viewLock ? S().viewLock.k : 1, joint = bone.connected && bone.parent;
+		const joint = bone.connected && bone.parent;
 		const at = (k, s, off) => { const p = H.slice(); p[k] += s; if (off) p[off[0]] += off[1]; return r.toScreen(p); };
 		for (let k = 0; k < 3; k++) {
 			// Turn ring: a circle in the plane normal to axis k, seen face-on enough to drag (not in rest-pose editing).
@@ -900,8 +900,13 @@
 					add("polygon", { points: pts.join(" "), fill: "none", stroke: AXC[k], "stroke-width": 1.6, "stroke-opacity": 0.75, "pointer-events": "none" });
 				}
 			}
-			// Move arrow along axis k (not the depth axis, which a drag never changes; not for a connected bone, which can't slide).
-			if (k !== lk && !joint && Math.abs(d[k]) < 0.9) {
+		}
+		// The arrows go on top of every ring: a ring's wide grab zone would otherwise hide the short arrows that lie inside it (in the
+		// tileset view the Y arrow ran wholly under the Z ring).
+		for (let k = 0; k < 3; k++) {
+			// Move arrow along axis k, the depth axis too (not for a connected bone, which can't slide; not when the view looks straight
+			// down the axis, where the arrow has no length on screen: G then the axis key still moves it).
+			if (!joint && Math.abs(d[k]) < 0.9) {
 				const s0 = r.toScreen(H), s1 = at(k, L);
 				if (!s0 || !s1) continue;
 				const dx = s1[0] - s0[0], dy = s1[1] - s0[1], n = Math.hypot(dx, dy) || 1, ux = dx / n, uy = dy / n;
@@ -999,17 +1004,40 @@
 		api().redrawSoon(); draw(); render();
 		api().status(restMode ? "Editing the rest pose: drag a bone's head, tip or body (X / Y / Z narrows it, a preset view picks the plane). Tab to finish." : "Back to posing.");
 	}
+	// A move along the view's depth axis k, the one a drag over the view plane never changes (Y in the tileset view): how far the pointer
+	// travelled along that axis as it is drawn on screen, in world units at the point's own depth (the way a locked-axis move on a
+	// model reads). Looking straight down the axis it has no screen direction, so the pointer's travel up the screen is used instead.
+	function depthStep(k, at, from, to) {
+		const r = api().renderer, u = [0, 0, 0];
+		u[k] = 10;
+		const a = r.toScreen(at), b = r.toScreen(v3.add(at, u));
+		if (!a || !b) return 0;
+		const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+		if (l2 < 0.25) return (from[1] - to[1]) / r.cam.zoom;
+		return (10 * ((to[0] - from[0]) * dx + (to[1] - from[1]) * dy)) / l2;
+	}
 	function dragRest(e, b) {
 		const rect = $("view").getBoundingClientRect(), ray = api().renderer.ray(e.clientX - rect.left, e.clientY - rect.top);
 		const pt = drag.part === "tip" ? b.tail : b.head, lk = S().viewLock ? S().viewLock.k : 1;
-		if (Math.abs(ray.d[lk]) < 0.02) return;
-		const t = (pt[lk] - ray.o[lk]) / ray.d[lk], P = [ray.o[0] + ray.d[0] * t, ray.o[1] + ray.d[1] * t, ray.o[2] + ray.d[2] * t];
-		if (!drag.last) { drag.last = P; return; }
-		const d = [P[0] - drag.last[0], P[1] - drag.last[1], P[2] - drag.last[2]];
-		d[lk] = 0;
-		if (drag.axis !== null && drag.axis !== lk) for (let i = 0; i < 3; i++) if (i !== drag.axis) d[i] = 0;
+		const at = [e.clientX - rect.left, e.clientY - rect.top], from = drag.lastPt;
+		drag.lastPt = at;
+		let d;
+		if (drag.axis === lk) { // the depth axis: followed along the screen, not over the plane
+			if (!from) return;
+			d = [0, 0, 0];
+			d[lk] = depthStep(lk, pt, from, at);
+			drag.last = null; // the plane path starts afresh if the lock is released
+		} else {
+			if (Math.abs(ray.d[lk]) < 0.02) return;
+			const t = (pt[lk] - ray.o[lk]) / ray.d[lk], P = [ray.o[0] + ray.d[0] * t, ray.o[1] + ray.d[1] * t, ray.o[2] + ray.d[2] * t];
+			if (!drag.last) { drag.last = P; return; }
+			d = [P[0] - drag.last[0], P[1] - drag.last[1], P[2] - drag.last[2]];
+			d[lk] = 0;
+			if (drag.axis !== null) for (let i = 0; i < 3; i++) if (i !== drag.axis) d[i] = 0;
+			if (!d[0] && !d[1] && !d[2]) return;
+			drag.last = P;
+		}
 		if (!d[0] && !d[1] && !d[2]) return;
-		drag.last = P;
 		const a = A(), add = (p) => p.map((v, i) => v + d[i]);
 		if (drag.part === "body") {
 			// Selected bones and everything below them travel together; a connected bone whose parent stays put keeps its head on
@@ -1034,7 +1062,8 @@
 		const mats = Rig.matrices(a, c, a.frame), M = mats.get(b.id), H = Rig.apply(M, b.head), T = Rig.apply(M, b.tail);
 		const ray = api().renderer.ray(e.clientX - rect.left, e.clientY - rect.top);
 		// The plane the pointer works in: normal to the depth axis (Y, as in the tileset view) or, after a preset view (Front / Right /
-		// Top), that view's depth axis, frozen. An X / Y / Z key held in the drag narrows a move to that axis, or turns about it.
+		// Top), that view's depth axis, frozen. An X / Y / Z key held in the drag narrows a move to that axis, or turns about it; the
+		// depth axis is the one that can only be reached this way (or by its arrow), as the plane itself never moves it.
 		const lk = S().viewLock ? S().viewLock.k : 1, onPlane = (k) => {
 			if (Math.abs(ray.d[k]) < 0.02) return null;
 			const t = (H[k] - ray.o[k]) / ray.d[k];
@@ -1051,15 +1080,26 @@
 			api().redrawSoon(); scheduleSheet(); drawPreview();
 			return;
 		}
-		if (drag.move) { // slide the whole bone in the view plane (depth stays put)
-			const P = onPlane(lk);
-			if (!P) return;
-			if (!drag.last) { drag.last = P; return; }
-			const d = [P[0] - drag.last[0], P[1] - drag.last[1], P[2] - drag.last[2]];
-			d[lk] = 0;
-			if (drag.axis !== null && drag.axis !== lk) for (let i = 0; i < 3; i++) if (i !== drag.axis) d[i] = 0;
+		if (drag.move) { // slide the whole bone in the view plane (depth stays put), or along one locked axis, depth included
+			const at = [e.clientX - rect.left, e.clientY - rect.top], from = drag.lastPt;
+			drag.lastPt = at;
+			let d;
+			if (drag.axis === lk) { // the depth axis (Y in the tileset view): followed along the screen, since the plane never moves it
+				if (!from) return;
+				d = [0, 0, 0];
+				d[lk] = depthStep(lk, H, from, at);
+				drag.last = null; // the plane path starts afresh if the lock is released
+			} else {
+				const P = onPlane(lk);
+				if (!P) return;
+				if (!drag.last) { drag.last = P; return; }
+				d = [P[0] - drag.last[0], P[1] - drag.last[1], P[2] - drag.last[2]];
+				d[lk] = 0;
+				if (drag.axis !== null) for (let i = 0; i < 3; i++) if (i !== drag.axis) d[i] = 0;
+				if (!d[0] && !d[1] && !d[2]) return;
+				drag.last = P;
+			}
 			if (!d[0] && !d[1] && !d[2]) return;
-			drag.last = P;
 			for (const id of drag.ids || [b.id]) {
 				const bb = Rig.bone(a, id);
 				if (bb.connected && bb.parent) { api().status("Connected bones only turn (R); move the parent, or untick Connected."); continue; }
@@ -1113,7 +1153,7 @@
 		window.addEventListener("pointerdown", confirmKeyDrag, true);
 		window.addEventListener("contextmenu", cancelKeyDrag, true);
 		dragMove({ clientX: lastPtr[0], clientY: lastPtr[1] });
-		api().status(kind === "move" ? "Move bone: X / Y / Z lock an axis, click or Enter confirms, right-click or Esc cancels." : "Turn bone: X / Y / Z pick the axis, click or Enter confirms, right-click or Esc cancels.");
+		api().status(kind === "move" ? "Move bone: X / Y / Z lock an axis (Y moves it in depth), click or Enter confirms, right-click or Esc cancels." : "Turn bone: X / Y / Z pick the axis, click or Enter confirms, right-click or Esc cancels.");
 		return true;
 	}
 	function endKeyDrag() {

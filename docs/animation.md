@@ -47,7 +47,10 @@ Studio moves the shape, but the colours of each frame are painted by you. Either
    The model's resting position stays put; the move lives in the key. Pick another frame and move it again. Scaling is not animated
    (bones move and turn models), so S still changes the model itself.
    **Gizmos** (the Gizmos checkbox under Bones): the selected bone shows a coloured ring per axis (X red, Y green, Z blue; drag to turn
-   about it) and an arrow per axis (drag to slide the bone along it), only for the axes the current view can work with. **Names** label
+   about it) and an arrow per axis (drag to slide the bone along it), only for the axes the current view can work with. Dragging a
+   bone's body slides it across the view plane (in the tileset view that is X and height Z; the depth axis Y stays put), so to move a
+   bone in depth drag its green Y arrow, or press G (move) and then Y: the bone follows the pointer along Y as it is drawn on screen.
+   X / Y / Z pressed during any bone drag narrows it to that axis (again: off). **Names** label
    every bone, add the selected bone's turn, and draw a dashed line from a parent's tip to a child that is not connected.
    If a model was edited, moved or resized outside animation mode so that it no longer sits on its bones, the panel says so (nothing can
    bend a model that is far from every bone): use *Edit rest pose* to move the bones back to it. Duplicating a model keeps its bone.
