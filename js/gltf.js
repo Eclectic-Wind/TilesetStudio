@@ -10,7 +10,9 @@
 // local translation is (head - parent head) + pos and whose local rotation is the bone's turn, with the inverse bind matrix a plain
 // translation by -head. A bound model exports as a mesh skinned with its deform weights (automatic or painted; 100% to its bone if rigid).
 // Reading goes the other way and accepts any rig: each skinned mesh stays one model, bound to the bone with most weight, and keeps
-// its skin weights as painted weights.
+// its skin weights as painted weights. Bones rest in their bind pose. A mesh under a bone, or one an animation moves without an
+// armature (each animated node that carries a model becomes a bone), follows its bone rigidly. Clips are sampled per frame from the
+// whole node hierarchy, so scaled or animated armature objects and nodes between bones come out right.
 "use strict";
 (function () {
 	const G = (TS.Gltf = {});
@@ -20,7 +22,6 @@
 	const C = [[1, 0, 0], [0, 0, 1], [0, -1, 0]], Ct = m3.transpose(C); // Studio -> glTF as a rotation
 	const toG = (p) => [p[0], p[2], -p[1]];
 	const toS = (p) => [p[0], -p[2], p[1]];
-	const mulV = (m, p) => [0, 1, 2].map((i) => m[i][0] * p[0] + m[i][1] * p[1] + m[i][2] * p[2]);
 	const toGRot = (r) => m3.mul(m3.mul(C, r), Ct); // a Studio rotation expressed in glTF axes
 	const toSRot = (r) => m3.mul(m3.mul(Ct, r), C);
 	const I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
@@ -56,6 +57,15 @@
 	const mat4Apply = (m, p) => [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
 	const mat4Rot = (m) => { const s = [0, 1, 2].map((c) => Math.hypot(m[c * 4], m[c * 4 + 1], m[c * 4 + 2]) || 1); return [0, 1, 2].map((i) => [0, 1, 2].map((j) => m[j * 4 + i] / s[j])); };
 	const mat4Decompose = (m) => [[m[12], m[13], m[14]], quatFromMat(mat4Rot(m)), [0, 1, 2].map((c) => Math.hypot(m[c * 4], m[c * 4 + 1], m[c * 4 + 2]))];
+	const mat4Inv = (m) => { // an affine 4x4 (in double precision; scales of 0.01 and 100 are common)
+		const a = [[m[0], m[4], m[8]], [m[1], m[5], m[9]], [m[2], m[6], m[10]]];
+		const c = (i, j) => a[(j + 1) % 3][(i + 1) % 3] * a[(j + 2) % 3][(i + 2) % 3] - a[(j + 1) % 3][(i + 2) % 3] * a[(j + 2) % 3][(i + 1) % 3];
+		const det = a[0][0] * c(0, 0) + a[0][1] * c(1, 0) + a[0][2] * c(2, 0) || 1e-12, o = new Array(16).fill(0);
+		for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) o[j * 4 + i] = c(i, j) / det;
+		for (let i = 0; i < 3; i++) o[12 + i] = -(o[i] * m[12] + o[4 + i] * m[13] + o[8 + i] * m[14]);
+		o[15] = 1;
+		return o;
+	};
 
 	// ======================================================================= writing
 
@@ -212,6 +222,13 @@
 	const COMPS = { 5120: [1, Int8Array, "getInt8"], 5121: [1, Uint8Array, "getUint8"], 5122: [2, Int16Array, "getInt16"], 5123: [2, Uint16Array, "getUint16"], 5125: [4, Uint32Array, "getUint32"], 5126: [4, Float32Array, "getFloat32"] };
 	const NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
 
+	// A file the .gltf points at, from those picked with it (by name: a picked file has no folder, so "textures/wood.png" is "wood.png").
+	const sideFile = (files, uri) => {
+		if (!files || !uri) return null;
+		let name = uri;
+		try { name = decodeURIComponent(uri); } catch (e) { /* a stray % is left as it is */ }
+		return files[name] || files[name.split(/[\\/]/).pop()] || null;
+	};
 	function parseContainer(buf, files) {
 		const dv = new DataView(buf), td = new TextDecoder();
 		if (buf.byteLength >= 12 && dv.getUint32(0, true) === 0x46546c67) {
@@ -226,7 +243,7 @@
 		}
 		const json = JSON.parse(td.decode(buf)), bufs = (json.buffers || []).map((b) => {
 			const m = /^data:[^;,]*;base64,(.*)$/s.exec(b.uri || "");
-			if (!m) { const f = files && files[decodeURIComponent(b.uri || "")]; if (f) return f; throw new Error(`This .gltf keeps its data in “${b.uri}”. Pick that file with the .gltf (or export as “glTF Binary (.glb)”).`); }
+			if (!m) { const f = sideFile(files, b.uri); if (f) return f; throw new Error(`This .gltf keeps its data in “${b.uri}”. Pick that file with the .gltf (or export as “glTF Binary (.glb)”).`); }
 			const bin = atob(m[1]), arr = new Uint8Array(bin.length);
 			for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
 			return arr.buffer;
@@ -272,7 +289,7 @@
 					const v = gl.bufferViews[im.bufferView];
 					blob = new Blob([new Uint8Array(bufs[v.buffer || 0], v.byteOffset || 0, v.byteLength)], { type: im.mimeType || "image/png" });
 				} else if (/^data:/.test(im.uri || "")) blob = await (await fetch(im.uri)).blob();
-				else { const f = files && files[decodeURIComponent(im.uri || "")]; if (!f) return null; blob = new Blob([f]); }
+				else { const f = sideFile(files, im.uri); if (!f) return null; blob = new Blob([f]); }
 				const bmp = await createImageBitmap(blob), k = Math.min(1, TEX_MAX / Math.max(bmp.width, bmp.height));
 				const c = document.createElement("canvas");
 				c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
@@ -321,28 +338,46 @@
 		const worldOf = (i) => world[i] || (world[i] = (parent[i] >= 0 ? mat4Mul(worldOf(parent[i]), mat4FromTRS(...local[i])) : mat4FromTRS(...local[i])));
 		nodes.forEach((_, i) => worldOf(i));
 
-		// joints
+		// Bones: the skins' joints, and the nodes an animation moves that carry a model (an object animation, such as a door swinging,
+		// made without an armature).
 		const isJoint = new Set();
-		for (const s of gl.skins || []) for (const j of s.joints) isJoint.add(j);
+		for (const s of gl.skins || []) for (const j of s.joints) if (nodes[j]) isJoint.add(j);
+		const meshBelow = new Map(), hasMesh = (i, n = 0) => {
+			if (!meshBelow.has(i)) meshBelow.set(i, nodes[i].mesh !== undefined || (n < 1000 && (nodes[i].children || []).some((c) => nodes[c] && hasMesh(c, n + 1))));
+			return meshBelow.get(i);
+		};
+		for (const an of gl.animations || []) for (const c of an.channels || []) {
+			const n = c.target && c.target.node;
+			if (nodes[n] && (c.target.path === "translation" || c.target.path === "rotation") && hasMesh(n)) isJoint.add(n);
+		}
 		const jointOrder = [];
 		const visit = (i) => { if (isJoint.has(i)) jointOrder.push(i); (nodes[i].children || []).forEach(visit); };
 		nodes.forEach((_, i) => { if (parent[i] < 0) visit(i); });
 		const nearestJoint = (i) => { for (let p = parent[i]; p >= 0; p = parent[p]) if (isJoint.has(p)) return p; return -1; };
 
-		const bones = [], boneOfNode = new Map(), info = new Map(); // info: per node {R0, t0, Rp0} in Studio axes and units
+		// Each bone's rest is its bind pose (the inverse of its inverse bind matrix), where the skinned vertices are; a bone with no bind
+		// matrix rests where its node stands.
+		const bindWorld = new Map(), skinIbm = new Map(); // node -> bind pose (glTF); skin -> [inverse bind matrix per joint] | null
+		for (const s of gl.skins || []) {
+			let ibm = null;
+			if (s.inverseBindMatrices !== undefined) { const d = readAccessor(gl, bufs, s.inverseBindMatrices).data; ibm = s.joints.map((_, k) => d.slice(k * 16, k * 16 + 16)); }
+			skinIbm.set(s, ibm);
+			s.joints.forEach((j, k) => { if (ibm && nodes[j] && !bindWorld.has(j)) bindWorld.set(j, mat4Inv(ibm[k])); });
+		}
+		for (const i of jointOrder) if (!bindWorld.has(i)) bindWorld.set(i, world[i]);
+
+		const bones = [], boneOfNode = new Map();
 		for (const i of jointOrder) {
-			const head = toS(mat4Apply(world[i], [0, 0, 0])).map((v) => v * scale);
+			const head = toS(mat4Apply(bindWorld.get(i), [0, 0, 0])).map((v) => v * scale);
 			const par = nearestJoint(i);
 			const bone = Rig.newBone(nodes[i].name || "Bone " + (bones.length + 1), head, [head[0], head[1], head[2] + 8], par >= 0 ? boneOfNode.get(par).id : null);
 			bone.id = "b" + (bones.length + 1);
 			bones.push(bone); boneOfNode.set(i, bone);
-			const pw = parent[i] >= 0 ? world[parent[i]] : mat4FromTRS([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
-			info.set(i, { R0: toSRot(matFromQuat(local[i][1])), t0: toS(local[i][0]).map((v) => v * scale), Rp0: toSRot(mat4Rot(pw)) });
 		}
 		// glTF keeps no tails. Blender writes each joint with its local +Y along the bone, so a tail goes that way: as far as the child
 		// that sits on that line (the bone it connects to), else as long as its parent bone (hands, toes, the head). A file whose joints
 		// don't follow that has its tails aimed at the first child. Bones only turn about their heads; the tail is for drawing and picking.
-		const yAxis = (i) => v3.norm(toS(v3.sub(mat4Apply(world[i], [0, 1, 0]), mat4Apply(world[i], [0, 0, 0]))));
+		const yAxis = (i) => { const m = bindWorld.get(i); return v3.norm(toS(v3.sub(mat4Apply(m, [0, 1, 0]), mat4Apply(m, [0, 0, 0])))); };
 		const lenOf = new Map();
 		for (const i of jointOrder) {
 			const b = boneOfNode.get(i), kids = jointOrder.filter((k) => boneOfNode.get(k).parent === b.id).map((k) => boneOfNode.get(k));
@@ -362,7 +397,7 @@
 		}
 
 		// models
-		const objects = [], bind = {}, paint = {};
+		const objects = [], bind = {}, paint = {}, rigid = {};
 		let nextId = 1;
 		gl.meshes && nodes.forEach((nd, ni) => {
 			if (nd.mesh === undefined) return;
@@ -394,21 +429,23 @@
 			}
 			if (!tris.length) return;
 
-			// Rest position of each vertex in Studio space.
-			let ibm = null;
-			if (skin && skin.inverseBindMatrices !== undefined) { const d = readAccessor(gl, bufs, skin.inverseBindMatrices).data; ibm = skin.joints.map((_, k) => d.slice(k * 16, k * 16 + 16)); }
+			// Rest position of each vertex in Studio space: a skinned one in its bones' bind pose (where the bones rest), a model that
+			// follows a bone where it sits when that bone is in its bind pose.
+			const ibm = skin ? skinIbm.get(skin) : null, I4 = mat4FromTRS([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
 			const skinMat = new Map();
 			const jointMat = (node) => {
-				if (!skinMat.has(node)) { const k = skin.joints.indexOf(node); skinMat.set(node, ibm ? mat4Mul(world[node], ibm[k]) : world[node]); }
+				if (!skinMat.has(node)) { const k = skin.joints.indexOf(node); skinMat.set(node, mat4Mul(bindWorld.get(node), ibm ? ibm[k] : I4)); }
 				return skinMat.get(node);
 			};
+			const fixed = !skin ? (isJoint.has(ni) ? ni : nearestJoint(ni)) : -1; // a model moved by a bone (or by its own animation)
+			const placed = fixed >= 0 ? mat4Mul(mat4Mul(bindWorld.get(fixed), mat4Inv(world[fixed])), world[ni]) : world[ni];
 			const rest = pts.map((p, i) => {
 				let g;
 				if (skin && weights[i][0] + weights[i][1] + weights[i][2] + weights[i][3] > 0) {
 					g = [0, 0, 0];
 					const wsum = weights[i].reduce((a, b) => a + b, 0);
-					for (let k = 0; k < 4; k++) if (weights[i][k] > 0) { const q = mat4Apply(jointMat(joints[i][k]), p); g = [g[0] + q[0] * weights[i][k] / wsum, g[1] + q[1] * weights[i][k] / wsum, g[2] + q[2] * weights[i][k] / wsum]; }
-				} else g = mat4Apply(world[ni], p);
+					for (let k = 0; k < 4; k++) if (weights[i][k] > 0 && bindWorld.has(joints[i][k])) { const q = mat4Apply(jointMat(joints[i][k]), p); g = [g[0] + q[0] * weights[i][k] / wsum, g[1] + q[1] * weights[i][k] / wsum, g[2] + q[2] * weights[i][k] / wsum]; }
+				} else g = mat4Apply(placed, p);
 				return toS(g).map((v) => v * scale);
 			});
 
@@ -420,7 +457,6 @@
 				let bw = 0;
 				for (const [j, w] of sum) if (w > bw) { mainJoint = j; bw = w; }
 			}
-			const fixed = nearestJoint(ni) >= 0 && !skin ? nearestJoint(ni) : -1; // parented to a bone
 			const groups = new Map([[skin ? mainJoint : fixed, tris]]);
 			const label = nd.name || mesh.name || "Model";
 			const ex = nd.extras && nd.extras.studio;
@@ -443,6 +479,7 @@
 				if (exact && ex.props) Object.assign(o, JSON.parse(JSON.stringify(ex.props)));
 				objects.push(o);
 				if (key >= 0 && boneOfNode.get(key)) bind[o.id] = boneOfNode.get(key).id;
+				if (!skin && bind[o.id]) rigid[o.id] = true; // follows its bone as one piece, as it did in the file
 				if (skin && bind[o.id]) {
 					const v = {};
 					source.forEach((src, i) => {
@@ -459,17 +496,21 @@
 		// clips
 		const clips = [];
 		if (bones.length) (gl.animations || []).forEach((an, ai) => {
-			const chans = (an.channels || []).filter((c) => c.target && boneOfNode.has(c.target.node) && (c.target.path === "translation" || c.target.path === "rotation"));
-			if (!chans.length) return;
+			// Every channel that moves a node (bones, and the nodes above them: an animated armature object carries its bones along).
+			const chans = (an.channels || []).filter((c) => c.target && nodes[c.target.node] && an.samplers && an.samplers[c.sampler] && ["translation", "rotation", "scale"].includes(c.target.path));
+			if (!chans.some((c) => c.target.path !== "scale")) return;
 			const samp = an.samplers.map((s) => ({ t: readAccessor(gl, bufs, s.input).data, v: readAccessor(gl, bufs, s.output), mode: s.interpolation || "LINEAR" }));
-			let dur = 0;
-			for (const c of chans) { const s = samp[c.sampler]; dur = Math.max(dur, s.t[s.t.length - 1] || 0); }
+			let start = Infinity, end = 0;
+			for (const c of chans) { const s = samp[c.sampler]; if (s.t.length) { start = Math.min(start, s.t[0]); end = Math.max(end, s.t[s.t.length - 1]); } }
+			if (!(start < Infinity)) return;
 			const own = an.extras && an.extras.studioClip; // written by Studio: its own fps and frame count come back as they were
+			if (own) start = 0; // a clip that starts later than 0 (an exporter's start frame) is played from its first key
+			const dur = Math.max(0, end - start);
 			let fps = own && own.fps > 0 ? own.fps : 12, frames = own && own.frames > 0 ? own.frames : Math.round(dur * fps) + 1;
-			if (frames > 64) { frames = 64; fps = Math.max(1, 63 / dur); }
+			if (frames > 64) { frames = 64; fps = Math.round(Math.max(1, 63 / dur) * 100) / 100; }
 			frames = Math.max(1, frames);
 			const sample = (s, time, n) => {
-				const t = s.t, vals = (k) => { const stride = s.mode === "CUBICSPLINE" ? 3 : 1, at = (s.mode === "CUBICSPLINE" ? k * 3 + 1 : k) * n; return s.v.data.slice(at, at + n); };
+				const t = s.t, vals = (k) => { const at = (s.mode === "CUBICSPLINE" ? k * 3 + 1 : k) * n; return s.v.data.slice(at, at + n); };
 				if (time <= t[0]) return vals(0);
 				if (time >= t[t.length - 1]) return vals(t.length - 1);
 				let k = 0; while (t[k + 1] < time) k++;
@@ -477,39 +518,52 @@
 				if (s.mode === "STEP") return a;
 				return n === 4 ? slerp(a, b, u) : a.map((v, i) => v + (b[i] - v) * u);
 			};
-			const tracks = {};
-			for (const node of new Set(chans.map((c) => c.target.node))) {
-				const bone = boneOfNode.get(node), inf = info.get(node), cT = chans.find((c) => c.target.node === node && c.target.path === "translation"), cR = chans.find((c) => c.target.node === node && c.target.path === "rotation");
-				const keys = []; let prevEuler = null;
-				for (let f = 0; f < frames; f++) {
-					const time = f / fps;
-					const tg = cT ? sample(samp[cT.sampler], time, 3) : local[node][0], qg = cR ? sample(samp[cR.sampler], time, 4) : local[node][1];
-					const tS = toS(tg).map((v) => v * scale), Rl = toSRot(matFromQuat(qg));
-					// A joint's turn about its head and its move, as Studio keeps them (see the header comment).
-					const Rd = m3.mul(m3.mul(m3.mul(inf.Rp0, Rl), m3.transpose(inf.R0)), m3.transpose(inf.Rp0));
-					let rot = Rig.matToEuler(Rd);
-					if (prevEuler) rot = rot.map((v, i) => { while (v - prevEuler[i] > 180) v -= 360; while (v - prevEuler[i] < -180) v += 360; return v; });
-					prevEuler = rot;
-					keys.push({ f, rot: rot.map((v) => Math.round(v * 1000) / 1000), pos: mulV(inf.Rp0, v3.sub(tS, inf.t0)).map((v) => Math.round(v * 1000) / 1000) });
+			// Each frame: the nodes' world matrices with the channels applied, each bone's deform (posed world times the inverse of its
+			// bind pose), and that deform relative to its parent bone's, which is a turn about the bone's head and a move, as Studio keys it.
+			const byNode = new Map();
+			for (const c of chans) (byNode.get(c.target.node) || byNode.set(c.target.node, {}).get(c.target.node))[c.target.path] = samp[c.sampler];
+			const invBind = new Map(jointOrder.map((i) => [i, mat4Inv(bindWorld.get(i))]));
+			const keysOf = new Map(jointOrder.map((i) => [i, []])), prevEuler = new Map();
+			for (let f = 0; f < frames; f++) {
+				const time = start + f / fps, posed = new Array(nodes.length);
+				const posedOf = (i) => {
+					if (posed[i]) return posed[i];
+					const ch = byNode.get(i), [t0, q0, s0] = local[i];
+					const m = ch ? mat4FromTRS(ch.translation ? sample(ch.translation, time, 3) : t0, ch.rotation ? sample(ch.rotation, time, 4) : q0, ch.scale ? sample(ch.scale, time, 3) : s0) : mat4FromTRS(t0, q0, s0);
+					return (posed[i] = parent[i] >= 0 ? mat4Mul(posedOf(parent[i]), m) : m);
+				};
+				const deform = new Map(jointOrder.map((i) => [i, mat4Mul(posedOf(i), invBind.get(i))]));
+				for (const i of jointOrder) {
+					const par = nearestJoint(i), L = par >= 0 ? mat4Mul(mat4Inv(deform.get(par)), deform.get(i)) : deform.get(i);
+					const bone = boneOfNode.get(i), hG = mat4Apply(bindWorld.get(i), [0, 0, 0]);
+					const rot = Rig.nearEuler(toSRot(mat4Rot(L)), prevEuler.get(i) || [0, 0, 0]);
+					prevEuler.set(i, rot);
+					const pos = toS(mat4Apply(L, hG)).map((v, k) => v * scale - bone.head[k]);
+					keysOf.get(i).push({ f, rot: rot.map((v) => Math.round(v * 1000) / 1000), pos: pos.map((v) => Math.round(v * 1000) / 1000) });
 				}
+			}
+			const tracks = {};
+			for (const i of jointOrder) {
+				const bone = boneOfNode.get(i), keys = keysOf.get(i);
 				const pruned = prune(keys);
 				if (pruned.length === 1 && pruned[0].rot.every((v) => Math.abs(v) < 0.01) && pruned[0].pos.every((v) => Math.abs(v) < 0.01)) continue;
 				tracks[bone.id] = pruned;
 			}
 			if (Object.keys(tracks).length) clips.push({ id: "c" + (clips.length + 1), name: an.name || "Clip " + (ai + 1), fps: Math.round(fps * 100) / 100, frames, tracks });
 		});
-		return { objects, rig: bones.length || clips.length ? { bones, bind, paint, clips } : null };
+		return { objects, rig: bones.length || clips.length ? { bones, bind, paint, rigid, clips } : null };
 	};
 
-	// Drop keys that a straight blend of their neighbours already gives (every frame is sampled, most are redundant).
+	// Drop keys that Studio's own blend of their neighbours already gives (every frame is sampled, most are redundant).
 	function prune(keys) {
 		const out = keys.slice();
-		const close = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+		const closePos = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+		const closeRot = (a, b) => { const p = Rig.eulerToMat(a), q = Rig.eulerToMat(b); return p.every((row, i) => row.every((v, j) => Math.abs(v - q[i][j]) < 1e-3)); };
 		for (let i = out.length - 2; i >= 1; i--) {
-			const a = out[i - 1], k = out[i], b = out[i + 1], u = (k.f - a.f) / (b.f - a.f);
-			if (close(k.rot, a.rot.map((v, j) => v + (b.rot[j] - v) * u)) && close(k.pos, a.pos.map((v, j) => v + (b.pos[j] - v) * u))) out.splice(i, 1);
+			const a = out[i - 1], k = out[i], b = out[i + 1], blend = Rig.localPose({ tracks: { x: [a, b] } }, "x", k.f);
+			if (closeRot(k.rot, blend.rot) && closePos(k.pos, blend.pos)) out.splice(i, 1);
 		}
-		if (out.length === 2 && close(out[0].rot, out[1].rot) && close(out[0].pos, out[1].pos)) out.pop();
+		if (out.length === 2 && closeRot(out[0].rot, out[1].rot) && closePos(out[0].pos, out[1].pos)) out.pop();
 		return out;
 	}
 

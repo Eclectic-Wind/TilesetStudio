@@ -3273,17 +3273,20 @@
 		models.forEach((m, i) => {
 			const old = rig.bind[m.id], pt = rig.paint && rig.paint[m.id];
 			if (old && boneMap[old]) a.bind[copies[i].id] = boneMap[old];
+			if (old && boneMap[old] && rig.rigid && rig.rigid[m.id]) (a.rigid = a.rigid || {})[copies[i].id] = true; // follows its bone as one piece
 			if (!pt) return;
 			const v = {};
 			for (const k of Object.keys(pt.v)) { v[k] = {}; for (const b of Object.keys(pt.v[k])) if (boneMap[b]) v[k][boneMap[b]] = pt.v[k][b]; }
 			(a.paint = a.paint || {})[copies[i].id] = { n: pt.n, rev: 1, v };
 		});
-		for (const c of rig.clips) {
+		const added = rig.clips.map((c) => {
 			const nc = R.newClip(c.name, c.frames, c.fps);
 			for (const id of Object.keys(c.tracks)) nc.tracks[boneMap[id]] = JSON.parse(JSON.stringify(c.tracks[id]));
 			a.clips.push(nc);
-			if (!a.clip) a.clip = nc.id;
-		}
+			return nc;
+		});
+		const best = added[TS.Transfer.bestClip(rig.clips)]; // the imported clip with the most motion is the one shown
+		if (best) { a.clip = best.id; a.frame = 0; }
 	}
 	function commitModels(models, verb, rig) {
 		if (!models.length) return;

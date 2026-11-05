@@ -48,8 +48,9 @@
 		return { s: scale, c: [t[0] - scale * w0[0], t[1] - scale * w0[1], t[2] - scale * w0[2]] };
 	};
 	// A rig (bones, bind, clips from TS.Gltf.read) carried along with models: only what the given models need (their bones and the
-	// bones above them), optionally moved by a placeMap. Returns null when none of the models follows a bone.
-	T.rigFor = function (rig, ids, map) {
+	// bones above them), optionally moved by a placeMap. `only` (a Set of indices into rig.clips) limits which clips come along (default: all).
+	// Returns null when none of the models follows a bone.
+	T.rigFor = function (rig, ids, map, only) {
 		if (!rig) return null;
 		const byId = new Map(rig.bones.map((b) => [b.id, b])), need = new Set();
 		const up = (b) => { for (let n = 0; b && n < 1000; n++, b = b.parent && byId.get(b.parent)) need.add(b.id); };
@@ -63,15 +64,26 @@
 		if (!need.size) return null;
 		const at = (p) => (map ? p.map((v, i) => v * map.s + map.c[i]) : p.slice());
 		const bones = rig.bones.filter((b) => need.has(b.id)).map((b) => Object.assign(clone(b), { head: at(b.head), tail: at(b.tail) }));
-		const bind = {};
-		for (const id of ids) if (need.has(rig.bind[id])) bind[id] = rig.bind[id];
+		const bind = {}, rigid = {};
+		for (const id of ids) if (need.has(rig.bind[id])) { bind[id] = rig.bind[id]; if (rig.rigid && rig.rigid[id]) rigid[id] = true; }
 		const clips = [];
-		for (const c of rig.clips) {
+		rig.clips.forEach((c, ci) => {
+			if (only && !only.has(ci)) return;
 			const tracks = {};
 			for (const id of Object.keys(c.tracks)) if (need.has(id)) tracks[id] = c.tracks[id].map((k) => ({ f: k.f, rot: k.rot.slice(), pos: map ? k.pos.map((v) => v * map.s) : k.pos.slice() }));
 			if (Object.keys(tracks).length) clips.push({ name: c.name, fps: c.fps, frames: c.frames, tracks });
-		}
-		return { bones, bind, paint, clips };
+		});
+		return { bones, bind, paint, rigid, clips };
+	};
+	// Which of a rig's clips to show first: the one with the most keys (a file's first action is often a one-frame pose or a prop's hold,
+	// the walk or run is further down). Ties go to the longer clip, then the earlier one. -> index, or -1 with no clips.
+	T.bestClip = function (clips) {
+		let best = -1, score = [-1, -1];
+		clips.forEach((c, i) => {
+			const keys = Object.values(c.tracks || {}).reduce((n, t) => n + t.length, 0);
+			if (keys > score[0] || (keys === score[0] && c.frames > score[1])) { best = i; score = [keys, c.frames]; }
+		});
+		return best;
 	};
 	// The diffuse colours (Kd) of a .mtl file: Map material name -> "#rrggbb".
 	T.readMTL = function (text) {

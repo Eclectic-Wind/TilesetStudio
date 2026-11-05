@@ -123,14 +123,21 @@ build the basic model in Studio, refine it in Blender (Import ▸ glTF 2.0) and 
   and a bone's turn and move become the joint's rotation and translation (exact, frame by frame). Bones with no keys keep their rest pose.
 - **Clips.** Every frame of a clip is sampled for every animated bone. Coming back, each Blender action becomes a clip (12 fps, at most 64
   frames; a clip Studio wrote keeps its own fps and frame count). Studio's own rigs round-trip exactly; redundant keys are dropped.
-- **A mesh that bends** (smooth skinning, several bones weighted on one mesh) is cut into one model per bone, by the bone with most
-  weight on each face, because Studio cannot bend a model. Rigid rigs (one part per bone, or parts parented to bones) come back whole.
+  The whole node hierarchy is evaluated, so a scaled armature (an FBX-made file's 0.01), an animated armature object and nodes between
+  bones all come out the right size and place. Bones rest in their bind pose.
+- **A mesh that bends** (several bones weighted on one mesh) stays one model, bound to the bone with most weight, and keeps its skin
+  weights as painted ones. A mesh parented to a bone follows it rigidly (its **Rigid** button is on).
+- **Object animation** (a door or lid animated in Blender without an armature) comes in too: each animated object that carries a mesh
+  becomes a bone, with its mesh rigidly bound to it.
 - **Faces.** glTF carries triangles. A Studio-made model keeps its quads and materials on return when its vertex and triangle counts
   are unchanged (they are stored in the file); anything re-saved or rebuilt by Blender comes back as triangles with vertices welded.
 - **Not transferred:** textures and UVs (a face keeps only its base colour, see *Base colours* above), scale animation, morph targets, cameras and lights. Export from Blender as **glTF Binary (.glb)**
-  (a separate-files .gltf cannot be read in the browser), with Y up (the default) and *Apply Modifiers* on.
+  (or a separate-files `.gltf`, picked together with its `.bin` and textures), with Y up (the default) and *Apply Modifiers* on.
+- **Choosing animations.** A file's actions are listed under the models in the import dialog, all ticked. Untick the ones you don't want; press ▶ on a row to
+  preview it on the posed models (the busiest one plays on load, and is the clip shown first in Animate after adding).
 - **Adding.** Add at cursor / at original position bring the bones and clips along (appended to your existing ones: Animate shows them);
-  a stamp does not.
+  a stamp does not. A stamp starts at the models' own height, or on the floor when they reach below it (mesh files are often centred
+  on their origin).
 
 ### Model stamps (v0.8)
 

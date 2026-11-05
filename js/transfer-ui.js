@@ -4,7 +4,7 @@
 	class TransferUI {
 		constructor(api) {
 			this.api = api; this.source = null; this.selected = new Set(); this.draft = null;
-			this.cam = { x: 0, y: 0, zoom: 1 }; this.drag = null; this.generation = 0;
+			this.cam = { x: 0, y: 0, zoom: 1 }; this.drag = null; this.generation = 0; this.clipSel = new Set(); this.preview = null; this.previewT0 = 0; this.raf = 0;
 			$("b_import3d").onclick = () => this.showSource();
 			$("stamp_choose").onclick = () => this.showSource();
 			$("source_load").onclick = () => $("f_source").click();
@@ -27,6 +27,8 @@
 			$("source_frame").onclick = () => this.fit(true);
 			$("source_stamp").onclick = () => { if (!this.hasSelection()) return; this.closeSource(); this.api.setTool("stamp"); };
 			$("source_add").onclick = () => this.addAtCursor();
+			$("clips_all").onclick = () => { if (this.source?.rig) this.clipSel = new Set(this.source.rig.clips.map((_, i) => i)); this.clipList(); };
+			$("clips_none").onclick = () => { this.clipSel.clear(); this.clipList(); };
 			$("source_keep").onclick = () => this.addInPlace();
 			$("source_units").addEventListener("input", () => { this.unitsSet = true; }); // typed by hand: kept for later files too
 			for (const id of ["source_units", "source_up"]) $(id).onchange = () => { if (["obj", "gltf", "fbx"].includes(this.source?.kind)) this.loadSource(this.source.raw, this.source.name, this.source.files).catch(err => this.message(err.message, true)); };
@@ -88,17 +90,44 @@
 			// A project's own canvas is drawn in the projection it was made in; a mesh file has none (oblique).
 			const proj = kind === "studio" ? TS.Proj.of(JSON.parse(raw).settings, image && { w: image.width }) : TS.Proj.OBLIQUE;
 			this.source = { name, raw, kind, objects, image, rig, proj, files }; this.selected.clear();
+			this.clipSel = new Set(rig ? rig.clips.map((_, i) => i) : []); // every animation comes along unless unticked
 			if (kind === "obj" || kind === "gltf" || kind === "fbx") objects.forEach((o, i) => this.selected.add(i));
 			this.end(); this.api.setTool("select");
-			$("source_filter").value = ""; $("source_name").textContent = name;
+			$("source_filter").value = ""; $("source_name").textContent = name; this.preview = null; this.setPreview(rig && rig.clips.length ? T.bestClip(rig.clips) : null);
 			$("source_obj_options").hidden = kind === "studio"; $("source_up_wrap").hidden = kind === "gltf";
 			const used = rig && T.rigFor(rig, objects.map(o => o.id)); // a file can carry armatures nothing is skinned to
 			const rigText = rig ? ` with ${used ? used.bones.length : 0} bone(s)${rig.clips.length ? ` and ${rig.clips.length} clip(s)` : ""}` : "";
-			this.message(`${objects.length} model(s)${rigText}. ${this.autoScale ? `Sized to about 64 px tall (${this.autoScale} pixels per unit); change it above if you need. ` : ""}${kind === "gltf" ? "Bones, weights and animation come along when you add the models at the cursor or at their original position (not as a stamp)." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : kind === "fbx" ? "FBX imports mesh geometry in its bind pose (no bones or animation yet). Check the scale (pixels per unit; FBX files are often in centimetres) and the up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
+			this.message(`${objects.length} model(s)${rigText}. ${this.autoScale ? `Sized to about 64 px tall (${this.autoScale} pixels per unit); change it above if you need. ` : ""}${kind === "gltf" ? "Add at cursor brings the bones, weights and the ticked animations along (a stamp places the models only)." : kind === "obj" ? "OBJ imports mesh geometry only. Check scale and up axis." : kind === "fbx" ? "FBX imports mesh geometry in its bind pose (no bones or animation yet). Check the scale (pixels per unit; FBX files are often in centimetres) and the up axis." : "Box-select all the parts you want, or use the checkboxes."}${warning}`);
 			this.selectionChanged(); this.fit();
 		}
-		showSource() { $("source_dialog").classList.add("open"); this.list(); this.fit(); $("source_load").focus(); }
-		closeSource() { this.drag = null; $("source_dialog").classList.remove("open"); $("view").focus(); }
+		// The file's animations, each with a tick: only ticked ones are added (the one with the most motion is shown first).
+		clipList() {
+			const rig = this.source && this.source.rig, box = $("source_clips"), list = $("source_cliplist"); list.replaceChildren();
+			box.hidden = !(rig && rig.clips.length); if (box.hidden) return;
+			rig.clips.forEach((c, i) => {
+				const row = document.createElement("label"), check = document.createElement("input"), play = document.createElement("button"), name = document.createElement("span"), info = document.createElement("small");
+				check.type = "checkbox"; check.checked = this.clipSel.has(i); check.onchange = () => { check.checked ? this.clipSel.add(i) : this.clipSel.delete(i); };
+				play.type = "button"; play.className = "clipplay"; play.textContent = this.preview === i ? "■" : "▶"; play.title = this.preview === i ? "Stop the preview" : "Preview this animation on the models";
+				play.onclick = (e) => { e.preventDefault(); this.setPreview(this.preview === i ? null : i); };
+				name.textContent = c.name; info.textContent = `${c.frames} frame(s) @ ${c.fps} fps · ${Object.keys(c.tracks).length} bone(s)`;
+				row.classList.toggle("sel", this.preview === i); row.title = c.name; row.append(check, play, name, info); list.appendChild(row);
+			});
+		}
+		// The models as the previewed animation poses them (at rest when nothing plays).
+		shown() {
+			const s = this.source, clip = s && s.rig && this.preview !== null ? s.rig.clips[this.preview] : null;
+			if (!clip) return s ? s.objects : [];
+			const f = TS.Rig.playFrame(clip, 0, Math.floor((performance.now() - this.previewT0) / 1000 * clip.fps)).f;
+			return TS.Rig.posedObjects(s.objects, s.rig, clip, f);
+		}
+		setPreview(i) {
+			this.preview = i; this.previewT0 = performance.now(); cancelAnimationFrame(this.raf); this.raf = 0;
+			const tick = () => { if (this.preview === null || !this.source || !$("source_dialog").classList.contains("open")) { this.raf = 0; return; } this.drawSource(); this.raf = requestAnimationFrame(tick); };
+			if (i !== null) this.raf = requestAnimationFrame(tick);
+			this.clipList(); this.drawSource();
+		}
+		showSource() { $("source_dialog").classList.add("open"); this.list(); this.fit(); if (this.preview !== null) this.setPreview(this.preview); $("source_load").focus(); }
+		closeSource() { this.drag = null; cancelAnimationFrame(this.raf); this.raf = 0; $("source_dialog").classList.remove("open"); $("view").focus(); }
 		hasSelection() { return !!this.source && this.selected.size > 0; }
 		objects() { return this.source ? this.source.objects.filter((_, i) => this.selected.has(i)) : []; }
 		selectionChanged() { this.list(); this.drawSource(); }
@@ -132,7 +161,7 @@
 			g.translate(r.width / 2 - this.cam.x * z, r.height / 2 - this.cam.y * z); g.scale(z, z); g.imageSmoothingEnabled = false;
 			if (!this.source) return;
 			if (this.source.image) g.drawImage(this.source.image, 0, 0);
-			this.source.objects.forEach((o, i) => this.drawMesh(g, o, this.selected.has(i) ? "#ffbd68" : "#6ddccc88", z, this.selected.has(i), this.source.proj));
+			this.shown().forEach((o, i) => this.drawMesh(g, o, this.selected.has(i) ? "#ffbd68" : "#6ddccc88", z, this.selected.has(i), this.source.proj));
 			if (this.drag && !this.drag.pan) { const a = this.drag.start, b = this.drag.end; g.strokeStyle = "#fff"; g.lineWidth = 1 / z; g.setLineDash([4 / z, 3 / z]); g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
 		}
 		drawMesh(g, o, color, z, fill, proj) {
@@ -178,12 +207,13 @@
 			if (!this.hasSelection()) return;
 			const proj = this.api.renderer().proj, objects = this.objects(), b = T.bounds(objects, proj), p = this.api.state.cursor, cc = proj.toCanvas(p);
 			const x = cc[0] - (b.x1 - b.x0) / 2, y = cc[1] - (b.y1 - b.y0), moved = T.place(objects, x, y, 1, p[2], proj);
-			this.api.commit(moved, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), T.placeMap(objects, x, y, 1, p[2], proj))); this.closeSource(); this.api.frame();
+			this.api.commit(moved, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), T.placeMap(objects, x, y, 1, p[2], proj), this.clipSel)); this.closeSource(); this.api.frame();
 		}
-		addInPlace() { if (!this.hasSelection()) return; const objects = this.objects(); this.api.commit(objects, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id))); this.closeSource(); this.api.frame(); }
+		addInPlace() { if (!this.hasSelection()) return; const objects = this.objects(); this.api.commit(objects, "Imported", T.rigFor(this.source.rig, objects.map(o => o.id), null, this.clipSel)); this.closeSource(); this.api.frame(); }
 		begin() {
 			const objects = this.objects(), b = T.bounds(objects, this.api.renderer().proj), cam = this.api.renderer().cam;
-			this.draft = { objects, x: cam.x - (b.x1 - b.x0) / 2, y: cam.y - (b.y1 - b.y0) / 2, scale: 1, base: b.z0, pinned: false, pointer: null, valid: true };
+			// Starts at its own height, but never under the floor (a mesh file's model is often centred on its origin).
+			this.draft = { objects, x: cam.x - (b.x1 - b.x0) / 2, y: cam.y - (b.y1 - b.y0) / 2, scale: 1, base: Math.max(0, b.z0), pinned: false, pointer: null, valid: true };
 			$("stamp_name").textContent = `${objects.length} part(s) from ${this.source.name}`;
 			this.syncControls(); this.hint();
 		}

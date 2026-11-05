@@ -356,6 +356,14 @@ section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: non
 #source_filter { width: 100%; margin-bottom: 6px; }
 #source_list { flex: 1; overflow-y: auto; max-height: min(48vh, 440px); border: 1px solid var(--line); }
 #source_list label { display: flex; align-items: center; gap: 6px; padding: 4px; cursor: pointer; }
+#source_clips { margin-top: 6px; border: 1px solid var(--line); }
+.clipshead { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.clipshead button { height: 22px; padding: 0 8px; }
+#source_cliplist { max-height: 120px; overflow-y: auto; }
+#source_cliplist label { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; }
+#source_cliplist .clipplay { height: 22px; min-width: 26px; padding: 0; }
+#source_cliplist label.sel { background: var(--accent-soft); }
+#source_cliplist small { color: var(--dim, #8a93a6); margin-left: auto; white-space: nowrap; }
 #source_list label.sel { background: var(--accent-soft); }
 #source_list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .sourcebody { grid-template-columns: minmax(0, 1fr) 140px; } }

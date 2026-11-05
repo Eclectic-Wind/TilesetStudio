@@ -329,5 +329,47 @@ test("eased keys survive export by being sampled", () => {
 	near(R.localPose(back.rig.clips[0], back.rig.bones[0].id, 3).pos, [9, 0, 0], 0.01, "last");
 });
 
+// A .gltf with its data inline: parts are {data: TypedArray, type, extra}; returns the file and each part's accessor index.
+const gltfOf = (json, parts) => {
+	const bytes = [], accessors = [], bufferViews = [];
+	for (const p of parts) {
+		const b = new Uint8Array(p.data.buffer), n = { SCALAR: 1, VEC3: 3, VEC4: 4, MAT4: 16 }[p.type];
+		bufferViews.push({ buffer: 0, byteOffset: bytes.length, byteLength: b.length });
+		accessors.push(Object.assign({ bufferView: bufferViews.length - 1, componentType: p.data instanceof Uint32Array ? 5125 : 5126, count: p.data.length / n, type: p.type }, p.extra || {}));
+		bytes.push(...b);
+	}
+	const buffers = [{ byteLength: bytes.length, uri: "data:application/octet-stream;base64," + Buffer.from(bytes).toString("base64") }];
+	return new TextEncoder().encode(JSON.stringify(Object.assign({ asset: { version: "2.0" }, scene: 0, accessors, bufferViews, buffers }, json))).buffer;
+};
+const v3sub = (a, b) => a.map((v, i) => v - b[i]);
+const animOf = (rig) => ({ bones: rig.bones, bind: rig.bind, paint: rig.paint, rigid: rig.rigid, clips: rig.clips, clip: rig.clips[0].id, frame: 0 });
+const quad = { data: new Float32Array([0, 0, 0, 1, 0, 0, 1, 2, 0, 0, 2, 0]), type: "VEC3", extra: { min: [0, 0, 0], max: [1, 2, 0] } }, quadIdx = { data: new Uint32Array([0, 1, 2, 0, 2, 3]), type: "SCALAR" };
+const times = { data: new Float32Array([0, 1]), type: "SCALAR", extra: { min: [0], max: [1] } };
+test("a move under a scaled armature (0.01, as FBX-made files have) keeps its size", () => {
+	// Armature (scale 0.01) > Hip joint 100 units up; the hip moves 50 units along its parent's Z, which is 0.5 units in the file's world.
+	const file = gltfOf({ scenes: [{ nodes: [0, 2] }], nodes: [{ name: "Armature", scale: [0.01, 0.01, 0.01], children: [1] }, { name: "Hip", translation: [0, 100, 0] }, { name: "Body", mesh: 0, skin: 0 }],
+		meshes: [{ primitives: [{ attributes: { POSITION: 0, JOINTS_0: 2, WEIGHTS_0: 3 }, indices: 1 }] }], skins: [{ joints: [1], inverseBindMatrices: 4 }],
+		animations: [{ samplers: [{ input: 5, output: 6 }], channels: [{ sampler: 0, target: { node: 1, path: "translation" } }] }] },
+		[quad, quadIdx, { data: new Float32Array(16), type: "VEC4" }, { data: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), type: "VEC4" },
+			{ data: new Float32Array([100, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 0, -100, 0, 1]), type: "MAT4" }, times, { data: new Float32Array([0, 100, 0, 0, 100, 50]), type: "VEC3" }]);
+	const back = TS.Gltf.read(file, { scale: 10 }), clip = back.rig.clips[0], o = back.objects[0];
+	const end = R.posedObjects(back.objects, animOf(back.rig), clip, clip.frames - 1)[0];
+	o.verts.forEach((p, i) => near(v3sub(end.verts[i], p), [0, -5, 0], 0.01, "moved"));
+});
+test("an object animation with no armature comes in as a rigid bone and clip", () => {
+	// A door on a hinge node 2 units along X, swinging 90 degrees about the up axis.
+	const file = gltfOf({ scenes: [{ nodes: [0] }], nodes: [{ name: "Hinge", translation: [2, 0, 0], children: [1] }, { name: "Door", mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+		animations: [{ name: "Open", samplers: [{ input: 2, output: 3 }], channels: [{ sampler: 0, target: { node: 0, path: "rotation" } }] }] },
+		[quad, quadIdx, times, { data: new Float32Array([0, 0, 0, 1, 0, Math.SQRT1_2, 0, Math.SQRT1_2]), type: "VEC4" }]);
+	const back = TS.Gltf.read(file, { scale: 16 }), o = back.objects[0], clip = back.rig && back.rig.clips[0];
+	assert(clip && clip.name === "Open", "the clip came in");
+	assert.strictEqual(back.rig.bones[0].name, "Hinge");
+	assert(back.rig.rigid[o.id], "the door follows its bone as one piece");
+	const end = R.posedObjects(back.objects, animOf(back.rig), clip, clip.frames - 1)[0];
+	end.verts.forEach((p) => assert(Math.abs(p[0] - 32) < 0.01, `turned edge-on to X: ${p}`)); // the hinge's X (2 units) for every corner
+	const rig = TS.Transfer.rigFor(back.rig, [o.id]);
+	assert(rig.rigid[o.id], "rigid comes along with the model");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
