@@ -347,6 +347,7 @@ section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: non
 .sourcebar h2 { margin: 0; }
 .sourcebar label { display: flex; align-items: center; gap: 5px; }
 .modal .card.sourcecard { width: min(1080px, calc(100vw - 32px)); max-width: 1080px; }
+.sourceactions { position: sticky; bottom: -16px; z-index: 1; margin: 0 -20px -16px; padding: 10px 20px; background: var(--panel); border-top: 1px solid var(--line); }
 #source_name { overflow-wrap: anywhere; }
 .sourcebody { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; }
 .sourcecanvas { min-width: 0; }
