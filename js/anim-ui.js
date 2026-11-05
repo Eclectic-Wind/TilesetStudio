@@ -14,7 +14,7 @@
 	let paintMode = false, stroke = null, brushAt = null;
 	// The dopesheet: keys picked ("boneId|frame"), the last copied keys, and whether the view shows the neighbouring frames as ghosts.
 	const keySel = new Set();
-	let keyClip = null, showOnion = TS.store.get("tsOnion") === "1", tlCollapsed = TS.store.get("tsTlRows") === "0";
+	let keyClip = null, showOnion = TS.store.get("tsOnion") === "1", showBones = TS.store.get("tsBones") !== "0", tlCollapsed = TS.store.get("tsTlRows") === "0";
 	const keyName = (id, f) => id + "|" + f;
 	const picked = () => [...keySel].map((s) => { const i = s.lastIndexOf("|"); return { id: s.slice(0, i), f: +s.slice(i + 1) }; });
 	const brush = { mode: "mix", weight: 1, strength: 0.5, radius: 36, through: false };
@@ -694,6 +694,7 @@
 		el.classList.toggle("atrest", restMode);
 		el.innerHTML = `<div class="tlbar"><div class="tlmode" role="group" aria-label="Animate mode"><button id="tl_pose" class="${restMode ? "" : "on"}" aria-pressed="${!restMode}" title="Pose: bones move and keys on this frame (Tab switches)">Pose</button><button id="tl_rest" class="${restMode ? "on" : ""}" aria-pressed="${restMode}" title="Rest pose: reshape the bones themselves; models show at rest and keys don't apply (Tab switches)">Rest</button></div><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
 			`<label class="tlease" title="How the picked keys (or the selected bones' keys on this frame) leave for the next key. Hold keeps the pose until then."><span class="dim">Ease</span> <select id="tl_ease"${eases.length ? "" : " disabled"}>${ease ? "" : '<option value="">–</option>'}${Rig.EASES.map(([v, t]) => `<option value="${v}"${v === ease ? " selected" : ""}>${t}</option>`).join("")}</select></label>` +
+			`<button id="tl_bones" class="${showBones ? "on" : ""}" aria-pressed="${showBones}" title="Show the bones over the view while posing (the rest pose always shows them)">Bones</button>` +
 			`<button id="tl_onion" class="${showOnion ? "on" : ""}" title="Onion skin: show the models on the previous frame (red) and next frame (green) while stopped">Onion</button>` +
 			`<button id="tl_seam" title="Key the first frame's pose on the last frame, so the loop has no jump (selected bones, or all with keys)">Close loop</button>` +
 			`<button id="tl_mirror" title="Flip this frame's pose across X onto the other side's bones (arm.L and arm.R; selected bones, or all)">Mirror pose</button>` +
@@ -705,6 +706,7 @@
 		$("tl_pose").onclick = () => { if (restMode) toggleRest(false); };
 		$("tl_rest").onclick = () => { if (!restMode) toggleRest(true); };
 		$("tl_ease").onchange = () => setEase($("tl_ease").value);
+		$("tl_bones").onclick = () => { showBones = !showBones; TS.store.set("tsBones", showBones ? "1" : "0"); const b = $("tl_bones"); b.classList.toggle("on", showBones); b.setAttribute("aria-pressed", showBones); draw(); };
 		$("tl_onion").onclick = () => { showOnion = !showOnion; TS.store.set("tsOnion", showOnion ? "1" : "0"); $("tl_onion").classList.toggle("on", showOnion); draw(); };
 		$("tl_seam").onclick = () => {
 			const ids = boneSel ? selIds() : Object.keys(c.tracks);
@@ -967,8 +969,8 @@
 		drawOnion(add, a, r);
 		// Bodies and heads first, every tip after them, so where a parent's tip meets a connected child's head (a joint) the ball on top
 		// is the parent's tip: grabbing a joint turns the parent (pose) or moves the joint (rest), and the child follows.
-		const tips = [];
-		for (const b of a.bones) {
+		const tips = [], bonesOn = showBones || restMode; // hidden bones still come back for the rest pose, which is all about them
+		if (bonesOn) for (const b of a.bones) {
 			const m = mats.get(b.id), h = r.toScreen(Rig.apply(m, b.head)), t = r.toScreen(Rig.apply(m, b.tail));
 			if (!h || !t) continue;
 			const sel = isSel(b.id), col = b.id === boneSel ? "#ffcf4a" : sel ? "#ff9f43" : "#5ad1ff";
@@ -981,8 +983,8 @@
 			if (!joint) add("circle", { cx: h[0], cy: h[1], r: 5, fill: col, "data-bone": b.id, "data-part": restMode ? "head" : "body" }).style.cursor = "move";
 			tips.push([b, t, sel, col]);
 		}
-		drawLabels(add, a, mats, r);
-		drawGizmos(add, a, mats, r); // under the tips, so a bone's own ball stays on top where they cross
+		if (bonesOn) drawLabels(add, a, mats, r);
+		if (bonesOn) drawGizmos(add, a, mats, r); // under the tips, so a bone's own ball stays on top where they cross
 		for (const [b, t, sel, col] of tips) {
 			// A wider see-through ring makes the ball easy to catch; it belongs to the same tip.
 			add("circle", { cx: t[0], cy: t[1], r: 11, fill: "transparent", "data-bone": b.id, "data-part": "tip", class: "bonetip" }).style.cursor = "grab";
