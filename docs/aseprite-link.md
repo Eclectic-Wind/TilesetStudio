@@ -4,15 +4,23 @@ Paint in Aseprite and see it on your models straight away. It works with or with
 
 ## Connect, step by step
 
-You need Aseprite 1.3 or newer.
+You need Aseprite 1.3 or newer. There are two ways to link, and the *Aseprite ▾* menu offers whichever your browser can use:
+
+- **Link a folder on this computer** (Chrome, Edge, Opera, Vivaldi… any Chromium browser): both programs share a folder. Nothing goes
+  online and every edit shows up by itself. It's the first choice in Chromium.
+- **Link online** (any browser, Firefox and Zen included): both programs connect to a small relay and share a room code. Pictures go
+  out when you press *Send*. In Chromium it's the second choice; in Firefox-based browsers it's the only one. See *Online link* below.
+
+The steps below are for the folder link.
 
 1. **Install the extension (once).** Studio's *Aseprite ▾* menu has the download. Double-click the file.
-2. **Press Link online** in the same menu.
+2. **Press Link a folder on this computer** in the same menu and pick an empty folder. Allow Studio to edit it when the browser asks.
 3. **Choose which art to keep:** this tileset or the Aseprite file. The other one gets replaced, except that your models always stay. Not sure? Link with a new, empty Aseprite file and keep the tileset. Studio only asks when a tileset is open.
-4. **Paste the code into Aseprite.** Press *Copy* in Studio, open your file in Aseprite, then go to *File ▸ Scripts ▸ Tileset Studio Link (online)…*, paste and press *Link*.
+4. **Point Aseprite at the same folder.** Open your file in Aseprite, go to *File ▸ Scripts ▸ Tileset Studio Link…*, pick any file in that folder (`studio_link.json` is there) and press *Link*.
 5. **Press Set up file** in Aseprite's link window, then paint inside the group called **Albedo**. Keep that window open while you paint.
 
-Next time, repeat steps 2 to 4. Aseprite remembers the code, so you only press *Link*.
+Next time, press **Relink "<folder>"** in the menu (Studio keeps the folder in IndexedDB; the browser may ask you to allow it
+again), then run the script in Aseprite and press *Link*: it remembers the file it was pointed at. *Pick another folder…* links a different one.
 
 ## The words
 
@@ -20,8 +28,9 @@ Next time, repeat steps 2 to 4. Aseprite remembers the code, so you only press *
   colours (the colours an imported model came with), else the tileset art on them, grey where they have neither. A file linked by an
   older version has the layer **Normal (Studio)**: the next picture renames it.
 - **Albedo:** the plain colours you paint, without lighting. Only the **Albedo** group goes back to Studio.
+- **Link folder:** the folder both programs watch. Nothing in it goes online.
 - **Room code:** how the two programs find each other online. Treat it like a password.
-- **Relay:** the small online service that passes pictures between the two programs.
+- **Relay:** the small online service that passes pictures between the two programs (online link only).
 
 ## If something looks wrong
 
@@ -29,7 +38,9 @@ The dot by the *Aseprite ▾* menu is grey when not linked, orange while waiting
 
 | What you see | What to do |
 |---|---|
-| The dot stays orange | Aseprite hasn't joined. Check the extension is installed, run the script and paste the code shown in the menu. |
+| The dot stays orange | Aseprite hasn't joined. Check the extension is installed, run *Tileset Studio Link…* and pick a file in the folder the menu names. |
+| "Studio wasn't allowed into …" | Press *Relink* again and choose *Allow* in the browser's prompt, or *Pick another folder…*. |
+| "The folder … is gone" | It was moved or deleted. Press *Pick another folder…*. |
 | "No group named Albedo" or "not in RGB colour" | Press **Set up file** in Aseprite's link window. |
 | "Studio's tiles are … but this canvas is …" | Press **Fit canvas** in Aseprite's link window. |
 | Painting doesn't reach Studio | Paint inside the Albedo group and keep Aseprite's link window open. Closing it stops the link. |
@@ -81,6 +92,10 @@ never overwrite the tileset art. An older extension is told to update (its pictu
 warns too. Fix the canvas and the next edit goes through.
 
 ### Online link (any browser, including Firefox / Zen)
+
+`TS.Link.ONLINE` in `js/aseprite.js` switches it (on by default). Set to `false`, it hides *Link online* from the menu, help and
+lessons, `connectRelay` refuses to start, and browsers without folder access get a note pointing them to the manual buttons.
+
 
 The folder picker is Chromium-only, so there is a second transport that needs no folder access. Studio (in the browser) and the
 extension (in Aseprite) both **dial out** to a tiny relay (`tools/relay`, a Cloudflare Worker) and share a random room code. The relay

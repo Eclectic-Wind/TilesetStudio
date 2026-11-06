@@ -20,6 +20,7 @@ function load() {
 	vm.createContext(ctx);
 	vm.runInContext(fs.readFileSync(path.join(root, "js", "aseprite.js"), "utf8"), ctx, { filename: "aseprite.js" });
 	const L = ctx.TS.Link, got = { albedo: 0, frames: 0, peers: [], status: [] };
+	L.ONLINE = true; // on by default; one test switches it off
 	L.onAlbedo = () => got.albedo++;
 	L.onFrames = () => got.frames++;
 	L.onPeer = (p) => got.peers.push(p);
@@ -181,6 +182,40 @@ const test = async (name, fn) => {
 		await t.L.connect();
 		assert.strictEqual(t.L.relayRoom(), "");
 		assert(t.L.folderLinked());
+	});
+	await test("the online link refuses to start while it is switched off", async () => {
+		const t = load();
+		t.L.ONLINE = false;
+		assert.throws(() => t.L.connectRelay(room), /switched off/);
+		assert.strictEqual(t.sockets.length, 0);
+	});
+	const saved = (perm) => ({ name: "kept", perm, asked: 0, queryPermission: async function () { return this.perm; }, requestPermission: async function () { this.asked++; return this.perm; }, getFileHandle: async () => ({}) });
+	await test("relink reuses last time's folder without the picker", async () => {
+		const t = load();
+		t.ctx.setInterval = () => 1;
+		let picked = 0;
+		t.ctx.showDirectoryPicker = async () => { picked++; return {}; };
+		const h = saved("granted");
+		t.L.lastFolder = async () => h;
+		assert.strictEqual(await t.L.connect(true), "kept");
+		assert.strictEqual(picked, 0);
+		assert.strictEqual(h.asked, 0);
+		assert.strictEqual(t.L.folderName(), "kept");
+	});
+	await test("relink asks for access again, and stays unlinked when refused", async () => {
+		const t = load();
+		t.ctx.setInterval = () => 1;
+		const h = saved("denied");
+		t.L.lastFolder = async () => h;
+		await assert.rejects(t.L.connect(true), (e) => e.name === "NotAllowedError");
+		assert.strictEqual(h.asked, 1);
+		assert(!t.L.linked());
+	});
+	await test("relink with nothing saved falls back to the picker", async () => {
+		const t = load();
+		t.ctx.setInterval = () => 1;
+		t.L.lastFolder = async () => null;
+		assert.strictEqual(await t.L.connect(true), "shared");
 	});
 
 	console.log(`\n${passed} passed, ${failed} failed`);

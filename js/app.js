@@ -639,10 +639,11 @@
 			$(`as_s${n}t`).textContent = title;
 			if (n > 1) $(`as_s${n}d`).textContent = detail || "";
 		};
-		const online = !!Link.relayRoom(), adopting = Link.adoptPending;
-		step(1, !online || (Link.relayOpen() && p) ? "done" : "now", online ? (!Link.relayOpen() ? "Connecting to the relay…" : p ? "Room code" : "Copy this room code") : "Folder linked");
+		const online = !!Link.relayRoom(), adopting = Link.adoptPending, folder = Link.folderName();
+		step(1, !online || (Link.relayOpen() && p) ? "done" : "now", online ? (!Link.relayOpen() ? "Connecting to the relay…" : p ? "Room code" : "Copy this room code") : `Folder linked: ${folder}`);
+		$("as_s1d").textContent = online ? "" : p ? "" : "Studio keeps its link files here (studio_link.json is one).";
 		step(2, p ? "done" : "now", p ? `Aseprite joined: ${p.file}` : "Join from Aseprite",
-			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : `In Aseprite: File ▸ Scripts ▸ Tileset Studio Link${online ? " (online)…, paste the code, press Link" : "…, and pick any file in this folder"}.`);
+			p ? `${p.w}x${p.h}, ${p.frames} frame${p.frames === 1 ? "" : "s"}` : online ? "In Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…, paste the code, press Link." : `In Aseprite: File ▸ Scripts ▸ Tileset Studio Link…, pick any file in “${folder}” (studio_link.json will do), press Link.`);
 		if (adopting) step(3, p ? "now" : "", "Reference arrives", "After Studio has taken the Aseprite file.");
 		else step(3, p && p.normal ? "done" : p ? "now" : "", p && p.normal ? "Reference is in Aseprite" : "Reference arrives", p && p.normal ? "Locked layer Reference (Studio): the models' base colours." : "");
 		const sent = Link.lastAlbedo ? `Last picture received at ${new Date(Link.lastAlbedo).toLocaleTimeString()}.` : "";
@@ -718,11 +719,31 @@
 		Link.onStatus = (state, text) => { if (animStatus) animStatus(linkHealth(state), text); asepriteState(state, text); };
 		const menu = $("b_aseprite").nextElementSibling;
 		// Choosing the starting point happens in a dialog, which closes the menu: open it again to show the steps.
-		$("as_link").onclick = async () => {
-			if (!(await askImport())) return;
-			try { await Link.connect(); asepriteSend(); menu.classList.add("open"); } catch (e) { if (e.name !== "AbortError") toast(e.message, "bad"); }
+		// The folder link (Chromium): pick a folder, or relink last time's in one click. The picker and the browser's "allow access"
+		// prompt need a click; the art dialog's button (or, with no tileset open, this one) provides it.
+		const linkFolder = async (reuse) => {
+			try {
+				if (!(await askImport())) return;
+				await Link.connect(reuse);
+				asepriteSend();
+				menu.classList.add("open");
+			} catch (e) {
+				if (e.name === "AbortError") return; // picker closed
+				toast(e.message, "bad");
+				refreshRelink();
+			}
 		};
-		$("as_unlink").onclick = () => Link.disconnect();
+		// "Relink <folder>" leads once there is a last time; picking a folder becomes the second choice.
+		const refreshRelink = async () => {
+			const h = await Link.lastFolder();
+			$("as_relink").hidden = !h;
+			if (h) $("as_relink_name").textContent = h.name;
+			$("as_link").classList.toggle("primary-item", !h);
+			$("as_link").firstChild.textContent = h ? "Pick another folder…" : "Link a folder on this computer…";
+		};
+		$("as_link").onclick = () => linkFolder(false);
+		$("as_relink").onclick = () => linkFolder(true);
+		$("as_unlink").onclick = () => { Link.disconnect(); refreshRelink(); };
 		// Aseprite joining, leaving or running into a problem is news when the menu is closed: the user is probably painting.
 		let peerProblem = null;
 		Link.onPeer = (p, was) => {
@@ -755,7 +776,14 @@
 			toast("New room code. The old one no longer reaches you; copy this one into Aseprite to link again.", "ok");
 		};
 		$("as_copy").onclick = (e) => { e.preventDefault(); navigator.clipboard.writeText($("as_room").value).then(() => toast("Room code copied. Paste it in Aseprite.", "ok"), () => $("as_room").select()); };
-		if (!Link.supported) $("as_link").hidden = true;
+		// Chromium links through a folder; elsewhere the online link (when the relay is deployed) or, until then, the manual buttons.
+		document.documentElement.classList.toggle("as-online", Link.ONLINE);
+		document.documentElement.classList.toggle("as-nolocal", !Link.supported);
+		$("as_link").hidden = !Link.supported;
+		$("as_online").hidden = !Link.ONLINE;
+		$("as_online").classList.toggle("primary-item", Link.ONLINE && !Link.supported);
+		$("as_nolocal").hidden = Link.supported || Link.ONLINE;
+		refreshRelink();
 		const help = (open) => $("as_help").classList.toggle("open", open);
 		$("as_help_btn").onclick = (e) => { e.stopPropagation(); menu.classList.remove("open"); help(true); $("as_help_close").focus(); };
 		$("as_help_close").onclick = () => help(false);
@@ -763,7 +791,7 @@
 		$("as_help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") help(false); });
 		$("as_help").addEventListener("click", (e) => { if (e.target === $("as_help")) help(false); });
 		$("as_send").onclick = () => TS.Link.sendNow() || asepriteSend();
-		asepriteState("off", Link.supported ? "Not linked." : "Not linked. This browser can't watch a folder, so use “Link online”.");
+		asepriteState("off", Link.supported || !Link.ONLINE ? "Not linked." : "Not linked. This browser can't open a folder, so use “Link online”.");
 	}
 
 	// One warning for everything that makes the importer misread the tile cells: the Pieces view's conflicts and floating art,

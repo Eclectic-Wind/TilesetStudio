@@ -34,6 +34,9 @@
 	L.waiting = null; // [sheet, layout, extra]: the newest sheet that was held back, sent by L.sendNow
 	// The relay (tools/relay): lets any browser link over the internet, no folder access needed. Its address is filled in on deploy.
 	L.RELAY = "wss://tileset-studio-relay.tileset-studio.workers.dev";
+	// Both links are offered: Chromium browsers lead with the local folder and keep "Link online" as the second choice; other browsers
+	// (Firefox, Zen) can only link online. false hides the online link everywhere (menu, help, lessons) and leaves the folder link.
+	L.ONLINE = true;
 	L.onRelayOpen = null; // () -> void: the relay connected, send the current picture
 	L.onAlbedo = null; // (ImageData) -> void
 	L.onFrames = null; // ({n, ops: [{op: "del" | "ins", i}]}) -> void: frames were added / deleted on Aseprite's timeline
@@ -47,6 +50,7 @@
 	L.lastAlbedo = 0; // when the last picture came in (ms)
 	L.linked = () => !!dir || !!ws;
 	L.folderLinked = () => !!dir;
+	L.folderName = () => (dir ? dir.name : "");
 	L.relayRoom = () => (ws ? wsRoom : "");
 	L.relayOpen = () => !!ws && ws.readyState === 1;
 	const say = (state, text) => { if (L.onStatus) L.onStatus(state, text); };
@@ -56,9 +60,46 @@
 	function beginLink() { session = L.newRoom().slice(0, 12); artSent = false; artKeep = null; warnedOld = false; L.lastAlbedo = 0; setPeer(null); }
 	const oldExtension = () => { if (!warnedOld) { warnedOld = true; say("warn", "Aseprite's extension is out of date, so its pictures were ignored. Download it again from this menu and install it over the old one."); } };
 
-	L.connect = async () => {
-		if (!L.supported) throw new Error("This browser can't watch a folder. Use Chrome or Edge, or the manual download / load buttons.");
-		dir = await window.showDirectoryPicker({ id: "tileset-studio-aseprite", mode: "readwrite" });
+	// The last linked folder is kept in IndexedDB (a folder handle can't go in localStorage), so the next visit relinks in one click.
+	// The browser still asks to allow access again on most visits; that prompt needs the click, so relink only from a button.
+	// Same database, version and store as app.js's autosave ("tileset-studio" / "kv"): a second store would need a version bump there too.
+	const DB = "tileset-studio", STORE = "kv", KEY = "asepriteDir";
+	function idb(mode, fn) {
+		return new Promise((ok, no) => {
+			if (typeof indexedDB === "undefined") return no(new Error("no IndexedDB"));
+			const open = indexedDB.open(DB, 1);
+			open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+			open.onerror = () => no(open.error);
+			open.onsuccess = () => {
+				const db = open.result, tx = db.transaction(STORE, mode), req = fn(tx.objectStore(STORE));
+				tx.oncomplete = () => { db.close(); ok(req && req.result); };
+				tx.onerror = tx.onabort = () => { db.close(); no(tx.error); };
+			};
+		});
+	}
+	const saveFolder = (h) => idb("readwrite", (s) => s.put(h, KEY)).catch(() => { /* private window: just no relink next time */ });
+	// The folder used last time ({name} is all the menu needs), or null.
+	L.lastFolder = async () => { if (!L.supported) return null; try { return (await idb("readonly", (s) => s.get(KEY))) || null; } catch (e) { return null; } };
+	L.forgetFolder = () => idb("readwrite", (s) => s.delete(KEY)).catch(() => {});
+
+	// Link a folder: the one picked now, or (reuse) the one from last time.
+	L.connect = async (reuse) => {
+		if (!L.supported) throw new Error("This browser can't watch a folder. Use Chrome, Edge or another Chromium browser, or the manual download / load buttons.");
+		let h = reuse ? await L.lastFolder() : null;
+		if (h) {
+			const opts = { mode: "readwrite" };
+			if ((await h.queryPermission(opts)) !== "granted" && (await h.requestPermission(opts)) !== "granted") {
+				const e = new Error(`Studio wasn't allowed into "${h.name}". Press Relink again and choose Allow, or pick the folder again.`);
+				e.name = "NotAllowedError";
+				throw e;
+			}
+			try { await h.getFileHandle(FILES.meta, { create: true }); } catch (e) { // moved, renamed or deleted since last time
+				L.forgetFolder();
+				throw new Error(`The folder "${h.name}" is gone (moved or deleted?). Pick it again.`);
+			}
+		} else h = await window.showDirectoryPicker({ id: "tileset-studio-aseprite", mode: "readwrite" });
+		dir = h;
+		saveFolder(h);
 		L.disconnectRelay(); // one link at a time
 		beginLink();
 		lastModified = 0; lastProblem = ""; framesRev = null; beat = null; started = 0; linkedAt = Date.now();
@@ -74,6 +115,7 @@
 
 	L.newRoom = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => "abcdefghijklmnopqrstuvwxyz234567"[b & 31]).join("");
 	L.connectRelay = (room) => {
+		if (!L.ONLINE) throw new Error("The online link is switched off in this build. Use Chrome or Edge to link through a folder on this computer.");
 		if (!/^[a-z0-9]{16,64}$/.test(room)) throw new Error("A room code is 16 to 64 lowercase letters and digits.");
 		L.disconnectRelay();
 		clearInterval(timer); dir = null; // one link at a time

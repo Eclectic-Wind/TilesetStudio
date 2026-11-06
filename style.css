@@ -114,6 +114,12 @@ body.noart #b_process, body.noart .export > button, body.noart #b_save { opacity
 .aseprite-menu .asstep { margin-top: 8px; margin-bottom: 4px; }
 .aseprite-menu .asstep a { color: var(--info); }
 .aseprite-menu .asroom button { width: auto; flex: none; border: 1px solid var(--line); }
+.aseprite-menu .asnolocal { margin: 2px 8px 6px; padding: 6px 8px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 4px; font-size: 12px; }
+.aseprite-menu .asnolocal p { margin: 0 0 6px; line-height: 1.4; }
+.aseprite-menu .asnolocal p:last-child { margin-bottom: 0; color: var(--dim); }
+/* The online link (relay) can be switched off (TS.Link.ONLINE); the folder link needs a Chromium browser. */
+html:not(.as-online) .as-online-only { display: none; }
+html:not(.as-nolocal) .as-local-off, html.as-online .as-local-off { display: none; }
 #as_roomrow { flex-wrap: wrap; align-items: center; white-space: nowrap; }
 #as_roomrow input { flex: 1 1 150px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
 #as_roomrow button { display: inline-block; width: auto; flex: none; white-space: nowrap; padding: 3px 8px; border: 1px solid var(--line); }

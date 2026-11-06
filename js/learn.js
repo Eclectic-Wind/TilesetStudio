@@ -821,24 +821,25 @@
 	L.push({
 		section: "aseprite", title: "Connect them, step by step", dur: 25,
 		caps: [
-			{ t: 0, say: "Five steps. You need Aseprite 1.3 or newer.", sub: "Tick each one off below as you go. The Aseprite menu in Studio also shows how far you've got." },
+			{ t: 0, say: "Five steps. You need Aseprite 1.3 or newer and Chrome or Edge.", sub: "Any Chromium browser works. Tick each step off below as you go. The Aseprite menu in Studio also shows how far you've got." },
 			{ t: 3, say: "1. Install the extension (only once).", sub: "Aseprite ▾ in Studio's top bar has the download. Double-click the file and Aseprite adds it." },
-			{ t: 7, say: "2. Press Link online.", sub: "It's in the same menu and works in any browser." },
+			{ t: 7, say: "2. Link a folder on this computer.", sub: "It's in the same menu. Pick an empty folder and allow Studio to edit it. Both programs share it, and nothing goes online." },
 			{ t: 11, say: "3. Choose which art to keep.", sub: "Studio asks whether this tileset or the Aseprite file is the starting point. The next lesson explains the choice." },
-			{ t: 15, say: "4. Copy the room code into Aseprite.", sub: "The code is how the two programs find each other. In Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…, paste, press Link." },
+			{ t: 15, say: "4. Point Aseprite at the same folder.", sub: "The folder is how the two programs find each other. In Aseprite: File ▸ Scripts ▸ Tileset Studio Link…, pick any file in it, press Link." },
 			{ t: 19.5, say: "5. Press Set up file, then paint.", sub: "The button is in Aseprite's link window. It makes the Albedo group you paint in. Studio's dot turns green when all is well." },
 		],
 		extra: `<ol class="todo">
 			<li style="--d:0s"><span>1</span><div><b>Install the extension.</b><br><small>Studio → Aseprite ▾ → Download the extension, then double-click the file. Only needed once.</small></div></li>
-			<li style="--d:.1s"><span>2</span><div><b>Press Link online.</b><br><small>Studio → Aseprite ▾ → Link online.</small></div></li>
+			<li style="--d:.1s"><span>2</span><div><b>Link a folder on this computer.</b><br><small>Studio → Aseprite ▾ → Link a folder on this computer…, then pick an empty folder.</small></div></li>
 			<li style="--d:.2s"><span>3</span><div><b>Choose which art to keep.</b><br><small>This tileset, or the Aseprite file. The other one gets replaced.</small></div></li>
-			<li style="--d:.3s"><span>4</span><div><b>Copy the code and paste it into Aseprite.</b><br><small>Open your file, then File → Scripts → Tileset Studio Link (online)…, paste, Link.</small></div></li>
+			<li style="--d:.3s"><span>4</span><div><b>Pick the same folder in Aseprite.</b><br><small>Open your file, then File → Scripts → Tileset Studio Link…, pick any file in the folder, Link.</small></div></li>
 			<li style="--d:.4s"><span>5</span><div><b>Press Set up file, then paint in the Albedo group.</b><br><small>Both buttons are in Aseprite's link window. Keep that window open while you paint.</small></div></li>
 		</ol>
-		<p class="kindnote"><b>Next time:</b> repeat steps 2 to 4. Aseprite remembers the code, so you only press Link.</p>
+		<p class="kindnote"><b>Next time:</b> press <b>Relink</b> in Studio's Aseprite menu, then run the script in Aseprite and press Link. Both remember the folder.</p>
+			<p class="kindnote as-online-only"><b>On Firefox or Zen, or Aseprite on another computer?</b> Press <b>Link online</b> in step 2 instead. In step 4, press <b>Copy</b> in Studio, then in Aseprite go to File ▸ Scripts ▸ Tileset Studio Link (online)…, paste the room code and press Link. Online, pictures go out when you press Send now (Aseprite) or Send reference now (Studio).</p>
 		<div class="row"><button id="l_asmenu" class="primary">Open the Aseprite menu</button></div>`,
 		make() {
-			const stations = [["⬇", "Install", 72], ["🔗", "Link online", 216], ["⇄", "Choose art", 360], ["⌨", "Paste code", 504], ["✎", "Paint", 648]], CODE = "k3j9q7mx2c5v8b4n6d";
+			const stations = [["⬇", "Install", 72], ["📁", "Link folder", 216], ["⇄", "Choose art", 360], ["📂", "Same folder", 504], ["✎", "Paint", 648]], CODE = "aseprite-link/studio_link.json";
 			return (g, t) => {
 				bg(g);
 				const STARTS = [3, 7, 11, 15, 19.5], on = (i) => seg(t, STARTS[i], STARTS[i] + 0.8);
@@ -849,9 +850,9 @@
 					text(g, glyph, x, 132, a > 0.5 ? C.ink : C.dim, 26, "center", live);
 					pill(g, x, 190, name, a > 0.5 ? C.amber : C.dim, live, 13);
 				});
-				// the room code typing itself in at step 4
+				// the shared folder being picked in Aseprite at step 4
 				const n = Math.floor(seg(t, 15.6, 18) * CODE.length);
-				if (n > 0) pill(g, 360, 256, "room code  " + CODE.slice(0, n) + (n < CODE.length ? "▌" : ""), "#8c8cff", 1, 15);
+				if (n > 0) pill(g, 360, 256, "pick  " + CODE.slice(0, n) + (n < CODE.length ? "▌" : ""), "#8c8cff", 1, 15);
 				if (t > 21) pill(g, 360, 310, "● linked", C.ok, seg(t, 21, 21.8), 15);
 			};
 		},
@@ -929,7 +930,7 @@
 		section: "aseprite", title: "If something looks wrong", dur: 12, steps: true,
 		caps: [{ t: 0, say: "The dot by the Aseprite menu tells you the state.", sub: "Grey: not linked. Orange: waiting for Aseprite. Green: all good. Red: open the menu and it says what's wrong." }],
 		extra: `<dl class="fixes">
-			<dt>The dot stays orange</dt><dd>Aseprite hasn't joined. Check the extension is installed, run <b>File ▸ Scripts ▸ Tileset Studio Link (online)…</b> and paste the code shown in the Aseprite menu.</dd>
+			<dt>The dot stays orange</dt><dd>Aseprite hasn't joined. Check the extension is installed, run <b>File ▸ Scripts ▸ Tileset Studio Link…</b> and pick a file in the same folder Studio linked (the Aseprite menu shows its name).<span class="as-online-only"> Linked online? Run <b>Tileset Studio Link (online)…</b> and paste the room code shown in the menu.</span></dd>
 			<dt>“No group named Albedo” or “not in RGB colour”</dt><dd>Press <b>Set up file</b> in Aseprite's link window.</dd>
 			<dt>“Studio's tiles are … but this canvas is …”</dt><dd>Press <b>Fit canvas</b> in Aseprite's link window.</dd>
 			<dt>Painting doesn't reach Studio</dt><dd>Check you're painting inside the Albedo group, and that Aseprite's link window is still open. Closing it stops the link.</dd>

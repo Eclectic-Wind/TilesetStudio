@@ -11,7 +11,7 @@
 -- Each Studio clip owns a range of frames marked by a tag named "<clip name> [<clip id>]": switching clips in Studio moves the link to
 -- that clip's range, and the frames of other clips are never touched. A clip seen for the first time gets a new range at the end.
 --
--- Two ways to link: a shared folder (Chrome / Edge in Studio), or "Tileset Studio Link (online)...", where both programs dial out to a
+-- Two ways to link: a folder on this computer (Chromium browsers: "Link a folder on this computer" in Studio), or "Tileset Studio Link (online)...", where both programs dial out to a
 -- small relay with a shared room code, so Studio can run in any browser. Needs Aseprite 1.3 or newer (WebSocket support).
 --
 -- Presence: Studio only takes pictures from an extension that proves it is there now. Online we answer its pings; in the folder we keep
@@ -740,7 +740,8 @@ function init(plugin)
     group = "file_scripts",
     onclick = function()
       local dlg = Dialog("Tileset Studio Link")
-      dlg:label{ text = "Pick any file inside the shared folder (the one you linked in Studio)." }
+      dlg:label{ text = "Pick any file in the folder you linked in Studio (Aseprite menu > Link a folder on this computer)." }
+      dlg:label{ text = "studio_link.json will do. Next time just press Link: the folder is remembered." }
       dlg:file{ id = "pick", label = "File:", open = true, filename = plugin.preferences.picked or "",
                 filetypes = { "json", "png" } }
       dlg:button{ id = "ok", text = "Link", focus = true }

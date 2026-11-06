@@ -44,11 +44,16 @@
 				<p class="linkstate">Paint in Aseprite and see it on your models straight away.</p>
 				<p class="linkstate asstep"><b>1. Install the extension (once).</b><br><a href="tools/aseprite/TilesetStudioLink.aseprite-extension" download title="Double-click the downloaded file to install it in Aseprite">Download the extension</a>, then double-click the file. Needs Aseprite 1.3 or newer.</p>
 				<p class="linkstate asstep"><b>2. Connect.</b></p>
-				<button id="as_online" class="primary-item" title="Works in any browser, Firefox and Zen included: Studio and the Aseprite extension both connect to a small relay and share a room code">Link online<small>Works in any browser. You paste a code into Aseprite.</small></button>
-				<button id="as_link" title="Pick a folder both programs can see (Chrome and Edge only)">Link a shared folder…<small>Chrome and Edge. Your art stays on this computer.</small></button>
+				<button id="as_relink" class="primary-item" hidden title="Link the same folder as last time. The browser may ask you to allow access again.">Relink “<span id="as_relink_name"></span>”<small>The folder you used last time.</small></button>
+				<button id="as_link" class="primary-item" title="Pick a folder on this computer that Studio and Aseprite both read and write. Nothing goes online.">Link a folder on this computer…<small>Pick an empty folder. Your art never leaves this computer.</small></button>
+				<button id="as_online" hidden title="Works in any browser, Firefox and Zen included: Studio and the Aseprite extension both connect to a small relay and share a room code">Link online<small>Works in any browser. You paste a code into Aseprite.</small></button>
+				<div id="as_nolocal" class="asnolocal" hidden>
+					<p><b>Live linking needs a Chromium browser</b> (Chrome, Edge, Opera, Vivaldi…). It shares a folder on this computer, and this browser can't open folders.</p>
+					<p>A link for Firefox-based browsers is coming. Until then, paint by hand: in <b>Animate</b>, use <b>Download reference sheet</b>, paint over it in Aseprite, then <b>Load albedo sheet…</b>. Or open the painted PNG as your tileset.</p>
+				</div>
 			</div>
 			<ol id="as_steps" class="assteps" hidden>
-				<li id="as_s1"><b id="as_s1t"></b>
+				<li id="as_s1"><b id="as_s1t"></b><small id="as_s1d"></small>
 					<div id="as_roomrow" class="asroom" hidden><input id="as_room" readonly spellcheck="false" aria-label="Room code" title="Paste this into Aseprite: File ▸ Scripts ▸ Tileset Studio Link (online)…"><button id="as_copy">Copy</button></div>
 				</li>
 				<li id="as_s2"><b id="as_s2t"></b><small id="as_s2d"></small></li>
@@ -305,26 +310,31 @@
 </div></div>
 <div id="as_help" class="modal" role="dialog" aria-modal="true" aria-labelledby="as_help_title"><div class="card askcard ashelp">
 	<h2 id="as_help_title">Connect Aseprite: the steps</h2>
-	<p>You need Aseprite 1.3 or newer. Studio's Aseprite menu shows how far you've got.</p>
+	<p>You need Aseprite 1.3 or newer and a Chromium browser (Chrome, Edge, Opera, Vivaldi…). Studio's Aseprite menu shows how far you've got.</p>
+	<p class="as-local-off"><b>This browser can't link live.</b> The link shares a folder on this computer, which needs Chrome, Edge or another Chromium browser. A link for Firefox-based browsers is coming.</p>
 	<ol>
 		<li><b>Install the extension (once).</b> Download it from the Aseprite menu and double-click the file.</li>
-		<li><b>Press Link online</b> in the Aseprite menu.</li>
+		<li><b>Press Link a folder on this computer</b> in the Aseprite menu and pick an empty folder (make one called, say, <i>aseprite-link</i>). Allow Studio to edit it when the browser asks.</li>
 		<li><b>Choose which art to keep:</b> this tileset or the Aseprite file. The other one gets replaced. Studio only asks when a tileset is open.</li>
-		<li><b>Paste the code into Aseprite.</b> Press <b>Copy</b> in Studio, open your file in Aseprite, then go to <b>File ▸ Scripts ▸ Tileset Studio Link (online)…</b>, paste and press <b>Link</b>.</li>
-		<li><b>Press Set up file</b> in Aseprite's link window, then paint inside the group called <b>Albedo</b>. Keep that window open while you paint.</li>
+		<li><b>Point Aseprite at the same folder.</b> Open your file in Aseprite, then go to <b>File ▸ Scripts ▸ Tileset Studio Link…</b>, pick any file in that folder (<i>studio_link.json</i> is there) and press <b>Link</b>.</li>
+		<li><b>Press Set up file</b> in Aseprite's link window, then paint inside the group called <b>Albedo</b>. Keep that window open while you paint. Every edit shows in Studio by itself.</li>
 	</ol>
-	<p><b>Next time:</b> repeat steps 2 to 4. Aseprite remembers the code, so you only press Link.</p>
-	<p><b>Using Chrome or Edge?</b> <b>Link a shared folder</b> keeps your art on this computer. Pick an empty folder in Studio. Then in Aseprite use <b>File ▸ Scripts ▸ Tileset Studio Link…</b> and pick any file in that folder.</p>
+	<p><b>Next time:</b> press <b>Relink</b> in Studio's Aseprite menu (the browser may ask you to allow the folder again). In Aseprite run the script and press <b>Link</b>: it remembers the folder.</p>
+	<p class="as-online-only"><b>On Firefox or Zen?</b> Press <b>Link online</b> instead, copy the room code, and in Aseprite use <b>File ▸ Scripts ▸ Tileset Studio Link (online)…</b>, paste it and press <b>Link</b>.</p>
 	<h3>What the words mean</h3>
 	<ul>
 		<li><b>Reference:</b> a picture of the models in their base colours (the colours an imported model came with, else the art on them). Studio makes it, and it appears in Aseprite as the locked layer <b>Reference (Studio)</b>, a guide for your painting.</li>
 		<li><b>Albedo:</b> the plain colours you paint, without lighting. Only what's in the <b>Albedo</b> group goes back to Studio.</li>
-		<li><b>Sending is by button online.</b> To stay within the free relay's limits, pictures go out when you press <b>Send now</b> in Aseprite or <b>Send reference now</b> here. The folder link updates by itself.</li>
-		<li><b>Room code:</b> how the two programs find each other online. Treat it like a password.</li>
-		<li><b>Relay:</b> the small online service that passes pictures between the two programs.</li>
+		<li><b>Link folder:</b> the folder both programs watch. Studio writes the reference into it and Aseprite writes your Albedo back. You can delete it whenever you're not linked.</li>
+		<li class="as-online-only"><b>Sending is by button online.</b> To stay within the free relay's limits, pictures go out when you press <b>Send now</b> in Aseprite or <b>Send reference now</b> here. The folder link updates by itself.</li>
+		<li class="as-online-only"><b>Room code:</b> how the two programs find each other online. Treat it like a password.</li>
+		<li class="as-online-only"><b>Relay:</b> the small online service that passes pictures between the two programs.</li>
 	</ul>
 	<details class="asprivacy"><summary>Is it private?</summary>
 	<ul>
+		<li><b>The folder link never goes online.</b> Pictures are plain files in the folder you picked, on your own disk. Studio can open only that folder, and only after you allow it.</li>
+	</ul>
+	<ul class="as-online-only">
 		<li><b>Only you can see it.</b> Your code is random and made just for your browser. Nobody can see your pictures without it, and nobody can guess it.</li>
 		<li><b>Nothing is saved.</b> Your pictures pass through and are never written to a disk, a database or a log.</li>
 		<li><b>If you join late:</b> say you open Aseprite after Studio. The relay holds the newest picture for a short while so Aseprite can still get it. It forgets it once everyone has left.</li>
