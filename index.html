@@ -34,6 +34,7 @@
 			<button data-kind="box">Box</button><button data-kind="cylinder">Cylinder</button><button data-kind="wedge">Wedge</button>
 			<button data-kind="plane">Plane</button><button data-kind="sphere">Sphere</button>
 			<button data-kind="point" title="A single point to draw lines and faces from (edit mode)">Point</button>
+			<button data-kind="light_point" title="A point light at the 3D cursor: lights the Lit view and is exported for the game">Point light</button><button data-kind="light_area" title="An area light (a floor rectangle that lights from its height) at the 3D cursor">Area light</button>
 		</div>
 	</div>
 	<button id="b_animate" class="ghost" title="Animation mode: make your models move with a timeline and, if they need to bend, bones">Animate</button>
@@ -268,22 +269,12 @@
 		</div>
 		<div class="outwrap"><canvas id="out"></canvas></div>
 		<div class="lightbar">
-			<span title="Drag in the view to move the light; Shift+wheel = height">Light</span>
+			<span title="With no lights in the project this quick preview light is dragged here. Project lights are added from Add (Point light / Area light) and edited in the 3D view.">Light</span>
 <label>Renderer <select id="lit_renderer"><option value="current">Current</option><option value="gpu">GPU (experimental)</option><option value="compare">Compare</option></select></label><span id="lit_renderer_status" role="status"></span>
 			<label>height <input id="lightz" type="range" min="0" max="160" value="36"> <span id="lightz_v">36</span></label>
 			<label>reach <input id="lightr" type="range" min="40" max="600" value="220"></label>
 			<label title="Lit preview resolution only; exports remain full resolution">Render scale <select id="render_scale"><option value="1">100%</option><option value="0.75">75%</option><option value="0.5">50%</option><option value="0.25">25%</option></select></label>
 			<label><input id="shadows" type="checkbox" checked> shadows</label>
-			<div class="lightlist">
-				<label title="The project's lights, saved in the project and exported as `lights`. Drag in the view to move the selected one; Shift+wheel = height">Lights <select id="light_sel"></select></label>
-				<button id="light_addp" title="Add a point light at the centre of the view">+ Point</button><button id="light_adda" title="Add an area light: a floor rectangle that lights from its height">+ Area</button><button id="light_del" title="Delete the selected light">Delete</button>
-				<label>name <input id="light_name" type="text" size="10"></label>
-				<label>colour <input id="light_color" type="color"></label>
-				<label>intensity <input id="light_int" type="number" min="0" max="100" step="0.1" style="width:56px"></label>
-				<span id="light_area" hidden><label>width <input id="light_w" type="number" min="1" step="1" style="width:56px"></label> <label>depth <input id="light_h" type="number" min="1" step="1" style="width:56px"></label></span>
-				<label title="Higher wins when the game cannot show every lamp">priority <input id="light_prio" type="number" step="1" style="width:56px"></label>
-				<label title="Whether this light casts shadows (the game's importer reads it too)"><input id="light_sh" type="checkbox" checked> shadows</label>
-			</div>
 		</div>
 		<div id="pieceinfo" class="pieceinfo"></div>
 			<div id="stats" class="stats dim">Process to see the maps.</div>

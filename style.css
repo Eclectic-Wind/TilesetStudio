@@ -318,7 +318,6 @@ body.noart .outwrap::after { content: "The processed maps appear here."; positio
 .lightbar { display: flex; gap: 4px 10px; align-items: center; padding: 2px 8px 6px; flex-wrap: wrap; color: var(--dim); }
 .lightbar label { display: flex; gap: 4px; align-items: center; min-width: 0; max-width: 100%; }
 .lightbar select { min-width: 0; }
-.lightlist { display: flex; flex: 1 0 100%; gap: 4px 10px; align-items: center; flex-wrap: wrap; }
 .lightbar input[type=range] { width: 80px; }
 /* The light controls only mean something in the Lit view. */
 section.output[data-mode]:not([data-mode="lit"]) #workspace-light { display: none; }

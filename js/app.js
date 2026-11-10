@@ -13,6 +13,7 @@
 		autoProcess: true, result: null,
 		bundleId: newUUID(),
 		anim: TS.Rig.newAnim(), // bones, clips and the Aseprite sheet (see rig.js)
+		lightSel: null, // id of the selected light (a light and models are never selected together)
 		lights: [], // point / area lights for the Lit view and the bundle's `lights` (see "lights" below)
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
@@ -88,7 +89,7 @@
 	// rectangle centred on x, y. The Lit view sums them all (js/output.js); the bundle writes them as `lights`. Edits are undoable:
 	// lightTouch() keeps the state from before a run of edits and lightCommit() (after a pause, or at once on save / undo) pushes it.
 	let lightSeq = 0, lightBefore = null, lightTimer = 0;
-	const selLight = () => S.lights.find((l) => l.id === output.sel) || null;
+	const selLight = () => S.lights.find((l) => l.id === S.lightSel) || null;
 	function cleanLight(l, i) {
 		const num = (v, d, lo, hi) => { v = parseFloat(v); return isNaN(v) ? d : TS.clamp(v, lo, hi); };
 		const type = l && l.type === "area" ? "area" : "point", id = l && typeof l.id === "string" && l.id ? l.id : "light" + (i + 1);
@@ -99,41 +100,120 @@
 	}
 	function lightTouch() { if (!lightBefore) lightBefore = snapshot(); clearTimeout(lightTimer); lightTimer = setTimeout(lightCommit, 700); }
 	function lightCommit() { clearTimeout(lightTimer); if (lightBefore) { const b = lightBefore; lightBefore = null; pushUndo(b); } }
-	// Edit the selected light (undoable), or the preview light while the project has none; then redraw.
-	function lightEdit(fn) { const l = selLight(); if (l) { lightTouch(); fn(l); } else fn(output.light); output.render(); }
-	// The output and the panel follow S.lights (after an add, delete, undo, open).
+	// Edit the selected light from its Properties fields (undoable: one step per run of edits); then redraw the view and the Lit markers.
+	function lightEdit(fn) { const l = selLight(); if (!l) return; lightTouch(); fn(l); dirty = true; output.render(); }
+	// Select a light (or none): models are deselected with it, and the Properties panel shows it.
+	function setLightSel(id) {
+		lightCommit();
+		S.lightSel = id || null; output.sel = S.lightSel;
+		if (S.lightSel) { S.selected.clear(); S.active = null; S.edit = false; S.elemSel.clear(); knife = null; }
+		selChanged(); output.render();
+	}
+	// The output and the panels follow S.lights (after an add, delete, undo, open).
 	function syncLights() {
 		if (!output) return;
 		output.lights = S.lights;
-		if (!selLight()) output.sel = S.lights.length ? S.lights[S.lights.length - 1].id : null;
-		lightPanel(); output.render();
+		if (!selLight()) S.lightSel = null;
+		output.sel = S.lightSel;
+		for (const id of ["lightz", "lightr"]) $(id).disabled = S.lights.length > 0; // the preview light's sliders: lights are edited in the 3D view
+		dirty = true; panels(); output.render();
 	}
-	function lightPanel() {
-		const sel = $("light_sel"); if (!sel) return;
-		const l = selLight(), t = l || output.light;
-		sel.innerHTML = S.lights.length ? S.lights.map((x) => `<option value="${esc(x.id)}"${l && x.id === l.id ? " selected" : ""}>${esc(x.name || x.id)} (${x.type})</option>`).join("") : `<option value="">preview light (no lights yet)</option>`;
-		for (const id of ["light_del", "light_name", "light_color", "light_int", "light_w", "light_h", "light_prio", "light_sh"]) $(id).disabled = !l;
-		$("light_name").value = l ? l.name : ""; $("light_color").value = l ? l.color : "#ffffff"; $("light_int").value = l ? l.intensity : 1;
-		$("light_w").value = l ? l.w : ""; $("light_h").value = l ? l.h : ""; $("light_prio").value = l ? l.priority : 0; $("light_sh").checked = l ? l.shadows !== false : true;
-		$("light_area").hidden = !l || l.type !== "area";
-		$("lightz").value = t.z; $("lightz_v").textContent = Math.round(t.z); $("lightr").value = t.radius;
-	}
+	// New lights land at the red 3D cursor (height: the cursor's when above the floor, else 36).
 	function addLight(type) {
 		if (!S.art) return toast("Open a tileset first.", "bad");
-		lightCommit();
+		leaveDrawTools(); lightCommit();
 		const before = snapshot(), n = S.lights.filter((l) => l.type === type).length + 1;
-		const c = output.result ? output.toArt(output.canvas.width / 2, output.canvas.height / 2) : [S.art.w / 2, S.art.h / 2], q = output.proj().toWorld(c[0], c[1], 0), o = ((S.lights.length) % 5) * 12;
-		const l = cleanLight({ id: "light" + (++lightSeq), name: (type === "area" ? "Area " : "Point ") + n, type, x: q[0] + o, y: q[1] + o }, S.lights.length);
-		S.lights.push(l); output.sel = l.id; pushUndo(before); syncLights();
-		setOutMode("lit");
-		status(`Added ${l.name}. Drag in the Lit view to move it; Shift+wheel changes its height. Ctrl+Z undoes it.`);
+		const l = cleanLight({ id: "light" + (++lightSeq), name: (type === "area" ? "Area " : "Point ") + n, type, x: S.cursor[0], y: S.cursor[1], z: S.cursor[2] > 0 ? S.cursor[2] : 36 }, S.lights.length);
+		S.lights.push(l); pushUndo(before);
+		S.lightSel = l.id; S.selected.clear(); S.active = null; S.edit = false; S.elemSel.clear();
+		syncLights();
+		status(`Added ${l.name} at the 3D cursor. G moves it (X / Y / Z lock an axis, Z = height), S ${type === "area" ? "resizes it" : "changes its reach"}, X deletes it, Esc deselects; the Properties panel has the rest.`);
 	}
 	function deleteLight() {
 		const l = selLight(); if (!l) return;
 		lightCommit();
 		const before = snapshot();
-		S.lights = S.lights.filter((x) => x !== l); output.sel = null; pushUndo(before); syncLights();
-		status(`Deleted ${l.name || l.id}. Ctrl+Z brings it back.`);
+		S.lights = S.lights.filter((x) => x !== l); S.lightSel = null; pushUndo(before); syncLights();
+		toast(`Deleted ${l.name || l.id}. Ctrl+Z brings it back.`);
+	}
+	// --- lights in the 3D view (world px = floor-plan px; the view's world space is the lights' space in both projections) ---
+	// The gizmo's wire segments: [a, b] world points. Drawn in the light's colour into the overlay (over models, X-ray or not), and
+	// what a click tests.
+	function lightSegs(l) {
+		const seg = [];
+		if (l.type === "area") {
+			const x0 = l.x - l.w / 2, x1 = l.x + l.w / 2, y0 = l.y - l.h / 2, y1 = l.y + l.h / 2, c = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+			for (let i = 0; i < 4; i++) {
+				const a = c[i], b = c[(i + 1) % 4];
+				seg.push([[a[0], a[1], 0], [b[0], b[1], 0]], [[a[0], a[1], l.z], [b[0], b[1], l.z]], [[a[0], a[1], 0], [a[0], a[1], l.z]]);
+			}
+			seg.push([[l.x, l.y, 0], [l.x, l.y, l.z]]);
+		} else seg.push([[l.x, l.y, 0], [l.x, l.y, l.z]]);
+		const k = 4;
+		seg.push([[l.x - k, l.y, l.z], [l.x + k, l.y, l.z]], [[l.x, l.y - k, l.z], [l.x, l.y + k, l.z]], [[l.x, l.y, l.z - k], [l.x, l.y, l.z + k]]);
+		return seg;
+	}
+	function lightGizmos(overlay, dots) {
+		for (const l of S.lights) {
+			const sel = l.id === S.lightSel, hex = /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#ffd878", rgb = [1, 3, 5].map((j) => parseInt(hex.substr(j, 2), 16) / 255);
+			const col = sel ? [Math.min(1, rgb[0] * 0.4 + 0.6), Math.min(1, rgb[1] * 0.4 + 0.6), Math.min(1, rgb[2] * 0.4 + 0.6), 1] : [rgb[0], rgb[1], rgb[2], 0.9];
+			for (const [a, b] of lightSegs(l)) { vtx(overlay, a, [0, 0, 1], col); vtx(overlay, b, [0, 0, 1], col); }
+			// The reach: a faint ring on the floor (sixteenth turns; brighter selected).
+			const ring = [rgb[0], rgb[1], rgb[2], sel ? 0.55 : 0.22], N = 48;
+			for (let i = 0; i < N; i++) {
+				const a0 = (i / N) * Math.PI * 2, a1 = ((i + 1) / N) * Math.PI * 2;
+				vtx(overlay, [l.x + Math.cos(a0) * l.radius, l.y + Math.sin(a0) * l.radius, 0], [0, 0, 1], ring);
+				vtx(overlay, [l.x + Math.cos(a1) * l.radius, l.y + Math.sin(a1) * l.radius, 0], [0, 0, 1], ring);
+			}
+			vtx(dots, [l.x, l.y, l.z], [0, 0, 1], [rgb[0], rgb[1], rgb[2], 1]);
+		}
+	}
+	// The selected-or-nearest light whose gizmo wires pass within `tol` px of a screen point (null = none).
+	function lightAt(px, py, tol = 9) {
+		let best = null, bd = tol;
+		for (const l of S.lights) for (const [a, b] of lightSegs(l)) {
+			const A = renderer.toScreen(a), B = renderer.toScreen(b);
+			if (!A || !B) continue;
+			const dx = B[0] - A[0], dy = B[1] - A[1], l2 = dx * dx + dy * dy, t = l2 < 1e-9 ? 0 : TS.clamp(((px - A[0]) * dx + (py - A[1]) * dy) / l2, 0, 1);
+			const d = Math.hypot(px - (A[0] + t * dx), py - (A[1] + t * dy));
+			if (d < bd) { bd = d; best = l; }
+		}
+		return best;
+	}
+	// G / S on the selected light (the modal tooling, see beginModal / updateModal): G moves it, S resizes an area light or sets a point light's reach.
+	function lightModalInfo(m, num, step) {
+		const l = selLight(), b = m.data.baseLight;
+		if (!l) return "";
+		if (m.type === "grab") {
+			let d = grabDelta(m);
+			const ref = [b.x, b.y, b.z];
+			if (num !== null) d = m.axis === "y" ? [0, num, 0] : m.axis === "z" ? [0, 0, num] : [num, 0, 0];
+			else {
+				const moving = m.axis ? ["xyz".indexOf(m.axis)] : S.viewLock ? [0, 1, 2].filter((k) => k !== S.viewLock.k) : [0, 1];
+				d = d.map((v, k) => (moving.includes(k) ? TS.snap(ref[k] + v, step) - ref[k] : 0));
+			}
+			l.x = b.x + d[0]; l.y = b.y + d[1]; l.z = Math.max(0, b.z + d[2]);
+			return `Move ${l.name || "light"} to ${[l.x, l.y, l.z].map((v) => +v.toFixed(2)).join(", ")}${m.axis ? " along " + AXIS[m.axis] : " (across and in depth on the ground; Z for height)"}`;
+		}
+		const p = renderer.toScreen([b.x, b.y, b.z]) || m.start;
+		const d0 = Math.max(4, Math.hypot(m.start[0] - p[0], m.start[1] - p[1])), d1 = Math.hypot(mouse[0] - p[0], mouse[1] - p[1]), f = num !== null ? num : d1 / d0;
+		if (l.type === "area") {
+			const k = m.axis === "y" ? [1] : m.axis === "x" ? [0] : [0, 1], kstep = Math.max(1, step);
+			const size = (v) => Math.max(1, num === null ? Math.max(kstep, TS.snap(v * f, kstep)) : v * f);
+			l.w = k.includes(0) ? size(b.w) : b.w; l.h = k.includes(1) ? size(b.h) : b.h;
+			return `Resize ${l.name || "light"} to ${+l.w.toFixed(2)} x ${+l.h.toFixed(2)} px`;
+		}
+		l.radius = Math.max(1, num === null ? Math.max(Math.max(1, step), TS.snap(b.radius * f, Math.max(1, step))) : b.radius * f);
+		return `Reach of ${l.name || "light"}: ${+l.radius.toFixed(2)} px`;
+	}
+	function beginLightModal(type) {
+		const l = selLight();
+		if (!l) return false;
+		if (type !== "grab" && type !== "scale") { status("A light moves (G) and scales (S: an area light's size, a point light's reach)."); return true; }
+		const b = { ...l };
+		modal = { type, start: mouse.slice(), before: snapshot(), base: [], axis: null, local: false, numeric: "", light: true, data: { pivot: [l.x, l.y, l.z], ref: [l.x, l.y, l.z], baseLight: b }, fromDuplicate: false };
+		updateModal();
+		return true;
 	}
 
 	// The models changed: redraw, refresh the panels and (auto) reprocess.
@@ -145,13 +225,14 @@
 	}
 	function changed() {
 		processGen++;
+		if (S.lightSel && S.selected.size) { S.lightSel = null; output.sel = null; output.render(); } 
 		dirty = true;
 		panels();
 		if (TS.AnimUI) TS.AnimUI.changed();
 		if (S.autoProcess && S.art) processSoon();
 	}
 	// Only the selection, edit mode or visibility changed: processing doesn't depend on them (hidden models still process).
-	function selChanged() { dirty = true; panels(); }
+	function selChanged() { if (S.lightSel && S.selected.size) { S.lightSel = null; output.sel = null; output.render(); } dirty = true; panels(); }
 
 	const esc = TS.esc;
 	const selVerts = (o) => Mesh.selectionVerts(o, S.edit ? S.elemMode : "object", S.elemSel);
@@ -356,7 +437,7 @@
 		leaveDrawTools();
 		// Clear the old project first, so setTileset's redraw never sees the old models against the new art.
 		S.objects = p.objects || [];
-		S.lights = []; output.sel = null; // the new ones are set once the projection is in (syncProjection remaps S.lights)
+		S.lights = []; S.lightSel = null; output.sel = null; // the new ones are set once the projection is in (syncProjection remaps S.lights)
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
 		S.result = null;
 		S.anim = Object.assign(TS.Rig.newAnim(), p.anim || {}); TS.Rig.bumpIds(S.anim);
@@ -969,6 +1050,7 @@
 		return true;
 	}
 	function addPrimitive(kind) {
+		if (kind === "light_point" || kind === "light_area") return addLight(kind === "light_area" ? "area" : "point");
 		if (noModelling("add models")) return;
 		if (!S.art) return toast("Open a tileset first.", "bad");
 		leaveDrawTools();
@@ -997,6 +1079,7 @@
 	}
 
 	function deleteSelection() {
+		if (!S.edit && selLight()) return deleteLight();
 		if (noModelling("delete models")) return;
 		if (S.edit) {
 			const obj = activeObj();
@@ -1432,6 +1515,9 @@
 			if (cands.length > 1) note = `${what} ${c.index !== undefined ? c.index + 1 : cands.indexOf(c.pick) + 1} of ${cands.length} here — ${add ? "Shift-click again adds the next" : "click again for the next"}${S.xray ? "" : " (X-ray, Alt+Z: also the hidden ones)"}`;
 			else if (!cands.length && !add) note = S.xray ? "" : `Nothing in sight there. X-ray (Alt+Z) picks through faces.`;
 		} else {
+			const lh = lightAt(px, py);
+			if (lh) { setLightSel(lh.id); return status(`Selected ${lh.name || lh.id}. G moves it (Z = height), S ${lh.type === "area" ? "resizes" : "sets its reach"}, X deletes, Esc deselects.`); }
+			if (!add && S.lightSel) { S.lightSel = null; output.sel = null; output.render(); }
 			const cands = objCandidates(px, py), c = choose(cands, px, py, add, S.selected);
 			if (!add) S.selected.clear();
 			if (c.pick !== null) {
@@ -1484,6 +1570,7 @@
 		if (!["grab", "rotate"].includes(type) && noModelling(type === "scale" ? "scale" : "extrude, inset or bevel")) return;
 		// Tools work in the tileset view and the held 3D view, not while the view is still turning.
 		if (renderer.free.blend > 0 && !(S.stay3d && renderer.free.blend >= 1 && !anim)) return status(S.stay3d ? "Wait for the 3D view to settle." : "Let go of the look-round first (or press 5 to stay in 3D and model there).");
+		if (!S.edit && selLight()) { beginLightModal(type); return; }
 		const objs = editTargets();
 		if (!objs.length) return status("Select something first.");
 		// Extruding vertices or edges grows new ones (lines, quads) and moves them.
@@ -1606,7 +1693,8 @@
 		const num = modal.numeric !== "" && !isNaN(parseFloat(modal.numeric)) ? parseFloat(modal.numeric) : null;
 		const m = modal, step = stepFor(ev);
 		let info = "";
-		if (m.type === "grab" && m.axis && m.local) {
+		if (m.light) { info = lightModalInfo(m, num, step); output.draw(); }
+		else if (m.type === "grab" && m.axis && m.local) {
 			// Along a local axis: the distance snaps (each model along its own axis in object mode).
 			let shown = 0;
 			m.data.xf = [];
@@ -1746,6 +1834,7 @@
 
 	function confirmModal() {
 		const m = modal;
+		if (m.light) { modal = null; modalBar(); pushUndo(m.before); dirty = true; panels(); output.render(); hint(); return; }
 		// Animating: a move or turn of models becomes a key on the current frame (their bone is made if they have none), and the
 		// models themselves stay at rest. Scale and edit mode still change the models.
 		const keyIt = TS.AnimUI && TS.AnimUI.on && !S.edit && !m.fromDuplicate && (m.type === "grab" || m.type === "rotate") && m.data.xf && m.data.xf.length;
@@ -1916,6 +2005,7 @@
 		const cu = S.cursor, cc = [1, 0.3, 0.3, 1];
 		for (const [a, b] of [[[-5, 0, 0], [5, 0, 0]], [[0, -5, 0], [0, 5, 0]], [[0, 0, 0], [0, 0, 8]]]) { vtx(overlay, v3.add(cu, a), [0, 0, 1], cc); vtx(overlay, v3.add(cu, b), [0, 0, 1], cc); }
 		if (cu[2] > 0) { vtx(overlay, cu, [0, 0, 1], [1, 0.3, 0.3, 0.4]); vtx(overlay, [cu[0], cu[1], 0], [0, 0, 1], [1, 0.3, 0.3, 0.4]); }
+		lightGizmos(overlay, hov.points);
 		// Where the next primitive goes: the tile south-east of the cursor.
 		const gc = [1, 0.3, 0.3, 0.35], sq = [[0, 0], [32, 0], [32, 32], [0, 32]];
 		for (let i = 0; i < 4; i++) { const a = sq[i], b = sq[(i + 1) % 4]; vtx(overlay, [cu[0] + a[0], cu[1] + a[1], cu[2]], [0, 0, 1], gc); vtx(overlay, [cu[0] + b[0], cu[1] + b[1], cu[2]], [0, 0, 1], gc); }
@@ -2385,6 +2475,7 @@
 			if (!o || !S.elemSel.size) return false;
 			return elemCandidates(o, px, py).some((k) => S.elemSel.has(k));
 		}
+		if (S.lightSel) { const l = lightAt(px, py); if (l && l.id === S.lightSel) return true; }
 		if (S.xray) return objCandidates(px, py).some((id) => S.selected.has(id));
 		const h = pickObject(px, py);
 		return !!h && S.selected.has(h.obj.id);
@@ -2740,6 +2831,7 @@
 		if (ctrl && k === "b") { beginModal("bevel"); e.preventDefault(); return; }
 		if (ctrl) return;
 		if (k === "escape") {
+			if (S.lightSel) setLightSel(null);
 			if (S.loopCut) { S.loopCut = false; loopHover = null; hint(); dirty = true; }
 			toggleAddMenu(false);
 			return;
@@ -2867,7 +2959,8 @@
 		list.scrollTop = keepScroll;
 		if (activeLi && (activeLi.offsetTop < list.scrollTop || activeLi.offsetTop + activeLi.offsetHeight > list.scrollTop + list.clientHeight))
 			list.scrollTop = activeLi.offsetTop - list.clientHeight / 2;
-		const props = $("props"), o = activeObj();
+		const props = $("props"), o = activeObj(), ls = selLight();
+		if (ls) return lightProps(props, ls);
 		if (!o) { props.innerHTML = `<p class="empty-note">Select a model to edit it here.<br><span class="dim">Add one with <b>Add ▾</b> or Shift+A; it lands at the red 3D cursor (right-click moves the cursor, on a top to stack).</span></p>`; return; }
 		const b = Mesh.bounds(o);
 		// More than one model selected (object mode): collision, kind, tags, smoothing and material edit all of them; name and
@@ -2955,6 +3048,31 @@
 		if (faceSel) $("p_clearmat").onclick = () => { pushUndo(); for (const fi of S.elemSel) delete o.faces[fi].mat; changed(); };
 	}
 	const round = (v) => Math.round(v * 100) / 100;
+	// Properties of the selected light. Every edit is undoable (a run of edits is one step) and redraws the 3D view and the Lit markers.
+	function lightProps(props, l) {
+		const n = (id, label, v, extra = "") => `<label>${label} <input id="${id}" type="number" step="any" value="${round(v)}" ${extra}></label>`;
+		props.innerHTML = `<fieldset><legend>${l.type === "area" ? "Area" : "Point"} light</legend>
+			<label>Name <input id="lp_name" type="text" value="${esc(l.name)}"></label>
+			<label>Type <select id="lp_type"><option value="point"${l.type === "point" ? " selected" : ""}>Point</option><option value="area"${l.type === "area" ? " selected" : ""}>Area</option></select></label>
+			<label>Colour <input id="lp_color" type="color" value="${l.color}"></label>
+			${n("lp_int", "Intensity", l.intensity, 'min="0" max="100"')}
+			<div class="xyz heads"><span class="ax-x">X across</span><span class="ax-y">Y depth</span><span class="ax-z">Height Z</span></div>
+			<div class="xyz"><input id="lp_x" class="ax-x" type="number" step="any" value="${round(l.x)}" title="Floor-plan X (px)"><input id="lp_y" class="ax-y" type="number" step="any" value="${round(l.y)}" title="Floor-plan Y (px)"><input id="lp_z" class="ax-z" type="number" step="any" min="0" value="${round(l.z)}" title="Height above the floor (px)"></div>
+			${n("lp_r", "Reach (radius, px)", l.radius, 'min="1"')}
+			<div id="lp_area" ${l.type === "area" ? "" : "hidden"}>${n("lp_w", "Width (X, px)", l.w, 'min="1"')}${n("lp_h", "Depth (Y, px)", l.h, 'min="1"')}</div>
+			${n("lp_prio", "Priority", l.priority, 'step="1"')}
+			<label title="Whether this light casts shadows (the game's importer reads it too)"><input id="lp_sh" type="checkbox"${l.shadows !== false ? " checked" : ""}> Casts shadows</label>
+			<p class="dim">G moves it (X / Y / Z lock an axis; Z = height), S ${l.type === "area" ? "resizes it" : "sets its reach"}, X deletes, Esc deselects. Higher priority wins when the game cannot show every lamp.</p>
+		</fieldset>`;
+		const num = (id, key, lo, hi, int) => { const el = $(id); el.oninput = () => { const v = parseFloat(el.value); if (!isNaN(v)) lightEdit((x) => { x[key] = TS.clamp(int ? Math.round(v) : v, lo, hi); }); }; el.onchange = () => { el.value = round(l[key]); lightCommit(); }; el.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") el.blur(); }; };
+		num("lp_int", "intensity", 0, 100); num("lp_x", "x", -1e5, 1e5); num("lp_y", "y", -1e5, 1e5); num("lp_z", "z", 0, 1e4); num("lp_r", "radius", 1, 1e5);
+		num("lp_w", "w", 1, 1e4); num("lp_h", "h", 1, 1e4); num("lp_prio", "priority", -1e6, 1e6, true);
+		$("lp_name").oninput = () => lightEdit((x) => { x.name = $("lp_name").value; });
+		$("lp_name").onchange = lightCommit; $("lp_name").onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") e.target.blur(); };
+		$("lp_color").oninput = () => lightEdit((x) => { x.color = $("lp_color").value; }); $("lp_color").onchange = lightCommit;
+		$("lp_type").onchange = () => { lightEdit((x) => { x.type = $("lp_type").value; }); lightCommit(); panels(); };
+		$("lp_sh").onchange = () => { lightEdit((x) => { x.shadows = $("lp_sh").checked; }); lightCommit(); };
+	}
 	// A number field's value, which may be simple arithmetic ("32*2", "48+8", "(64-4)/2"); NaN if it isn't.
 	function evalNum(text) {
 		const s = String(text).trim();
@@ -3209,23 +3327,11 @@
 		$("help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || e.key === "F1") { toggleHelp(); e.preventDefault(); } }); // no shortcuts reach the models behind it
 		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
-			$("lightz").oninput = () => { const z = parseFloat($("lightz").value); $("lightz_v").textContent = z; lightEdit((l) => { l.z = z; }); };
-		$("light_sel").onchange = () => { lightCommit(); if ($("light_sel").value) { output.sel = $("light_sel").value; lightPanel(); output.render(); } };
-		$("light_addp").onclick = () => addLight("point");
-		$("light_adda").onclick = () => addLight("area");
-		$("light_del").onclick = deleteLight;
-		$("light_name").oninput = () => { lightEdit((l) => { l.name = $("light_name").value; }); const o = $("light_sel").selectedOptions[0], l = selLight(); if (o && l) o.textContent = `${l.name || l.id} (${l.type})`; };
-		$("light_color").oninput = () => lightEdit((l) => { l.color = $("light_color").value; });
-		const lightNum = (id, key, lo, hi) => { $(id).oninput = () => { const v = parseFloat($(id).value); if (!isNaN(v)) lightEdit((l) => { l[key] = TS.clamp(v, lo, hi); }); }; $(id).onchange = () => { const l = selLight(); if (l) $(id).value = l[key]; lightCommit(); }; };
-		lightNum("light_int", "intensity", 0, 100); lightNum("light_w", "w", 1, 1e4); lightNum("light_h", "h", 1, 1e4); lightNum("light_prio", "priority", -1e6, 1e6);
-		$("light_prio").onchange = () => { const l = selLight(); if (l) { l.priority = Math.round(l.priority); $("light_prio").value = l.priority; } lightCommit(); };
-		$("light_sh").onchange = () => { lightEdit((l) => { l.shadows = $("light_sh").checked; }); lightCommit(); };
-		for (const id of ["light_name", "light_int", "light_w", "light_h", "light_prio"]) $(id).onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") $(id).blur(); };
-		$("light_color").onchange = lightCommit; $("lightz").onchange = lightCommit; $("lightr").onchange = lightCommit;
+			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
 		syncLights();
 		$("lit_renderer").onchange = () => { output.rendererMode=["current","gpu","compare"].includes($("lit_renderer").value)?$("lit_renderer").value:"current"; output.render(); };
 		$("render_scale").onchange = () => { const scale=Number($("render_scale").value); output.renderScale=[1,.75,.5,.25].includes(scale)?scale:1; $("render_scale").value=String(output.renderScale); output.render(); };
-		$("lightr").oninput = () => { const r = parseFloat($("lightr").value); lightEdit((l) => { l.radius = r; }); };
+		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
 		$("shadows").onchange = () => { output.shadows = $("shadows").checked; output.render(); };
 		for (const [id, key, parse, lo, hi] of SETTING_IDS)
 			$(id).onchange = () => {
@@ -3241,19 +3347,13 @@
 		let lightDrag = false;
 		// Output view: drag = move the light; middle/right drag or Space-drag = pan; wheel = zoom; Shift+wheel = light height.
 		const outPos = (e) => { const r = out.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-		const moveLight = (e) => { if (!S.result) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); lightEdit((l) => { l.x = q[0]; l.y = q[1]; }); };
-		// With lights, a press near a light's marker selects it first (then drags it); elsewhere it moves the selected one.
-		const pickLight = (e) => {
-			if (!S.result || !S.lights.length) return;
-			const [px, py] = outPos(e), s = output.scale(), pj = output.proj(); let best = null, bd = 14;
-			for (const l of S.lights) for (const z of [0, l.z]) { const c = pj.toCanvas([l.x, l.y, z]), d = Math.hypot(output.ox + c[0] * s - px, output.oy + c[1] * s - py); if (d < bd) { bd = d; best = l; } }
-			if (best && best.id !== output.sel) { lightCommit(); output.sel = best.id; lightPanel(); }
-		};
+		// Only the quick preview light (no project lights yet) is dragged here: project lights are edited in the 3D view.
+		const moveLight = (e) => { if (!S.result || S.lights.length) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); output.light.x = q[0]; output.light.y = q[1]; output.render(); };
 		let outPan = null;
 		out.addEventListener("pointerdown", (e) => {
 			try { out.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
 			if (e.button === 1 || e.button === 2 || spaceDown) { outPan = outPos(e); e.preventDefault(); return; }
-			pickLight(e); lightDrag = true; moveLight(e);
+			lightDrag = true; moveLight(e);
 		});
 		out.addEventListener("pointermove", (e) => {
 			if (outPan) { const p = outPos(e); output.pan(p[0] - outPan[0], p[1] - outPan[1]); outPan = p; }
@@ -3311,7 +3411,7 @@
 			selChanged();
 			status(`Selected ${o.name} (from the output view). F frames it.`);
 		});
-		const outUp = () => { lightDrag = false; outPan = null; lightCommit(); };
+		const outUp = () => { lightDrag = false; outPan = null; };
 		out.addEventListener("pointerup", outUp);
 		out.addEventListener("pointercancel", outUp);
 		out.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -3319,7 +3419,7 @@
 			e.preventDefault();
 			if (e.shiftKey) {
 				const d = e.deltaY || e.deltaX; // Shift turns some wheels sideways
-				lightEdit((l) => { l.z = TS.clamp(l.z + (d < 0 ? 4 : -4), 0, 255); $("lightz").value = l.z; $("lightz_v").textContent = l.z; });
+				if (!S.lights.length) { output.light.z = TS.clamp(output.light.z + (d < 0 ? 4 : -4), 0, 255); $("lightz").value = output.light.z; $("lightz_v").textContent = output.light.z; output.render(); }
 			} else output.zoomAt(...outPos(e), e.deltaY < 0 ? 1 : -1);
 		}, { passive: false });
 		const outCentre = () => [out.width / 2, out.height / 2];
