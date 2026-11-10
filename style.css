@@ -553,3 +553,11 @@ body.animating .timeline.animonly { display: flex; }
 .timeline .kd.e-hold { background: #ff9f43; border-radius: 0; transform: none; }
 .timeline .kd.e-hold.sel { background: #fff; }
 .timeline button.on { border-color: var(--accent); }
+
+/* What's new window */
+#wn_card { width: min(640px, calc(100vw - 32px)); }
+.wnbody h3 { margin: 12px 0 2px; font-size: 15px; }
+.wnbody h4 { margin: 10px 0 2px; font-size: 13px; color: var(--accent, inherit); }
+.wnbody ul, .wnbody ol { margin: 2px 0 6px; padding-left: 20px; }
+.wnbody li { margin: 3px 0; line-height: 1.4; }
+.wnbody section.old { opacity: .75; border-top: 1px solid var(--line); margin-top: 14px; }

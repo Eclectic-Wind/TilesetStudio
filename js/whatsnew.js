@@ -1,0 +1,55 @@
+// "What's new" window: opens by itself once per release for returning visitors, and from the top bar's "What's new" button.
+// To announce a new release, add an entry at the top of NEWS (newest first) with a new id; people who saw an older id see it again.
+"use strict";
+(() => {
+	const NEWS = [
+		{
+			id: "2026-11-10",
+			date: "10 Nov 2026",
+			title: "Lights, and a better animation workflow",
+			sections: [
+				["Lights", [
+					"<b>Point and area lights</b> are now real objects. Put the 3D cursor where you want one, then <b>Add ▸ Point light / Area light</b>.",
+					"Click a light to select it. <b>G</b> moves it (<b>Z</b> = height), <b>S</b> sets a point light's reach or resizes an area light, <b>X</b> deletes. Colour, intensity, priority and shadows are in Properties.",
+					"The <b>Lit</b> view adds up every light (with shadows). Lights are saved with the project, undoable, and exported in the bundle as an optional <code>lights</code> list.",
+					"The Lit view's old light list and drag-to-move are gone. While a project has no lights you still get the quick preview light.",
+				]],
+				["Animation", [
+					"<b>IK posing</b>: drag a hand or foot and the arm or leg bends to follow. Details below.",
+					"A click only selects. Turning by the tip no longer jumps. <b>Ctrl</b> snaps turns to 15° (<b>Ctrl+Shift</b> 5°) and moves to whole pixels.",
+					"<b>Shift+I</b> keys the whole pose. <b>Ctrl+C / Ctrl+V</b> copy and paste a pose, <b>Ctrl+Shift+V</b> pastes it mirrored.",
+					"Dopesheet: <b>Ctrl+wheel</b> zooms, <b>+ Frame / − Frame</b> insert or remove a frame, <b>Ctrl+A</b> picks all keys, double-click a key to jump to it, right-click a key for its menu, drag the playhead.",
+					"A <b>Bones</b> toggle hides the bone overlay while posing.",
+				]],
+			],
+			ik: [
+				"Animate panel, under Bones: tick <b>IK</b>.",
+				"Select the <b>end bone</b> of the limb (the forearm or shin, whose tip is the hand or foot).",
+				"Set its <b>IK chain</b> to <b>2</b> for an arm or leg (3 adds the body above it, 0 is off). Bones need to be connected to their parents.",
+				"On a frame, <b>drag that bone's tip</b>, or select it and press <b>G</b>. The chain bends to reach it and every bone in the chain is keyed.",
+				"<b>X / Y / Z</b> while dragging picks another plane. Space plays it. IK saves as ordinary rotation keys, so exports don't change.",
+			],
+		},
+	];
+
+	const $ = (id) => document.getElementById(id), KEY = "tsSeenNews", latest = NEWS[0];
+	const list = (items) => `<ul>${items.map((t) => `<li>${t}</li>`).join("")}</ul>`;
+	$("wn_body").innerHTML = NEWS.map((n, i) => `<section${i ? ' class="old"' : ""}>
+		<h3>${n.title} <span class="dim">${n.date}</span></h3>
+		${n.sections.map(([h, items]) => `<h4>${h}</h4>${list(items)}`).join("")}
+		${n.ik ? `<h4>How to use IK</h4><ol>${n.ik.map((t) => `<li>${t}</li>`).join("")}</ol>` : ""}
+	</section>`).join("");
+
+	const modal = $("whatsnew");
+	function show(on) {
+		modal.classList.toggle("open", on);
+		if (on) { TS.store.set(KEY, latest.id); $("wn_card").focus(); } else document.activeElement && document.activeElement.blur && document.activeElement.blur();
+	}
+	$("b_news").onclick = () => show(!modal.classList.contains("open"));
+	$("wn_close").onclick = () => show(false);
+	modal.onclick = (e) => { if (e.target === modal) show(false); };
+	modal.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") { show(false); e.preventDefault(); } });
+
+	// Open once per release, unless something else (such as the restore-autosave question) is already open.
+	if (TS.store.get(KEY) !== latest.id) setTimeout(() => { if (!document.querySelector(".modal.open")) show(true); }, 600);
+})();

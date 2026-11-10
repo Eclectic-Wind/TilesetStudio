@@ -89,6 +89,7 @@
 		</div>
 	</div>
 	<button id="b_learn" class="ghost" title="Visual lessons: modelling, animation and the Aseprite link (L)">Learn</button>
+	<button id="b_news" class="ghost" title="What changed in the latest update, and how to use it">What's new</button>
 	<button id="b_help" class="ghost round" title="Shortcuts (F1)">?</button>
 </header>
 <main>
@@ -357,6 +358,12 @@
 	<p id="obj_export_error" class="bad" aria-live="polite"></p>
 	<div class="sourcebar"><button id="obj_download" class="primary">Download</button><button id="obj_close">Cancel</button></div>
 </div></div>
+<div id="whatsnew" class="modal" role="dialog" aria-modal="true" aria-labelledby="wn_title">
+	<div class="card" id="wn_card" tabindex="-1">
+		<div class="sourcebar"><h2 id="wn_title">What's new</h2><span class="grow"></span><span class="dim">Esc closes</span><button id="wn_close" class="primary">Got it</button></div>
+		<div id="wn_body" class="wnbody"></div>
+	</div>
+</div>
 <div id="help" class="modal" role="dialog" aria-modal="true" aria-labelledby="help_title">
 	<div class="card" id="help_card" tabindex="-1">
 			<div class="sourcebar helpbar"><h2 id="help_title">Tileset Studio</h2><input id="help_search" type="search" placeholder="Filter shortcuts…" aria-label="Filter shortcuts" spellcheck="false"><span class="grow"></span><span class="dim">Esc closes</span><button id="help_close">Close</button></div>
@@ -399,6 +406,7 @@
 <script src="js/learn.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/help.js"></script>
+<script src="js/whatsnew.js"></script>
 <script src="js/app.js"></script>
 <script src="js/anim-ui.js"></script>
 <script src="js/layout.js"></script>
