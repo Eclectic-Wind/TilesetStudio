@@ -12,6 +12,7 @@
   <a href="#how-it-works">How it works</a> ·
   <a href="#what-you-can-do">Features</a> ·
   <a href="#exports">Exports</a> ·
+  <a href="docs/whats-new.md">What's new</a> ·
   <a href="docs/reference.md">Full reference</a>
 </p>
 
@@ -113,7 +114,7 @@ Whatever you build, keep both tileset sides a multiple of 32 px and keep separat
 |---|---|
 | `index.html`, `style.css`, `js/` | The app: plain ES2020 and WebGL2, no libraries, runs from `file://` |
 | `samples/` | Example projects (`ward_bedroom2`, `BasicSample` used by Learn) |
-| `docs/` | [Full reference](docs/reference.md), [export schema](docs/export-schema.md), [animation](docs/animation.md), [Aseprite link](docs/aseprite-link.md) |
+| `docs/` | [What's new](docs/whats-new.md), [full reference](docs/reference.md), [export schema](docs/export-schema.md), [animation](docs/animation.md), [Aseprite link](docs/aseprite-link.md) |
 | `tools/aseprite/` | The Aseprite extension for the live link |
 
 ### Free Draw primitives
