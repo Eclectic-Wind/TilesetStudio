@@ -4,6 +4,29 @@ Version 6 only **adds** to version 5 (below): every version 5 field keeps its sh
 
 New: the top-level **`anim`**, written only when a clip is exported or there is something to warn about: **flipbooks** (frames painted in Aseprite), **static shadow and collision**. When bones move a target's models in the clip, the target also carries each frame's height, normal and material in `data` and (oblique projection) each frame's **exact floor spans** in `floor`, so the shadow of a swinging door comes from the 3D model like a static piece's does (the clip then says `shadow: "frames"`; see *Floor spans* below). A reader that ignores `data` and `floor` still works, with the base frame's lighting and shadow. `source: "rig"` (frames rendered with no painting) is reserved and not written.
 
+## `lights`
+
+An optional top-level array, written only when the project has lights (an addition **inside version 6**: no version bump, found by being there; a reader that ignores it loses nothing, and a bundle without it has no lights).
+
+```
+lights: [{
+  id: string,                    // unique within the bundle
+  name: string,                  // the artist's label, may be ""
+  type: "point" | "area",
+  x, y: number,                  // floor-plan px, the same space as footprints and the collision polygons: atlas floor plan, origin at the atlas top-left, X east, Y south (both projections)
+  z: number,                     // px above the floor
+  radius: number,                // px: the light's reach (falloff (1 - d / radius)^2, d = 3D distance from the light)
+  color: "#rrggbb",
+  intensity: number,             // multiplier on color, 1 = the Studio's default strength
+  w?, h?: number,                // area lights only: the floor rectangle's size in px, X (w) and Y (h), centred on x, y, emitting from height z
+  priority: int,                 // default 0. Higher wins when the game cannot show every lamp
+  shadows: bool,                 // default true: whether the light casts shadows
+  piece: int | null              // 1-based piece number (as footprints.objects[].pieceIndex / footprints.pieces) under the light's floor point x, y (an area light: its centre), read from maps.pieces (the run above a gap, else the one below). null when the point is on no piece. Computed at export, not stored in the project
+}]
+```
+
+Units are pixels in `x, y, z, radius, w, h`. The Studio's Lit view sums every light, with a small fixed grid of sample points per area light; **readers may approximate an area light with a point lamp** at x, y, z (radius and color as given). `piece` lets the game place a light only where that piece is painted.
+
 ## `anim`
 
 ```

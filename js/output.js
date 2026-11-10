@@ -24,7 +24,9 @@
 			const host=canvas.parentElement;this.primaryPane=document.createElement('div');this.primaryPane.className='lit-pane';host.insertBefore(this.primaryPane,canvas);this.primaryPane.append(canvas);this.comparePane=document.createElement('div');this.comparePane.className='lit-pane lit-compare';this.comparePane.hidden=true;this.compareCanvas=document.createElement('canvas');this.compareCanvas.className='lit-compare-canvas';this.comparePane.append(this.compareCanvas);host.append(this.comparePane);host.classList.add('lit-host');
 			for(const [pane,text]of [[this.primaryPane,'Current · interact here'],[this.comparePane,'GPU · synchronized']]){const label=document.createElement('span');label.className='lit-pane-label';label.textContent=text;pane.append(label);}
 
-			this.light = { x: 0, y: 0, z: 36, radius: 220, on: false };
+			this.light = { x: 0, y: 0, z: 36, radius: 220, on: false }; // the quick preview light: used (white) while the project has no lights
+			this.lights = [];  // the project's lights (S.lights, see app.js); every one lights the Lit view
+			this.sel = null;   // id of the selected light
 			this.shadows = true;
 			this.usePrisms = true;   // shadow test: prisms decide where to look, the floor spans decide the shadow
 			this.showPrisms = false; // V: draw the prism boxes
@@ -50,6 +52,27 @@
 			this._litFrom = result ? { cavity: settings.cavity } : null;
 			if (result && !this.light.on) { const q = this.proj().toWorld(result.w * 0.25, result.h * 0.9, 0); this.light.x = q[0]; this.light.y = q[1]; this.light.on = true; }
 			this.render(sliced);
+		}
+
+		// The lights that shine: the project's, else the preview light.
+		activeLights() { return this.lights.length ? this.lights : this.light.on ? [this.light] : []; }
+		// The light the GPU renderer uses (it takes one point light): the selected, else the first.
+		firstLight() { return this.lights.find((l) => l.id === this.sel) || this.lights[0] || this.light; }
+
+		// Per-render light list for the per-pixel code: colour x intensity, sample points (an area light: an n x n grid over its
+		// rectangle, n shrinking as area lights multiply so the per-pixel cost stays bounded) and each sample's shadow table.
+		_prepLights() {
+			const act = this.activeLights(), areas = act.filter((l) => l.type === "area").length, n = areas ? TS.clamp(Math.floor(Math.sqrt(16 / areas)), 1, 3) : 1;
+			const useTab = this.mode === "lit" && this.shadows && this.usePrisms;
+			this._L = act.map((l) => {
+				const hex = /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#ffffff", k = l.intensity == null ? 1 : Math.max(0, l.intensity);
+				const col = [1, 3, 5].map((j) => parseInt(hex.substr(j, 2), 16) / 255 * k), pts = [];
+				if (l.type === "area" && n > 1) for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) pts.push({ x: l.x + ((a + 0.5) / n - 0.5) * l.w, y: l.y + ((b + 0.5) / n - 0.5) * l.h });
+				else pts.push({ x: l.x, y: l.y });
+				const sh = this.shadows && l.shadows !== false;
+				for (const q of pts) q.tab = sh && useTab ? TS.Prism.table(this.prisms(), q) : null;
+				return { z: l.z, radius: l.radius, col, pts, sh, w: 1 / pts.length };
+			});
 		}
 
 		floorPlan() { return this.mode === "heightfield" || this.mode === "collision" || this.mode === "pieces" || this.mode === "kind"; }
@@ -237,13 +260,28 @@
 			ctx.imageSmoothingEnabled = false;
 			ctx.drawImage(this.off, this.ox, this.oy, r.w * s, rows * s);
 			if (this.mode === "lit") {
-				// The light: its floor point and where it hangs, as the projection draws them.
-				const pj = this.proj(), lf = pj.toCanvas([this.light.x, this.light.y, 0]), lh = pj.toCanvas([this.light.x, this.light.y, this.light.z]);
-				const fx = this.ox + lf[0] * s, fy = this.oy + lf[1] * s, hy = this.oy + lh[1] * s;
-				ctx.strokeStyle = "rgba(255,220,120,0.8)";
-				ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, hy); ctx.stroke();
-				ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.stroke();
-				ctx.fillStyle = "#ffd878"; ctx.beginPath(); ctx.arc(this.ox + lh[0] * s, hy, 5, 0, Math.PI * 2); ctx.fill();
+				// The lights: floor point and hanging point as the projection draws them; an area light also its rectangle on the floor and at height.
+				const pj = this.proj(), pt = (x, y, z) => { const c = pj.toCanvas([x, y, z]); return [this.ox + c[0] * s, this.oy + c[1] * s]; };
+				ctx.save();
+				for (const l of this.activeLights()) {
+					const sel = l.id !== undefined && l.id === this.sel, col = /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#ffd878";
+					const f = pt(l.x, l.y, 0), h = pt(l.x, l.y, l.z);
+					ctx.lineWidth = sel ? 2 : 1; ctx.strokeStyle = sel ? "#fff" : col; ctx.globalAlpha = sel ? 1 : 0.8;
+					if (l.type === "area") {
+						const rect = (z) => { const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map((q) => pt(l.x + q[0] * l.w / 2, l.y + q[1] * l.h / 2, z)); ctx.beginPath(); c.forEach((q, k) => ctx[k ? "lineTo" : "moveTo"](q[0], q[1])); ctx.closePath(); ctx.stroke(); return c; };
+						const a = rect(0), b = rect(l.z);
+						ctx.setLineDash([3, 3]); ctx.beginPath(); a.forEach((q, k) => { ctx.moveTo(q[0], q[1]); ctx.lineTo(b[k][0], b[k][1]); }); ctx.stroke(); ctx.setLineDash([]);
+						ctx.beginPath(); ctx.moveTo(f[0], f[1]); ctx.lineTo(h[0], h[1]); ctx.stroke();
+						ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.fillRect(h[0] - 4, h[1] - 4, 8, 8);
+						if (sel) ctx.strokeRect(h[0] - 5, h[1] - 5, 10, 10);
+					} else {
+						ctx.beginPath(); ctx.moveTo(f[0], f[1]); ctx.lineTo(h[0], h[1]); ctx.stroke();
+						ctx.beginPath(); ctx.arc(f[0], f[1], 3, 0, Math.PI * 2); ctx.stroke();
+						ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(h[0], h[1], sel ? 6 : 5, 0, Math.PI * 2); ctx.fill();
+						if (sel) ctx.stroke();
+					}
+				}
+				ctx.restore();
 			}
 			if (this.mode === "pieces" && r.pieceMap) this._pieceOverlay(ctx, r.pieceMap, s);
 			if (this.showPrisms && (this.mode === "lit" || this.floorPlan())) this._prismOverlay(ctx, s);
@@ -392,13 +430,13 @@
 
 		_pixels(img, fromY = 0, toY = img.height) {
 			const r = this.result, d = img.data, art = r.art.data, cut = this.settings.alphaCut, flat = this.proj().toMapNormal([0, 0, 1]);
-			if (fromY === 0) this._ptab = this.mode === "lit" && this.shadows && this.usePrisms ? TS.Prism.table(this.prisms(), this.light) : null;
+			if (fromY === 0) { this._prepLights(); this._ptab = null; }
 			for (let py = fromY; py < toY; py++)
 				for (let px = 0; px < img.width; px++) {
 					const x = Math.min(r.w-1, Math.floor((px+.5)*r.w/img.width)), y = Math.min(r.h-1, Math.floor((py+.5)*r.h/img.height));
 					const i = y * r.w + x, o = (py * img.width + px) * 4, source = i * 4;
 					if (r.alpha[i] <= cut) {
-						if (this.mode === "lit") { const f = this._floor(x + 0.5, y + 0.5, 0); d[o] = d[o + 1] = f * 34; d[o + 2] = f * 40; d[o + 3] = 255; }
+						if (this.mode === "lit") { this._floor(x + 0.5, y + 0.5, 0, d, o); }
 						else d.set([22, 22, 27, 255], o);
 						continue;
 					}
@@ -428,37 +466,49 @@
 				}
 		}
 
-		// Floor-light term for empty canvas, so the light's reach shows.
-		_floor(x, y, h) {
-			const l = this.light, q = this.proj().toWorld(x, y, h), dx = l.x - q[0], dy = l.y - q[1], dz = l.z - h, dist = Math.hypot(dx, dy, dz);
-			const att = Math.max(0, 1 - dist / l.radius);
-			return 0.4 + 2 * att * att * (dz / dist);
+		// Floor-light term for empty canvas, so the lights' reach shows. Writes the pixel into d at o.
+		_floor(x, y, h, d, o) {
+			const q = this.proj().toWorld(x, y, h);
+			let r = 0, g = 0, b = 0;
+			for (const l of this._L) for (const s of l.pts) {
+				const dx = s.x - q[0], dy = s.y - q[1], dz = l.z - h, dist = Math.hypot(dx, dy, dz), att = Math.max(0, 1 - dist / l.radius), t = att * att * (dz / dist) * l.w;
+				r += t * l.col[0]; g += t * l.col[1]; b += t * l.col[2];
+			}
+			d[o] = (0.4 + 2 * r) * 34; d[o + 1] = (0.4 + 2 * g) * 34; d[o + 2] = (0.4 + 2 * b) * 40; d[o + 3] = 255;
 		}
 
-		// The lit colour of art pixel i into d at o. Runs per pixel: plain numbers, arrays only for a shadow test.
+		// The lit colour of art pixel i into d at o. Runs per pixel: plain numbers, arrays only for a shadow test. Every light adds its
+		// colour x intensity x (diffuse, specular); an area light averages its sample points, each with its own shadow test.
 		_lit(r, i, x, y, a0, a1, a2, d, o) {
-			const has = !isNaN(r.height[i]), h = has ? r.height[i] : 0, N = this.litNormal, light = this.light, proj = this.proj();
+			const has = !isNaN(r.height[i]), h = has ? r.height[i] : 0, N = this.litNormal, proj = this.proj();
 			const nx = has ? N[i * 3] : 0, ny = has ? N[i * 3 + 1] : 0, nz = has ? N[i * 3 + 2] : 1;
 			const p = proj.toWorld(x + 0.5, y + 0.5, h);
-			const tx = light.x - p[0], ty = light.y - p[1], tz = light.z - p[2], dist = Math.hypot(tx, ty, tz), inv = 1 / dist, lx = tx * inv, ly = ty * inv, lz = tz * inv;
-			const att = Math.max(0, 1 - dist / light.radius) ** 2;
-			let shade = Math.max(0, nx * lx + ny * ly + nz * lz) * att;
-			if (shade > 0 && this.shadows && this._shadowed(r, p, [tx, ty, tz])) shade = 0;
 			const rough = has ? r.rough[i] : 1, metal = has ? r.metal[i] : 0, ambient = this.ambient, v = proj.viewer;
-			const hx = lx + v[0], hy = ly + v[1], hz = lz + v[2], hl = Math.hypot(hx, hy, hz), ndh = hl > 1e-12 ? nx * (hx / hl) + ny * (hy / hl) + nz * (hz / hl) : 0;
-			const shin = Math.max(2, 2 / Math.max(0.02, rough ** 4) - 2);
-			const spec = Math.pow(Math.max(0, ndh), shin) * ((shin + 8) / (8 * Math.PI)) * 0.25;
-			const channel = (c) => {
+			const shin = Math.max(2, 2 / Math.max(0.02, rough ** 4) - 2), norm = (shin + 8) / (8 * Math.PI) * 0.25;
+			let dr = 0, dg = 0, db = 0, sr = 0, sg = 0, sb = 0;
+			for (const L of this._L) for (const q of L.pts) {
+				const tx = q.x - p[0], ty = q.y - p[1], tz = L.z - p[2], dist = Math.hypot(tx, ty, tz);
+				if (dist >= L.radius) continue;
+				const inv = 1 / dist, lx = tx * inv, ly = ty * inv, lz = tz * inv, att = (1 - dist / L.radius) ** 2;
+				let shade = Math.max(0, nx * lx + ny * ly + nz * lz) * att * L.w;
+				if (shade <= 0) continue;
+				if (L.sh && this._shadowed(r, p, [tx, ty, tz], q.tab)) continue;
+				const hx = lx + v[0], hy = ly + v[1], hz = lz + v[2], hl = Math.hypot(hx, hy, hz), ndh = hl > 1e-12 ? nx * (hx / hl) + ny * (hy / hl) + nz * (hz / hl) : 0;
+				const sp = Math.pow(Math.max(0, ndh), shin) * norm * shade;
+				dr += shade * L.col[0]; dg += shade * L.col[1]; db += shade * L.col[2]; sr += sp * L.col[0]; sg += sp * L.col[1]; sb += sp * L.col[2];
+			}
+			const channel = (c, sh, sp) => {
 				const a = c / 255, f0 = 0.04 + (a - 0.04) * metal;
-				return (a * (1 - metal) * (ambient + 2.2 * shade) + a * metal * ambient * 0.6 + f0 * spec * 2.2 * shade) * 255;
+				return (a * (1 - metal) * (ambient + 2.2 * sh) + a * metal * ambient * 0.6 + f0 * sp * 2.2) * 255;
 			};
-			d[o] = channel(a0); d[o + 1] = channel(a1); d[o + 2] = channel(a2); d[o + 3] = 255;
+			d[o] = channel(a0, dr, sr); d[o + 1] = channel(a1, dg, sg); d[o + 2] = channel(a2, db, sb); d[o + 3] = 255;
 		}
 
 		// March from the surface point toward the light over the floor heightfield: blocked where a model spans that height.
-		_shadowed(r, p, toL) {
+		_shadowed(r, p, toL, tab) {
 			const f = r.floor, W = r.w;
-			if (this._ptab) return TS.Prism.shadowed(this._ptab, f, W, p, toL);
+			tab = tab || this._ptab;
+			if (tab) return TS.Prism.shadowed(tab, f, W, p, toL);
 			const steps = Math.ceil(Math.hypot(toL[0], toL[1]));
 			if (steps < 1) return false;
 			for (let s = 2; s <= steps; s++) {

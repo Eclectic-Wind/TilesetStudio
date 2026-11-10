@@ -13,6 +13,7 @@
 		autoProcess: true, result: null,
 		bundleId: newUUID(),
 		anim: TS.Rig.newAnim(), // bones, clips and the Aseprite sheet (see rig.js)
+		lights: [], // point / area lights for the Lit view and the bundle's `lights` (see "lights" below)
 		refs: [], refActive: null, // reference tilesets shown as ghosts (see "references" below)
 	});
 	function defaultSettings() { return TS.Process.defaultSettings(); }
@@ -41,7 +42,7 @@
 		return sheetIds.get(url);
 	};
 	function snapshot() {
-		return JSON.stringify({ objects: S.objects, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
+		return JSON.stringify({ objects: S.objects, lights: S.lights, anim: S.anim, active: S.active, selected: [...S.selected], edit: S.edit, elemMode: S.elemMode, elemSel: [...S.elemSel],
 			projection: S.settings.projection, isoOrigin: S.settings.isoOrigin, isoTilt: S.settings.isoTilt }, (k, v) => (k === "albedo" && typeof v === "string" ? sheetId(v) : v));
 	}
 	// Painted frames live in Aseprite, not in the undo history: a clip that still exists keeps the sheet it has now.
@@ -56,13 +57,17 @@
 	function restore(json) {
 		const s = JSON.parse(json);
 		if (s.anim) restoreSheets(s.anim);
+		const lightsNow = JSON.stringify(S.lights), lightsMoved = s.lights && JSON.stringify(s.lights) !== lightsNow;
+		const projMoved = s.projection && (s.projection !== S.settings.projection || String(s.isoOrigin) !== String(S.settings.isoOrigin) || s.isoTilt !== S.settings.isoTilt);
+		if (lightsMoved && !projMoved) { S.lights = s.lights; syncLights(); } // a projection switch brings them back after syncProjection (they are in that projection's px already)
 		S.objects = s.objects; if (s.anim) S.anim = s.anim; S.active = s.active; S.selected = new Set(s.selected); S.edit = s.edit && !(TS.AnimUI && TS.AnimUI.on); S.elemMode = s.elemMode; S.elemSel = new Set(s.elemSel);
 		Mesh.bumpIds(S.objects);
 		hover = null; loopHover = null; cycle = null;
 		// Undo / redo of a projection switch: the projection comes back with the models.
-		if (s.projection && (s.projection !== S.settings.projection || String(s.isoOrigin) !== String(S.settings.isoOrigin) || s.isoTilt !== S.settings.isoTilt)) {
+		if (projMoved) {
 			S.settings.projection = s.projection; S.settings.isoOrigin = s.isoOrigin; S.settings.isoTilt = s.isoTilt;
-			syncProjection(); renderer.fit(); zoomLabel();
+			syncProjection();
+			if (s.lights) { S.lights = s.lights; syncLights(); } renderer.fit(); zoomLabel();
 			changed(); clearTimeout(processTimer); processNow(); // the output must not keep showing the other projection
 			return;
 		}
@@ -74,8 +79,62 @@
 		redoStack.length = 0;
 		markUnsaved();
 	}
-	function undo() { if (undoStack.length) { redoStack.push(snapshot()); restore(undoStack.pop()); markUnsaved(); status(`Undo (${undoStack.length} more)`); } else status("Nothing to undo."); }
-	function redo() { if (redoStack.length) { undoStack.push(snapshot()); restore(redoStack.pop()); markUnsaved(); status(`Redo (${redoStack.length} more)`); } else status("Nothing to redo."); }
+	function undo() { lightCommit(); if (undoStack.length) { redoStack.push(snapshot()); restore(undoStack.pop()); markUnsaved(); status(`Undo (${undoStack.length} more)`); } else status("Nothing to undo."); }
+	function redo() { lightCommit(); if (redoStack.length) { undoStack.push(snapshot()); restore(redoStack.pop()); markUnsaved(); status(`Redo (${redoStack.length} more)`); } else status("Nothing to redo."); }
+
+	// --- lights ---
+	// S.lights: [{id, name, type: "point" | "area", x, y, z, radius, color, intensity, w, h, priority, shadows}]. x, y are world / floor-plan px
+	// (the space of footprints and the collision polygons, in both projections), z px above the floor; an area light is the w x h floor
+	// rectangle centred on x, y. The Lit view sums them all (js/output.js); the bundle writes them as `lights`. Edits are undoable:
+	// lightTouch() keeps the state from before a run of edits and lightCommit() (after a pause, or at once on save / undo) pushes it.
+	let lightSeq = 0, lightBefore = null, lightTimer = 0;
+	const selLight = () => S.lights.find((l) => l.id === output.sel) || null;
+	function cleanLight(l, i) {
+		const num = (v, d, lo, hi) => { v = parseFloat(v); return isNaN(v) ? d : TS.clamp(v, lo, hi); };
+		const type = l && l.type === "area" ? "area" : "point", id = l && typeof l.id === "string" && l.id ? l.id : "light" + (i + 1);
+		const m = /(\d+)$/.exec(id); if (m) lightSeq = Math.max(lightSeq, +m[1]);
+		return { id, name: String((l && l.name) || ""), type, x: num(l.x, 0, -1e5, 1e5), y: num(l.y, 0, -1e5, 1e5), z: num(l.z, 36, 0, 1e4), radius: num(l.radius, 220, 1, 1e5),
+			color: /^#[0-9a-f]{6}$/i.test(l.color) ? l.color.toLowerCase() : "#ffd878", intensity: num(l.intensity, 1, 0, 100), w: num(l.w, 32, 1, 1e4), h: num(l.h, 32, 1, 1e4),
+			priority: Math.round(num(l.priority, 0, -1e6, 1e6)), shadows: !l || l.shadows !== false };
+	}
+	function lightTouch() { if (!lightBefore) lightBefore = snapshot(); clearTimeout(lightTimer); lightTimer = setTimeout(lightCommit, 700); }
+	function lightCommit() { clearTimeout(lightTimer); if (lightBefore) { const b = lightBefore; lightBefore = null; pushUndo(b); } }
+	// Edit the selected light (undoable), or the preview light while the project has none; then redraw.
+	function lightEdit(fn) { const l = selLight(); if (l) { lightTouch(); fn(l); } else fn(output.light); output.render(); }
+	// The output and the panel follow S.lights (after an add, delete, undo, open).
+	function syncLights() {
+		if (!output) return;
+		output.lights = S.lights;
+		if (!selLight()) output.sel = S.lights.length ? S.lights[S.lights.length - 1].id : null;
+		lightPanel(); output.render();
+	}
+	function lightPanel() {
+		const sel = $("light_sel"); if (!sel) return;
+		const l = selLight(), t = l || output.light;
+		sel.innerHTML = S.lights.length ? S.lights.map((x) => `<option value="${esc(x.id)}"${l && x.id === l.id ? " selected" : ""}>${esc(x.name || x.id)} (${x.type})</option>`).join("") : `<option value="">preview light (no lights yet)</option>`;
+		for (const id of ["light_del", "light_name", "light_color", "light_int", "light_w", "light_h", "light_prio", "light_sh"]) $(id).disabled = !l;
+		$("light_name").value = l ? l.name : ""; $("light_color").value = l ? l.color : "#ffffff"; $("light_int").value = l ? l.intensity : 1;
+		$("light_w").value = l ? l.w : ""; $("light_h").value = l ? l.h : ""; $("light_prio").value = l ? l.priority : 0; $("light_sh").checked = l ? l.shadows !== false : true;
+		$("light_area").hidden = !l || l.type !== "area";
+		$("lightz").value = t.z; $("lightz_v").textContent = Math.round(t.z); $("lightr").value = t.radius;
+	}
+	function addLight(type) {
+		if (!S.art) return toast("Open a tileset first.", "bad");
+		lightCommit();
+		const before = snapshot(), n = S.lights.filter((l) => l.type === type).length + 1;
+		const c = output.result ? output.toArt(output.canvas.width / 2, output.canvas.height / 2) : [S.art.w / 2, S.art.h / 2], q = output.proj().toWorld(c[0], c[1], 0), o = ((S.lights.length) % 5) * 12;
+		const l = cleanLight({ id: "light" + (++lightSeq), name: (type === "area" ? "Area " : "Point ") + n, type, x: q[0] + o, y: q[1] + o }, S.lights.length);
+		S.lights.push(l); output.sel = l.id; pushUndo(before); syncLights();
+		setOutMode("lit");
+		status(`Added ${l.name}. Drag in the Lit view to move it; Shift+wheel changes its height. Ctrl+Z undoes it.`);
+	}
+	function deleteLight() {
+		const l = selLight(); if (!l) return;
+		lightCommit();
+		const before = snapshot();
+		S.lights = S.lights.filter((x) => x !== l); output.sel = null; pushUndo(before); syncLights();
+		status(`Deleted ${l.name || l.id}. Ctrl+Z brings it back.`);
+	}
 
 	// The models changed: redraw, refresh the panels and (auto) reprocess.
 	let processTimer = 0, processMs = 0;
@@ -274,7 +333,7 @@
 
 	function projectJSON() {
 		return JSON.stringify({ format: "tileset-studio", version: 2, bundleId: S.bundleId, name: S.name, exportName: S.exportName || "", tileset: S.artURL, cursor: S.cursor, snap: S.snap,
-			settings: S.settings, objects: S.objects, anim: S.anim, references: S.refs }, null, 1);
+			settings: S.settings, objects: S.objects, lights: S.lights, anim: S.anim, references: S.refs }, null, 1);
 	}
 
 	async function openProject(text) {
@@ -297,6 +356,7 @@
 		leaveDrawTools();
 		// Clear the old project first, so setTileset's redraw never sees the old models against the new art.
 		S.objects = p.objects || [];
+		S.lights = []; output.sel = null; // the new ones are set once the projection is in (syncProjection remaps S.lights)
 		S.active = null; S.selected.clear(); S.edit = false; S.elemSel.clear();
 		S.result = null;
 		S.anim = Object.assign(TS.Rig.newAnim(), p.anim || {}); TS.Rig.bumpIds(S.anim);
@@ -319,6 +379,7 @@
 		if (!p.bundleId || migrated) markUnsaved(); // an older project gets its id now, and its kinds are mapped: autosave keeps them until the project is saved
 		$("snap").value = S.snap;
 		settingsToControls();
+		lightSeq = 0; S.lights = Array.isArray(p.lights) ? p.lights.filter((l) => l && typeof l === "object").map(cleanLight) : []; syncLights();
 		if (TS.AnimUI) TS.AnimUI.projectChanged();
 		changed();
 		status(`Opened project ${p.name}`);
@@ -341,7 +402,7 @@
 		TS.Proj.ensure(S.settings, S.art);
 		const p = TS.Proj.of(S.settings, S.art);
 		// The lit preview's light stays over the same spot of the canvas (it lives in world px, which now draw elsewhere).
-		if (renderer && output && output.light.on && String(renderer.proj.matrix) !== String(p.matrix)) { const l = output.light, c = renderer.proj.toCanvas([l.x, l.y, 0]), q = p.toWorld(c[0], c[1], 0); l.x = q[0]; l.y = q[1]; }
+		if (renderer && output && String(renderer.proj.matrix) !== String(p.matrix)) for (const l of [output.light, ...S.lights]) { if (l === output.light && !l.on) continue; const c = renderer.proj.toCanvas([l.x, l.y, 0]), q = p.toWorld(c[0], c[1], 0); l.x = q[0]; l.y = q[1]; }
 		if (renderer) renderer.proj = p;
 		TS.Shape.proj = p;
 		if ($("s_proj")) $("s_proj").value = p.kind;
@@ -412,6 +473,7 @@
 		autosaveTimer = setTimeout(autosave, 1500);
 	}
 	function saveProject() {
+		lightCommit();
 		if (pencil && pencil.pts.length) return status("Finish or clear the current pencil outline before saving.");
 		download(`${S.name}.studio.json`, projectJSON());
 		setUnsaved(false);
@@ -519,7 +581,7 @@
 		processNow();
 		const images = await TS.AnimUI.albedoImages();
 		const bundle = TS.Bundle.build({ name: exportName(), bundleId: S.bundleId, atlas: artDataURL(), art: S.art, objects: S.objects,
-			settings: S.settings, result: S.result, now: new Date().toISOString(), anim: S.anim,
+			settings: S.settings, result: S.result, now: new Date().toISOString(), anim: S.anim, lights: S.lights,
 			albedoOf: (clip) => images.get(clip.id) || null, encodePNG: (rgba, w, h) => imageDataURL(new ImageData(rgba, w, h)).split(",")[1] });
 		lastAnimReport = bundle.anim || null;
 		return JSON.stringify(bundle);
@@ -3147,10 +3209,23 @@
 		$("help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || e.key === "F1") { toggleHelp(); e.preventDefault(); } }); // no shortcuts reach the models behind it
 		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
-			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
+			$("lightz").oninput = () => { const z = parseFloat($("lightz").value); $("lightz_v").textContent = z; lightEdit((l) => { l.z = z; }); };
+		$("light_sel").onchange = () => { lightCommit(); if ($("light_sel").value) { output.sel = $("light_sel").value; lightPanel(); output.render(); } };
+		$("light_addp").onclick = () => addLight("point");
+		$("light_adda").onclick = () => addLight("area");
+		$("light_del").onclick = deleteLight;
+		$("light_name").oninput = () => { lightEdit((l) => { l.name = $("light_name").value; }); const o = $("light_sel").selectedOptions[0], l = selLight(); if (o && l) o.textContent = `${l.name || l.id} (${l.type})`; };
+		$("light_color").oninput = () => lightEdit((l) => { l.color = $("light_color").value; });
+		const lightNum = (id, key, lo, hi) => { $(id).oninput = () => { const v = parseFloat($(id).value); if (!isNaN(v)) lightEdit((l) => { l[key] = TS.clamp(v, lo, hi); }); }; $(id).onchange = () => { const l = selLight(); if (l) $(id).value = l[key]; lightCommit(); }; };
+		lightNum("light_int", "intensity", 0, 100); lightNum("light_w", "w", 1, 1e4); lightNum("light_h", "h", 1, 1e4); lightNum("light_prio", "priority", -1e6, 1e6);
+		$("light_prio").onchange = () => { const l = selLight(); if (l) { l.priority = Math.round(l.priority); $("light_prio").value = l.priority; } lightCommit(); };
+		$("light_sh").onchange = () => { lightEdit((l) => { l.shadows = $("light_sh").checked; }); lightCommit(); };
+		for (const id of ["light_name", "light_int", "light_w", "light_h", "light_prio"]) $(id).onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") $(id).blur(); };
+		$("light_color").onchange = lightCommit; $("lightz").onchange = lightCommit; $("lightr").onchange = lightCommit;
+		syncLights();
 		$("lit_renderer").onchange = () => { output.rendererMode=["current","gpu","compare"].includes($("lit_renderer").value)?$("lit_renderer").value:"current"; output.render(); };
 		$("render_scale").onchange = () => { const scale=Number($("render_scale").value); output.renderScale=[1,.75,.5,.25].includes(scale)?scale:1; $("render_scale").value=String(output.renderScale); output.render(); };
-		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
+		$("lightr").oninput = () => { const r = parseFloat($("lightr").value); lightEdit((l) => { l.radius = r; }); };
 		$("shadows").onchange = () => { output.shadows = $("shadows").checked; output.render(); };
 		for (const [id, key, parse, lo, hi] of SETTING_IDS)
 			$(id).onchange = () => {
@@ -3166,12 +3241,19 @@
 		let lightDrag = false;
 		// Output view: drag = move the light; middle/right drag or Space-drag = pan; wheel = zoom; Shift+wheel = light height.
 		const outPos = (e) => { const r = out.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-		const moveLight = (e) => { if (!S.result) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); output.light.x = q[0]; output.light.y = q[1]; output.render(); };
+		const moveLight = (e) => { if (!S.result) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); lightEdit((l) => { l.x = q[0]; l.y = q[1]; }); };
+		// With lights, a press near a light's marker selects it first (then drags it); elsewhere it moves the selected one.
+		const pickLight = (e) => {
+			if (!S.result || !S.lights.length) return;
+			const [px, py] = outPos(e), s = output.scale(), pj = output.proj(); let best = null, bd = 14;
+			for (const l of S.lights) for (const z of [0, l.z]) { const c = pj.toCanvas([l.x, l.y, z]), d = Math.hypot(output.ox + c[0] * s - px, output.oy + c[1] * s - py); if (d < bd) { bd = d; best = l; } }
+			if (best && best.id !== output.sel) { lightCommit(); output.sel = best.id; lightPanel(); }
+		};
 		let outPan = null;
 		out.addEventListener("pointerdown", (e) => {
 			try { out.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
 			if (e.button === 1 || e.button === 2 || spaceDown) { outPan = outPos(e); e.preventDefault(); return; }
-			lightDrag = true; moveLight(e);
+			pickLight(e); lightDrag = true; moveLight(e);
 		});
 		out.addEventListener("pointermove", (e) => {
 			if (outPan) { const p = outPos(e); output.pan(p[0] - outPan[0], p[1] - outPan[1]); outPan = p; }
@@ -3229,7 +3311,7 @@
 			selChanged();
 			status(`Selected ${o.name} (from the output view). F frames it.`);
 		});
-		const outUp = () => { lightDrag = false; outPan = null; };
+		const outUp = () => { lightDrag = false; outPan = null; lightCommit(); };
 		out.addEventListener("pointerup", outUp);
 		out.addEventListener("pointercancel", outUp);
 		out.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -3237,7 +3319,7 @@
 			e.preventDefault();
 			if (e.shiftKey) {
 				const d = e.deltaY || e.deltaX; // Shift turns some wheels sideways
-				output.light.z = TS.clamp(output.light.z + (d < 0 ? 4 : -4), 0, 255); $("lightz").value = output.light.z; $("lightz_v").textContent = output.light.z; output.render();
+				lightEdit((l) => { l.z = TS.clamp(l.z + (d < 0 ? 4 : -4), 0, 255); $("lightz").value = l.z; $("lightz_v").textContent = l.z; });
 			} else output.zoomAt(...outPos(e), e.deltaY < 0 ? 1 : -1);
 		}, { passive: false });
 		const outCentre = () => [out.width / 2, out.height / 2];
