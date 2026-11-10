@@ -411,7 +411,7 @@
 			<div class="arow"><button id="an_models" title="The models this flipbook animates: select them in the view, then press this. The pieces they belong to are swapped for the frames while the clip plays; the frames are the Albedo painted in Aseprite. When bones move the models, height, normals, the floor shadow (exact floor spans, oblique projection) and collision follow them frame by frame.">Use selected models</button><button id="an_modelsclear"${(c.models || []).length ? "" : " disabled"}>Clear</button></div>
 			<p class="dim">${clipModels(c).length ? `Flipbook of ${clipModels(c).join(", ")}.` : "No models chosen: the game gets no frames from this clip."} Export ▾ shows what goes into the game.</p>`;
 		h = section("clip", "Clip", h);
-		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
+		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label><label class="chk" title="Inverse kinematics: dragging the tip of a bone that has an IK chain (see the bone's IK chain field) poses the whole chain, and keys every bone in it. Off: tips turn only their own bone."><input id="an_ik" type="checkbox"${ikOn ? " checked" : ""}> IK</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
 			${(() => { const away = S().objects.filter((o) => a.bind[o.id] && Rig.awayFromBones(a, o)).map((o) => esc(o.name)); return away.length ? `<p class="warnline" title="The bones keep the pose they were rigged in. Use Edit rest pose to move the bones back to the model, or Bind selected models to a bone beside it.">⚠ ${away.join(", ")} ${away.length > 1 ? "sit" : "sits"} away from ${away.length > 1 ? "their" : "its"} bones (edited after rigging?), so nothing bends. Edit rest pose to realign the bones.</p>` : ""; })()}
 			<div class="arow"><button id="an_boneadd" title="A bone at the 3D cursor, 24 px tall. With a bone selected, the new one starts at its tip and is its child.">＋ Bone</button>
 			<button id="an_bonemodel" title="One bone per selected model, from the bottom of the model to its top, bound to it">Bone per model</button>
@@ -420,6 +420,7 @@
 			rig += `<div class="boneprops"><div class="arow"><label>Name <input id="an_bname" type="text" value="${esc(bone.name)}"></label></div>
 				<div class="arow"><label>Parent <select id="an_bparent"><option value="">(none)</option>${Rig.ordered(a).filter((b) => b.id !== bone.id && !Rig.wouldLoop(a, bone, b.id)).map((b) => `<option value="${b.id}"${b.id === bone.parent ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label></div>
 				<label class="chk" title="Keep this bone's head glued to its parent's tip: moving the parent's tip drags it along, and its head can't be pulled away."><input id="an_conn" type="checkbox"${bone.connected && bone.parent ? " checked" : ""}${bone.parent ? "" : " disabled"}> Connected to the parent's tip</label>
+				<div class="arow"><label title="Drag this bone's tip to pose the whole chain: 2 for an arm or leg, 3 adds the body above it. 0 = off. The pose is keyed as ordinary turns of each bone.">IK chain <input id="an_bik" type="number" min="0" max="8" step="1" value="${bone.ik || 0}"></label></div>
 				${vecRow("Head", "an_h", bone.head)}${vecRow("Tip", "an_t", bone.tail)}
 				<div class="arow"><button id="an_bind" title="Make the selected models follow this bone">Bind selected models</button><button id="an_unbind" title="Let the selected models stand still">Unbind</button></div>
 				<div class="arow"><button id="an_skin" class="${deformSel() ? "on" : ""}" title="Deform (the default): a bound model bends with every bone, vertex by vertex, weighted by distance. Nothing to set up beyond binding it.">Deform</button><button id="an_unskin" class="${deformSel() ? "" : "on"}" title="Rigid: the model moves as one solid piece with its bound bone.">Rigid</button>
@@ -596,6 +597,7 @@
 		q("an_rest").onclick = () => toggleRest();
 		q("an_gz").onchange = () => { showGizmos = q("an_gz").checked; savePref("tsGizmos", showGizmos); draw(); };
 		q("an_names").onchange = () => { showNames = q("an_names").checked; savePref("tsNames", showNames); draw(); };
+		q("an_ik").onchange = () => { ikOn = q("an_ik").checked; savePref("tsIK", ikOn); };
 		q("an_bonedel").onclick = () => bone && edit(() => deleteBones(selIds()));
 		if (bone) {
 			q("an_bname").onchange = () => edit(() => { bone.name = q("an_bname").value.trim() || bone.name; });
@@ -603,6 +605,7 @@
 				bone.parent = q("an_bparent").value || null;
 				if (bone.connected) { bone.connected = false; api().status("Parent changed and the bone is no longer connected (Ctrl+Z undoes)."); }
 			});
+			q("an_bik").onchange = () => { const v = Math.max(0, Math.min(8, Math.round(parseFloat(q("an_bik").value) || 0))); edit(() => { if (v) bone.ik = v; else delete bone.ik; }); };
 			q("an_conn").onchange = () => edit(() => { bone.connected = q("an_conn").checked && !!bone.parent; reconnect(a); });
 			for (const [key, prop] of [["an_h", "head"], ["an_t", "tail"]]) for (let i = 0; i < 3; i++)
 				q(key + i).onchange = () => { const v = parseFloat(q(key + i).value); if (!isNaN(v)) edit(() => { setPoint(bone, prop, i, v); }); };
@@ -674,7 +677,7 @@
 	}
 	// The dopesheet: a ruler to scrub, a row of every keyed frame, and one row per bone. Drag a key to move it (Alt copies), drag across
 	// a row to box-select, Delete removes, Ctrl+C / Ctrl+V copy and paste at the playhead.
-	const FRAME_W = 20;
+	let frameW = TS.clamp(+TS.store.get("tsTlZoom") || 20, 10, 48), tlHover = false; // pixels per frame in the dopesheet, and whether the pointer is over it
 	function timeline() {
 		const el = $("timeline");
 		if (!el || !on) return;
@@ -685,11 +688,12 @@
 		const past = Object.values(c.tracks).some((ks) => ks.some((k) => k.f >= c.frames));
 		const depth = (b) => { let d = 0; for (let p = b.parent && Rig.bone(a, b.parent); p && d < 50; p = p.parent && Rig.bone(a, p.parent)) d++; return d; };
 		const eases = easeTargets().map((k) => k.ease || "linear"), ease = eases.length && eases.every((v) => v === eases[0]) ? eases[0] : "";
-		const diamond = (k, id) => `<i class="kd e-${k.ease || "linear"}${keySel.has(keyName(id, k.f)) ? " sel" : ""}" data-b="${id}" data-f="${k.f}" style="left:${k.f * FRAME_W}px" title="Frame ${k.f + 1}${k.ease ? " · " + k.ease : ""}"></i>`;
+		const diamond = (k, id) => `<i class="kd e-${k.ease || "linear"}${keySel.has(keyName(id, k.f)) ? " sel" : ""}" data-b="${id}" data-f="${k.f}" style="left:${k.f * frameW}px" title="Frame ${k.f + 1}${k.ease ? " · " + k.ease : ""}"></i>`;
 		const all = new Set();
 		for (const ks of Object.values(c.tracks)) for (const k of ks) if (k.f < c.frames) all.add(k.f);
-		const track = `width:${c.frames * FRAME_W}px`;
-		let rows = `<div class="tlrow sum"><div class="tlname" title="Every key on a frame together">All bones${a.bones.length && Object.keys(c.tracks).length ? "" : ' <span class="dim">(no keys yet)</span>'}${a.bones.length ? `<button id="tl_fold" title="${tlCollapsed ? "Show" : "Hide"} the bone rows">${tlCollapsed ? "▸" : "▾"}</button>` : ""}</div><div class="tltrack" style="${track}">${[...all].map((f) => `<i class="kd all${Object.keys(c.tracks).some((id) => keySel.has(keyName(id, f))) ? " sel" : ""}" data-all="1" data-f="${f}" style="left:${f * FRAME_W}px" title="All keys on frame ${f + 1}"></i>`).join("")}</div></div>`;
+		const track = `width:${c.frames * frameW}px`, lblStep = frameW >= 22 ? 1 : frameW >= 14 ? 5 : 10; // wide frames label every frame, narrow ones every 5th / 10th
+		el.style.setProperty("--fw", frameW + "px");
+		let rows = `<div class="tlrow sum"><div class="tlname" title="Every key on a frame together">All bones${a.bones.length && Object.keys(c.tracks).length ? "" : ' <span class="dim">(no keys yet)</span>'}${a.bones.length ? `<button id="tl_fold" title="${tlCollapsed ? "Show" : "Hide"} the bone rows">${tlCollapsed ? "▸" : "▾"}</button>` : ""}</div><div class="tltrack" style="${track}">${[...all].map((f) => `<i class="kd all${Object.keys(c.tracks).some((id) => keySel.has(keyName(id, f))) ? " sel" : ""}" data-all="1" data-f="${f}" style="left:${f * frameW}px" title="All keys on frame ${f + 1}"></i>`).join("")}</div></div>`;
 		if (!tlCollapsed) for (const b of Rig.ordered(a)) rows += `<div class="tlrow${isSel(b.id) ? " on" : ""}" data-bone="${b.id}"><div class="tlname" style="padding-left:${6 + depth(b) * 10}px" title="${esc(b.name)}">${esc(b.name)}</div><div class="tltrack" style="${track}">${(c.tracks[b.id] || []).filter((k) => k.f < c.frames).map((k) => diamond(k, b.id)).join("")}</div></div>`;
 		el.classList.toggle("atrest", restMode);
 		el.innerHTML = `<div class="tlbar"><div class="tlmode" role="group" aria-label="Animate mode"><button id="tl_pose" class="${restMode ? "" : "on"}" aria-pressed="${!restMode}" title="Pose: bones move and keys on this frame (Tab switches)">Pose</button><button id="tl_rest" class="${restMode ? "on" : ""}" aria-pressed="${restMode}" title="Rest pose: reshape the bones themselves; models show at rest and keys don't apply (Tab switches)">Rest</button></div><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
@@ -698,8 +702,9 @@
 			`<button id="tl_onion" class="${showOnion ? "on" : ""}" title="Onion skin: show the models on the previous frame (red) and next frame (green) while stopped">Onion</button>` +
 			`<button id="tl_seam" title="Key the first frame's pose on the last frame, so the loop has no jump (selected bones, or all with keys)">Close loop</button>` +
 			`<button id="tl_mirror" title="Flip this frame's pose across X onto the other side's bones (arm.L and arm.R; selected bones, or all)">Mirror pose</button>` +
+			`<span class="tlzoom" role="group" aria-label="Frames and zoom"><button id="tl_fins" title="Insert a frame at the playhead: later keys move one frame on (up to 64 frames)">+ Frame</button><button id="tl_fdel" title="Remove the playhead's frame and its keys: later keys move one frame back">− Frame</button><button id="tl_zo" title="Narrower frames (Ctrl+wheel over the dopesheet)">−</button><button id="tl_zi" title="Wider frames (Ctrl+wheel over the dopesheet)">+</button></span>` +
 			`<span class="dim tlhint" title="${esc(c.name)} · ${c.fps} fps · ${esc(c.loop || "loop")}. Drag a key to move it, Alt-drag to copy, drag a row to box-select, Delete removes, Ctrl+C / Ctrl+V paste at the playhead, Up / Down jump between keys.${past ? " Some keys lie past the last frame: raise the frame count to see them again." : ""}">${past ? '<span class="warn">keys past the end · </span>' : ""}${esc(c.name)} · ${c.fps} fps · ${esc(c.loop || "loop")}</span></div>` +
-			`<div class="tlgrid"><div class="tlrow ruler"><div class="tlname"></div><div class="tltrack" data-ruler="1" style="${track}">${Array.from({ length: c.frames }, (_, i) => `<span class="${(i + 1) % 5 === 0 || i === 0 ? "" : "minor"}" style="left:${i * FRAME_W}px">${i + 1}</span>`).join("")}</div></div>${rows}<div class="tlhead" id="tl_head" style="left:calc(var(--tl-names) + ${a.frame * FRAME_W}px);width:${FRAME_W}px;height:${(2 + (tlCollapsed ? 0 : a.bones.length)) * 18}px"></div></div>`;
+			`<div class="tlgrid"><div class="tlrow ruler"><div class="tlname"></div><div class="tltrack" data-ruler="1" style="${track}">${Array.from({ length: c.frames }, (_, i) => rulerLabel(i, lblStep)).join("")}</div></div>${rows}<div class="tlhead" id="tl_head" style="left:calc(var(--tl-names) + ${a.frame * frameW}px);width:${frameW}px;height:${(2 + (tlCollapsed ? 0 : a.bones.length)) * 18}px"></div></div>`;
 		$("tl_prev").onclick = () => setFrame(a.frame - 1);
 		$("tl_next").onclick = () => setFrame(a.frame + 1);
 		$("tl_play").onclick = togglePlay;
@@ -717,10 +722,19 @@
 			if (!a.bones.length) return api().toast("Add bones first.", "bad");
 			edit(() => Rig.mirrorPose(a, c, a.frame, boneSel ? selIds() : a.bones.map((b) => b.id)));
 		};
+		$("tl_fins").onclick = insertFrame;
+		$("tl_fdel").onclick = removeFrame;
+		$("tl_zo").onclick = () => zoomTimeline(frameW - 4);
+		$("tl_zi").onclick = () => zoomTimeline(frameW + 4);
+		el.onpointerenter = () => { tlHover = true; };
+		el.onpointerleave = () => { tlHover = false; };
 		if ($("tl_fold")) $("tl_fold").onclick = (e) => { e.stopPropagation(); tlCollapsed = !tlCollapsed; TS.store.set("tsTlRows", tlCollapsed ? "0" : "1"); timeline(); };
 		const grid = el.querySelector(".tlgrid");
 		grid.scrollLeft = sl; grid.scrollTop = st;
 		grid.onpointerdown = gridDown;
+		grid.ondblclick = gridDouble;
+		grid.oncontextmenu = gridMenu;
+		grid.onwheel = (e) => { if (!e.ctrlKey) return; e.preventDefault(); zoomTimeline(frameW * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.deltaY < 0 ? 1 : -1); };
 		followFrame();
 	}
 	// The keys an ease applies to: those picked, else the selected bones' keys on this frame.
@@ -751,10 +765,88 @@
 		const c = clip(), a = A();
 		edit(() => { const out = Rig.pasteKeys(c, keyClip, a.frame, a); keySel.clear(); for (const p of out) keySel.add(keyName(p.id, p.f)); });
 	}
+	// One ruler number: every frame when there is room, else the first and every 5th / 10th; the others stay blank.
+	function rulerLabel(i, step) {
+		const n = i + 1;
+		if (step > 1 && n !== 1 && n % step) return "";
+		return `<span class="${n % 5 === 0 || n === 1 ? "" : "minor"}" style="left:${i * frameW}px">${n}</span>`;
+	}
+	// Change the frame width (10-48 px, remembered). The scroll scales with it so the view stays on the same frames; the playhead is then
+	// brought back into sight by timeline() -> followFrame(). `dir` makes a small step still move when rounding would hide it.
+	function zoomTimeline(w, dir) {
+		const old = frameW;
+		w = TS.clamp(Math.round(w), 10, 48);
+		if (dir && w === old) w = TS.clamp(old + dir, 10, 48);
+		if (w === old) return;
+		frameW = w;
+		TS.store.set("tsTlZoom", String(w));
+		const g = document.querySelector("#timeline .tlgrid");
+		if (g) g.scrollLeft *= w / old;
+		timeline();
+	}
+	function insertFrame() {
+		const c = clip(), a = A();
+		if (c.frames >= 64) return api().toast("A clip holds 64 frames at most.", "bad");
+		edit(() => { Rig.insertFrames(c, a.frame, 1); keySel.clear(); });
+		api().status(`Inserted a frame at ${a.frame + 1}.`);
+	}
+	function removeFrame() {
+		const c = clip(), a = A();
+		if (c.frames <= 1) return api().toast("A clip keeps at least one frame.", "bad");
+		edit(() => { Rig.removeFrames(c, a.frame, 1); keySel.clear(); a.frame = Math.min(a.frame, c.frames - 1); });
+		api().status(`Removed frame ${a.frame + 1}.`);
+	}
+	// Pick every key in the clip.
+	function pickAllKeys() {
+		keySel.clear();
+		for (const p of Rig.allKeys(clip())) keySel.add(keyName(p.id, p.f));
+		timeline();
+	}
+	// Double-click a key: go to its frame and select its bone.
+	function gridDouble(e) {
+		const kd = e.target.closest(".kd");
+		if (!kd) return;
+		if (kd.dataset.b) { selectBone(kd.dataset.b); S().selected.clear(); }
+		showFrameNow(+kd.dataset.f);
+		api().redrawSoon();
+		render();
+	}
+	// Right-click a key: a small menu of what can be done to the picked keys.
+	function closeKeyMenu() { const m = document.getElementById("tl_menu"); if (m) m.remove(); }
+	function gridMenu(e) {
+		const kd = e.target.closest(".kd[data-b]");
+		closeKeyMenu();
+		if (!kd) return;
+		e.preventDefault();
+		const n = keyName(kd.dataset.b, +kd.dataset.f);
+		if (!keySel.has(n)) { keySel.clear(); keySel.add(n); timeline(); }
+		const eases = easeTargets().map((k) => k.ease || "linear"), cur = eases.length && eases.every((v) => v === eases[0]) ? eases[0] : "";
+		const m = document.createElement("div");
+		m.id = "tl_menu"; m.className = "menu open tlmenu";
+		const items = Rig.EASES.map(([v, t]) => [t, () => setEase(v), v === cur]).concat([null, ["Copy", copyKeys], ["Paste at playhead", pasteKeys, false, !keyClip], ["Delete", deleteKeys]]);
+		for (const it of items) {
+			if (!it) { m.append(document.createElement("hr")); continue; }
+			const b = document.createElement("button");
+			b.textContent = (it[2] ? "✓ " : "") + it[0];
+			b.disabled = !!it[3];
+			b.onclick = () => { closeKeyMenu(); it[1](); };
+			m.append(b);
+		}
+		document.body.append(m);
+		m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 4) + "px";
+		m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 4) + "px";
+		const away = (ev) => {
+			if (ev.type === "keydown" ? ev.key !== "Escape" : m.contains(ev.target)) return;
+			if (ev.type === "keydown") { ev.preventDefault(); ev.stopImmediatePropagation(); }
+			closeKeyMenu();
+			window.removeEventListener("pointerdown", away, true); window.removeEventListener("keydown", away, true);
+		};
+		window.addEventListener("pointerdown", away, true); window.addEventListener("keydown", away, true);
+	}
 	// The playhead alone, for scrubbing and playback: nothing is rebuilt.
 	function movePlayhead() {
 		const c = clip(), head = $("tl_head"), pos = document.querySelector("#timeline .tlpos");
-		if (head) head.style.left = `calc(var(--tl-names) + ${A().frame * FRAME_W}px)`;
+		if (head) head.style.left = `calc(var(--tl-names) + ${A().frame * frameW}px)`;
 		if (pos && c) pos.textContent = `${A().frame + 1} / ${c.frames}`;
 		followFrame();
 	}
@@ -768,7 +860,7 @@
 		const grid = e.currentTarget, c = clip(), a = A(), kd = e.target.closest(".kd"), row = e.target.closest(".tlrow"), name = e.target.closest(".tlname"), inTrack = e.target.closest(".tltrack");
 		if (playing) togglePlay();
 		if (document.activeElement && document.activeElement.closest("#an_body")) document.activeElement.blur(); // the keys that follow are the dopesheet's
-		const frameAt = (x) => { const t = grid.querySelector(".tltrack").getBoundingClientRect(); return TS.clamp(Math.floor((x - t.left) / FRAME_W), 0, c.frames - 1); };
+		const frameAt = (x) => { const t = grid.querySelector(".tltrack").getBoundingClientRect(); return TS.clamp(Math.floor((x - t.left) / frameW), 0, c.frames - 1); };
 		const follow = (move, up) => {
 			grid.setPointerCapture(e.pointerId);
 			grid.onpointermove = move;
@@ -779,8 +871,8 @@
 			if (row.dataset.bone) { selectBone(row.dataset.bone, e.shiftKey || e.ctrlKey || e.metaKey); S().selected.clear(); api().redrawSoon(); render(); }
 			return;
 		}
-		if (!inTrack) return;
-		if (inTrack.dataset.ruler) { // scrub
+		if (!inTrack && !e.target.closest("#tl_head")) return;
+		if (!inTrack || inTrack.dataset.ruler) { // scrub (the ruler, or the playhead line itself)
 			showFrameNow(frameAt(e.clientX));
 			follow((ev) => { const f = frameAt(ev.clientX); if (f !== A().frame) showFrameNow(f); }, () => { if (boneSel) render(); else timeline(); });
 			return;
@@ -796,8 +888,8 @@
 			const moving = marks();
 			let df = 0;
 			follow((ev) => {
-				df = Math.round((ev.clientX - e.clientX) / FRAME_W);
-				for (const m of moving) m.style.transform = `translateX(${df * FRAME_W}px) rotate(45deg)`;
+				df = Math.round((ev.clientX - e.clientX) / frameW);
+				for (const m of moving) m.style.transform = `translateX(${df * frameW}px) rotate(45deg)`;
 			}, (ev) => {
 				if (!df) { if (!add) { A().frame = f; } if (boneSel) render(); else timeline(); api().redrawSoon(); drawPreview(); showFrameArt(); return; }
 				edit(() => {
@@ -870,8 +962,8 @@
 	// shown only for the axes the current view can actually work with. Names label every bone; a dashed line joins a child to its
 	// parent's tip when they aren't connected. Both are switchable and remembered.
 	const AXC = ["#ff5b5b", "#5bd16b", "#5b8cff"];
-	let showGizmos = true, showNames = true;
-	showGizmos = TS.store.get("tsGizmos") !== "0"; showNames = TS.store.get("tsNames") !== "0";
+	let showGizmos = true, showNames = true, ikOn = true;
+	showGizmos = TS.store.get("tsGizmos") !== "0"; showNames = TS.store.get("tsNames") !== "0"; ikOn = TS.store.get("tsIK") !== "0";
 	const savePref = (k, v) => TS.store.set(k, v ? "1" : "0");
 	function viewDir() {
 		const el = $("view"), r = el && api().renderer;
@@ -932,7 +1024,7 @@
 			const sel = isSel(b.id), pose = !restMode && sel && b.id === boneSel ? Rig.localPose(clip(), b.id, a.frame) : null;
 			const turn = pose && pose.rot.map((v, i) => (Math.abs(v) > 0.05 ? "XYZ"[i] + " " + Math.round(v) + "°" : "")).filter(Boolean).join(" ");
 			const tx = add("text", { x: (h[0] + t[0]) / 2 + 9, y: (h[1] + t[1]) / 2 + 4, fill: sel ? "#ffcf4a" : "#cfe9f7", "font-size": 11, "pointer-events": "none", stroke: "#141418", "stroke-width": 3, "paint-order": "stroke" });
-			tx.textContent = b.name + (turn ? "  " + turn : "");
+			tx.textContent = b.name + (b.ik > 0 ? "  IK " + b.ik : "") + (turn ? "  " + turn : "");
 		}
 	}
 	// Onion skin: the models on the frames before (red) and after (green) as thin wires, while stopped. The clip wraps round unless it plays once.
@@ -978,6 +1070,8 @@
 			// A tapered diamond from head to tip, like a bone in a 3D package.
 			const dx = t[0] - h[0], dy = t[1] - h[1], len = Math.hypot(dx, dy) || 1, nx = (-dy / len) * Math.min(5, len / 4), ny = (dx / len) * Math.min(5, len / 4);
 			const mid = [h[0] + dx * 0.15, h[1] + dy * 0.15];
+			// A short bone's diamond is a sliver, so a see-through wider stroke along it keeps it easy to catch.
+			add("line", { x1: h[0], y1: h[1], x2: t[0], y2: t[1], stroke: "transparent", "stroke-width": 12, "stroke-linecap": "round", "data-bone": b.id, "data-part": "body" }).style.cursor = joint && !restMode ? "grab" : "move";
 			// The body and the head dot drag the whole bone (move; a connected bone turns instead); the tip turns it.
 			add("polygon", { points: `${h} ${mid[0] + nx},${mid[1] + ny} ${t} ${mid[0] - nx},${mid[1] - ny}`, fill: col + "55", stroke: col, "stroke-width": 1.2, "data-bone": b.id, "data-part": "body" }).style.cursor = joint && !restMode ? "grab" : "move";
 			if (!joint) add("circle", { cx: h[0], cy: h[1], r: 5, fill: col, "data-bone": b.id, "data-part": restMode ? "head" : "body" }).style.cursor = "move";
@@ -1056,9 +1150,17 @@
 		drag.moved = true;
 		api().redrawSoon(); scheduleSheet(); drawPreview();
 	}
+	const DRAG_PX = 3;
+	// Ctrl / Shift as last seen: the modal G / R have no real event to read them from.
+	let heldCtrl = false, heldShift = false;
 	function dragMove(e) {
 		const b = Rig.bone(A(), drag.id);
 		if (!b) return;
+		// A click only selects: a mouse drag does nothing (writes no key, dirties nothing) until the pointer is DRAG_PX from where it went down.
+		if (drag.start && !drag.armed) {
+			if (Math.hypot(e.clientX - drag.start[0], e.clientY - drag.start[1]) < DRAG_PX) return;
+			drag.armed = true;
+		}
 		if (restMode) return dragRest(e, b);
 		const rect = $("view").getBoundingClientRect(), a = A(), c = clip();
 		const mats = Rig.matrices(a, c, a.frame), M = mats.get(b.id), H = Rig.apply(M, b.head), T = Rig.apply(M, b.tail);
@@ -1066,11 +1168,32 @@
 		// The plane the pointer works in: normal to the depth axis (Y, as in the tileset view) or, after a preset view (Front / Right /
 		// Top), that view's depth axis, frozen. An X / Y / Z key held in the drag narrows a move to that axis, or turns about it; the
 		// depth axis is the one that can only be reached this way (or by its arrow), as the plane itself never moves it.
-		const lk = S().viewLock ? S().viewLock.k : 1, onPlane = (k) => {
-			if (Math.abs(ray.d[k]) < 0.02) return null;
-			const t = (H[k] - ray.o[k]) / ray.d[k];
-			return [ray.o[0] + ray.d[0] * t, ray.o[1] + ray.d[1] * t, ray.o[2] + ray.d[2] * t];
+		const lk = S().viewLock ? S().viewLock.k : 1, onPlane = (k, rr = ray) => {
+			if (Math.abs(rr.d[k]) < 0.02) return null;
+			const t = (H[k] - rr.o[k]) / rr.d[k];
+			return [rr.o[0] + rr.d[0] * t, rr.o[1] + rr.d[1] * t, rr.o[2] + rr.d[2] * t];
 		};
+		// IK: the tip of a bone with an IK chain (or G on it) follows the pointer and the chain bends to reach it; every chain bone is keyed.
+		if (ikOn && b.ik > 0 && !drag.stretch && !drag.rel && (drag.part === "tip" || (drag.modal && drag.move))) {
+			const k = drag.axis !== null ? drag.axis : lk, ray2 = ray;
+			if (Math.abs(ray2.d[k]) < 0.02) return;
+			const tt = (T[k] - ray2.o[k]) / ray2.d[k], P = [ray2.o[0] + ray2.d[0] * tt, ray2.o[1] + ray2.d[1] * tt, ray2.o[2] + ray2.d[2] * tt];
+			// Grab offset, so the tip doesn't jump to the pointer. A mouse drag takes it from where the button went down, so the travel
+			// before the drag threshold and this first move both count; G (or a new plane) takes it here and starts from the next move.
+			if (!drag.ikOff || drag.ikPlane !== k) {
+				const fresh = drag.start && drag.ikPlane === undefined, r0 = fresh ? api().renderer.ray(drag.start[0] - rect.left, drag.start[1] - rect.top) : ray2;
+				if (Math.abs(r0.d[k]) < 0.02) return;
+				const t0 = (T[k] - r0.o[k]) / r0.d[k], P0 = [r0.o[0] + r0.d[0] * t0, r0.o[1] + r0.d[1] * t0, r0.o[2] + r0.d[2] * t0];
+				drag.ikOff = [T[0] - P0[0], T[1] - P0[1], T[2] - P0[2]]; drag.ikPlane = k;
+				if (!fresh) return;
+			}
+			const res = Rig.solveIK(a, c, a.frame, b.id, [P[0] + drag.ikOff[0], P[1] + drag.ikOff[1], P[2] + drag.ikOff[2]], b.ik, k);
+			for (const r of res) Rig.setKey(c, r.id, a.frame, r.rot, r.pos);
+			drag.moved = true;
+			api().status("IK: posing " + res.length + " bone" + (res.length > 1 ? "s" : "") + " (X / Y / Z picks the plane).");
+			api().redrawSoon(); scheduleSheet(); drawPreview();
+			return;
+		}
 		if (drag.stretch) { // Shift + tip: set the bone's length (its rest tip; the same on every frame)
 			const W = onPlane(lk);
 			if (!W) return;
@@ -1102,6 +1225,12 @@
 				drag.last = P;
 			}
 			if (!d[0] && !d[1] && !d[2]) return;
+			// Ctrl snaps the whole move since the drag began to whole units; the step applied now is what is still owed to that.
+			const tot = drag.moveTot = (drag.moveTot || [0, 0, 0]).map((v, i) => v + d[i]), got = drag.moveGot || [0, 0, 0];
+			const goal = heldCtrl ? tot.map(Math.round) : tot;
+			d = goal.map((v, i) => v - got[i]);
+			drag.moveGot = goal;
+			if (!d[0] && !d[1] && !d[2]) return;
 			for (const id of drag.ids || [b.id]) {
 				const bb = Rig.bone(a, id);
 				if (bb.connected && bb.parent) { api().status("Connected bones only turn (R); move the parent, or untick Connected."); continue; }
@@ -1118,16 +1247,29 @@
 		let a1 = [T[0] - H[0], T[1] - H[1], T[2] - H[2]];
 		const b1 = [Q[0] - H[0], Q[1] - H[1], Q[2] - H[2]];
 		a1[nk] = 0; b1[nk] = 0;
-		if (drag.rel) { // R: turn by the pointer's swing about the head, from where it was a moment ago
-			if (!drag.lastVec) { drag.lastVec = b1; return; }
+		if (drag.rel || drag.grab) { // turn by the pointer's swing about the head, from where it was a moment ago (a mouse press: where it went down)
+			if (!drag.lastVec) {
+				if (!drag.start) { drag.lastVec = b1; return; }
+				const rect0 = $("view").getBoundingClientRect(), Q0 = onPlane(nk, api().renderer.ray(drag.start[0] - rect0.left, drag.start[1] - rect0.top));
+				if (!Q0) return;
+				drag.lastVec = [Q0[0] - H[0], Q0[1] - H[1], Q0[2] - H[2]];
+				drag.lastVec[nk] = 0;
+			}
 			a1 = drag.lastVec;
 		}
 		if (Math.hypot(...a1) < 1e-6 || Math.hypot(...b1) < 1e-6) return;
 		drag.lastVec = b1;
 		const cr = [a1[1] * b1[2] - a1[2] * b1[1], a1[2] * b1[0] - a1[0] * b1[2], a1[0] * b1[1] - a1[1] * b1[0]];
-		const th = Math.atan2(cr[nk], a1[0] * b1[0] + a1[1] * b1[1] + a1[2] * b1[2]), cs = Math.cos(th), sn = Math.sin(th), tt = 1 - cs, u = [0, 0, 0];
+		// The swing so far is kept whole; Ctrl snaps it to 15 degree steps (Ctrl+Shift: 5), and only the difference from what is already turned is applied.
+		drag.turnTot = (drag.turnTot || 0) + Math.atan2(cr[nk], a1[0] * b1[0] + a1[1] * b1[1] + a1[2] * b1[2]);
+		const step = ((heldShift ? 5 : 15) * Math.PI) / 180, goal = heldCtrl ? Math.round(drag.turnTot / step) * step : drag.turnTot;
+		const th = goal - (drag.turnGot || 0);
+		drag.turnGot = goal;
+		api().status("Turn " + Math.round(((goal * 180) / Math.PI) * 10) / 10 + "°" + (heldCtrl ? " (snapped)" : "") + (drag.modal ? ": click or Enter confirms, Esc cancels." : ""));
+		if (!th) return;
+		const cs = Math.cos(th), sn = Math.sin(th), tt = 1 - cs, u = [0, 0, 0];
 		u[nk] = 1;
-		// th turns the tip onto the pointer (right-handed about the axis); for Y this is the matrix the old code wrote out.
+		// th is the swing about the axis (right-handed); for Y this is the matrix the old code wrote out.
 		const Rw = [[tt * u[0] * u[0] + cs, tt * u[0] * u[1] - sn * u[2], tt * u[0] * u[2] + sn * u[1]], [tt * u[0] * u[1] + sn * u[2], tt * u[1] * u[1] + cs, tt * u[1] * u[2] - sn * u[0]], [tt * u[0] * u[2] - sn * u[1], tt * u[1] * u[2] + sn * u[0], tt * u[2] * u[2] + cs]];
 		const { mul, transpose } = Rig.mat3;
 		for (const id of drag.ids || [b.id]) {
@@ -1139,7 +1281,7 @@
 		api().redrawSoon(); scheduleSheet(); drawPreview();
 	}
 	// --- Blender-style keys on the selected bone: G moves, R turns (X / Y / Z lock, a preset view picks the plane), click or Enter
-	// confirms, right-click or Esc cancels; I keys the pose, Alt+I removes the key; Tab edits the rest pose; in it Shift+A adds a
+	// confirms, right-click or Esc cancels (Ctrl snaps a turn to 15°, a move to whole units); I keys the pose, Shift+I the whole pose, Alt+I removes the key; Ctrl+C / Ctrl+V copy and paste a pose when no keys are picked (Ctrl+Shift+V: mirrored); Tab edits the rest pose; in it Shift+A adds a
 	// bone, E extrudes a child from the tip, X deletes; Ctrl+P parents; Left / Right step frames, Up / Down jump between keys. ---
 	let lastPtr = [0, 0], parentPick = false;
 	// The bones a drag works on: pose mode, the selected roots (their children ride along); rest mode, the selection.
@@ -1184,6 +1326,40 @@
 		edit(() => { for (const id of ids) { const p = Rig.localPose(c, id, a.frame); Rig.setKey(c, id, a.frame, what === "rot" ? [0, 0, 0] : p.rot.map(round), what === "pos" ? [0, 0, 0] : p.pos.map(round)); } });
 		return true;
 	}
+	// Shift+I: key every animated bone (all bones when nothing is animated yet) as it is on this frame, so a pose can be pinned in one go.
+	function keyWholePose() {
+		if (restMode) return api().status("Rest pose: keys don't apply. Tab back to posing first.");
+		ensureClip();
+		const a = A(), c = clip(), animated = a.bones.filter((b) => (c.tracks[b.id] || []).length), bones = animated.length ? animated : a.bones;
+		if (!bones.length) return api().toast("There are no bones to key.", "bad");
+		edit(() => { for (const b of bones) { const p = Rig.localPose(c, b.id, a.frame); Rig.setKey(c, b.id, a.frame, p.rot.map(round), p.pos.map(round)); } });
+		api().status("Keyed the whole pose (" + bones.length + " bone" + (bones.length > 1 ? "s" : "") + ") on frame " + (a.frame + 1) + ".");
+	}
+	// The pose clipboard (Ctrl+C with no keys picked, Ctrl+V): the selected bones' poses on this frame (all bones when none is selected),
+	// kept apart from the dopesheet's copied keys. Pasting keys them on the current frame; Ctrl+Shift+V lands on the other side's bones, flipped.
+	let poseClip = null, lastCopy = null;
+	function copyPose() {
+		if (restMode) return api().status("Rest pose: nothing to copy. Tab back to posing first.");
+		const a = A(), c = clip(), ids = boneSel ? selIds() : a.bones.map((b) => b.id);
+		if (!ids.length) return api().toast("There are no bones to copy.", "bad");
+		poseClip = ids.map((id) => { const p = Rig.localPose(c, id, a.frame); return { id, rot: p.rot.map(round), pos: p.pos.map(round) }; });
+		api().status("Copied the pose of " + ids.length + " bone" + (ids.length > 1 ? "s" : "") + " on frame " + (a.frame + 1) + " (Ctrl+V pastes, Ctrl+Shift+V mirrored).");
+	}
+	function pastePose(mirror) {
+		if (restMode) return api().status("Rest pose: keys don't apply. Tab back to posing first.");
+		if (!poseClip) return api().toast("Copy a pose first (Ctrl+C with no keys picked).", "bad");
+		ensureClip();
+		const a = A(), c = clip(), todo = [];
+		for (const p of poseClip) {
+			const b = Rig.bone(a, p.id);
+			if (!b) continue;
+			if (!mirror) todo.push([b.id, p.rot, p.pos]);
+			else { const m = Rig.mirrorValues(p.rot, p.pos); todo.push([Rig.mirrorBone(a, b).id, m.rot, m.pos]); }
+		}
+		if (!todo.length) return api().toast("Those bones are gone.", "bad");
+		edit(() => { for (const [id, rot, pos] of todo) Rig.setKey(c, id, a.frame, rot.slice(), pos.slice()); });
+		api().status("Pasted " + (mirror ? "mirrored " : "") + "pose of " + todo.length + " bone" + (todo.length > 1 ? "s" : "") + " on frame " + (a.frame + 1) + ".");
+	}
 	function jumpKey(dir) {
 		const a = A(), c = clip(), ids = boneSel ? selIds() : Object.keys(c.tracks);
 		const frames = [...new Set(ids.flatMap((id) => (c.tracks[id] || []).map((k) => k.f)))].sort((x, y) => x - y);
@@ -1203,6 +1379,7 @@
 			if (!ids.includes(b.id)) continue;
 			const nb = Rig.newBone(b.name.replace(/\.\d+$/, "") + "." + String(a.bones.filter((x) => x.name.startsWith(b.name.replace(/\.\d+$/, ""))).length).padStart(3, "0"), b.head.slice(), b.tail.slice(), map.has(b.parent) ? map.get(b.parent) : b.parent);
 			if (b.connected) nb.connected = true;
+			if (b.ik) nb.ik = b.ik;
 			map.set(b.id, nb.id); made.push(nb);
 		}
 		a.bones.push(...made);
@@ -1226,7 +1403,13 @@
 		const mod = e.ctrlKey || e.metaKey;
 		if (keySel.size && !e.altKey && !e.shiftKey && !mod && (k === "delete" || k === "x")) { deleteKeys(); stop(); return; }
 		if (keySel.size && k === "escape") { keySel.clear(); timeline(); stop(); return; }
-		if (mod && !e.altKey && !e.shiftKey && k === "c" && keySel.size) { copyKeys(); stop(); return; }
+		if (mod && !e.altKey && !e.shiftKey && k === "a" && (keySel.size || tlHover)) { pickAllKeys(); stop(); return; }
+		// Ctrl+C copies the picked keys, or with none picked the pose on this frame (models selected: their own copy, in app.js).
+		// Ctrl+V pastes whichever was copied last; Ctrl+Shift+V pastes a pose mirrored. (Ctrl+Shift+C is the browser's inspector.)
+		if (mod && !e.altKey && !e.shiftKey && k === "c" && keySel.size) { copyKeys(); lastCopy = "keys"; stop(); return; }
+		if (mod && !e.altKey && !e.shiftKey && k === "c" && !S().selected.size && A().bones.length && !restMode) { copyPose(); lastCopy = "pose"; stop(); return; }
+		if (mod && !e.altKey && e.shiftKey && k === "v" && poseClip) { pastePose(true); stop(); return; }
+		if (mod && !e.altKey && !e.shiftKey && k === "v" && lastCopy === "pose" && poseClip) { pastePose(false); stop(); return; }
 		if (mod && !e.altKey && !e.shiftKey && k === "v" && keyClip) { pasteKeys(); stop(); return; }
 		if (parentPick && k === "escape") { parentPick = false; api().status("Parenting cancelled."); stop(); return; }
 		if (mod && !e.altKey && k === "p") {
@@ -1245,6 +1428,7 @@
 		if (k === "arrowup" || k === "arrowdown") { jumpKey(k === "arrowup" ? 1 : -1); stop(); return; }
 		if (k === "tab") { toggleRest(); stop(); return; }
 		if (k === "i" && !e.shiftKey) { keyPose(false); stop(); return; }
+		if (k === "i" && e.shiftKey) { keyWholePose(); stop(); return; }
 		const boneOnly = boneSel && !S().selected.size;
 		if (boneOnly && !e.shiftKey && k === "a") { const all = A().bones.map((b) => b.id); multi.clear(); all.filter((id) => id !== boneSel).forEach((id) => multi.add(id)); api().redrawSoon(); render(); stop(); return; }
 		if (boneOnly && !e.shiftKey && k === "l") { const a = A(), up = new Set(); for (const id of selIds()) { let r = Rig.bone(a, id); for (let n = 0; r.parent && Rig.bone(a, r.parent) && n < 1000; n++) r = Rig.bone(a, r.parent); up.add(r.id); } for (const id of subtree(a, [...up])) if (id !== boneSel) multi.add(id); api().redrawSoon(); render(); stop(); return; }
@@ -1332,7 +1516,7 @@
 			if (playing) { clearInterval(playing); playing = 0; }
 			if (stroke) stroke = null;
 			pass++; clearTimeout(renderTimer); clearTimeout(TS.AnimUI._t);
-			boneSel = null; multi.clear(); keySel.clear(); keyClip = null; restMode = paintMode = parentPick = false;
+			boneSel = null; multi.clear(); keySel.clear(); keyClip = poseClip = null; restMode = paintMode = parentPick = false;
 			sheet = null; pending = 0; albedo = null; albedoURL = null; artShown = null; rigBase = ""; normalFrames.clear(); litFrames.clear();
 			loadAlbedoURL();
 			if (on) { ensureClip(); scheduleSheet(); render(); timeline(); }
@@ -1359,7 +1543,7 @@
 			if (gz && !parentPick) { // a ring turns about its axis, an arrow slides the bone along it
 				const [kind, k] = gz.split(":");
 				ensureClip();
-				drag = { id, ids: dragIds(), before: api().snapshot(), moved: false, move: kind === "move", rel: kind === "turn", part: restMode ? "body" : undefined, stretch: false, last: null, axis: +k };
+				drag = { id, ids: dragIds(), before: api().snapshot(), moved: false, move: kind === "move", rel: kind === "turn", part: restMode ? "body" : undefined, stretch: false, last: null, axis: +k, start: [e.clientX, e.clientY] };
 				window.addEventListener("pointermove", dragMove);
 				window.addEventListener("pointerup", dragEnd);
 				api().redrawSoon();
@@ -1379,12 +1563,23 @@
 			S().selected.clear(); api().redrawSoon();
 			// A connected bone can't slide off its parent's tip, so dragging its body turns it (like its tip) rather than doing nothing.
 			const hb = Rig.bone(A(), id), stuck = !restMode && hb && hb.connected && hb.parent && Rig.bone(A(), hb.parent);
-			drag = { id, ids: dragIds(), before: api().snapshot(), moved: false, move: e.target.dataset.part === "body" && !stuck, part: e.target.dataset.part, stretch: !restMode && e.shiftKey && e.target.dataset.part === "tip", last: null, axis: null };
+			drag = { id, ids: dragIds(), before: api().snapshot(), moved: false, move: e.target.dataset.part === "body" && !stuck, part: e.target.dataset.part, stretch: !restMode && e.shiftKey && e.target.dataset.part === "tip", last: null, axis: null, start: [e.clientX, e.clientY] };
+			// A tip, or the body of a connected bone, turns relative to where it was grabbed, so an off-centre grab gives no jump.
+			drag.grab = !restMode && !drag.move && !drag.stretch;
 			window.addEventListener("pointermove", dragMove);
 			window.addEventListener("pointerup", dragEnd);
 			ensureClip();
 		});
-		window.addEventListener("pointermove", (e) => { lastPtr = [e.clientX, e.clientY]; }, true);
+		window.addEventListener("pointermove", (e) => { lastPtr = [e.clientX, e.clientY]; heldCtrl = e.ctrlKey || e.metaKey; heldShift = e.shiftKey; }, true);
+		// Ctrl / Shift pressed or let go mid-drag: redo the move at once, so the snap shows without the pointer having to move.
+		const mods = (e) => {
+			const c = e.ctrlKey || e.metaKey, s = e.shiftKey;
+			if (c === heldCtrl && s === heldShift) return;
+			heldCtrl = c; heldShift = s;
+			if (drag && on) dragMove({ clientX: lastPtr[0], clientY: lastPtr[1] });
+		};
+		window.addEventListener("keydown", mods, true);
+		window.addEventListener("keyup", mods, true);
 		// While painting, a left drag on the view is the brush (the other buttons still orbit and pan).
 		window.addEventListener("pointerdown", (e) => {
 			if (!on || !paintMode || stroke || e.button !== 0 || e.target !== $("view") || drag || parentPick) return;

@@ -534,15 +534,19 @@ body.animating .timeline.animonly { display: flex; }
 .timeline .tlrow.on .tlname { color: var(--accent); }
 .timeline .tlname { position: sticky; left: 0; z-index: 3; flex: 0 0 var(--tl-names); width: var(--tl-names); box-sizing: border-box; padding: 0 6px; display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 11px; line-height: 18px; white-space: nowrap; overflow: hidden; background: var(--panel); border-right: 1px solid var(--line); cursor: pointer; }
 .timeline .tlname button { padding: 0 3px; min-width: 0; height: 15px; line-height: 13px; font-size: 10px; border: 0; background: none; }
-.timeline .tltrack { position: relative; flex: none; height: 100%; background-image: linear-gradient(to right, var(--line) 1px, transparent 1px); background-size: 20px 100%; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); cursor: crosshair; }
+.timeline .tltrack { position: relative; flex: none; height: 100%; background-image: linear-gradient(to right, var(--line) 1px, transparent 1px); background-size: var(--fw, 20px) 100%; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); cursor: crosshair; }
 .timeline .ruler { position: sticky; top: 0; z-index: 4; }
 .timeline .ruler .tltrack { background-color: var(--panel2); cursor: ew-resize; }
-.timeline .ruler .tltrack span { position: absolute; top: 0; width: 20px; text-align: center; font-size: 10px; line-height: 18px; color: var(--dim); font-variant-numeric: tabular-nums; pointer-events: none; }
+.timeline .ruler .tltrack span { position: absolute; top: 0; width: var(--fw, 20px); text-align: center; font-size: 10px; line-height: 18px; color: var(--dim); font-variant-numeric: tabular-nums; pointer-events: none; }
 .timeline .ruler .tltrack span.minor { opacity: .45; }
 .timeline .sum .tltrack { background-color: color-mix(in srgb, var(--panel2) 50%, transparent); }
 .timeline .tlhead { position: absolute; top: 0; bottom: 0; min-height: 100%; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 28%, transparent); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); box-sizing: border-box; }
 .timeline .tlbox { position: absolute; z-index: 5; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.timeline .kd { position: absolute; top: 4px; width: 8px; height: 8px; margin-left: 6px; z-index: 1; background: #ffcf4a; transform: rotate(45deg); cursor: grab; box-sizing: border-box; }
+.timeline .kd { position: absolute; top: 4px; width: 8px; height: 8px; margin-left: calc(var(--fw, 20px) / 2 - 4px); z-index: 1; background: #ffcf4a; transform: rotate(45deg); cursor: grab; box-sizing: border-box; }
+.timeline .tlzoom { display: flex; gap: 2px; flex: none; }
+.timeline .tlhead::before { content: ""; position: absolute; top: 0; bottom: 0; left: -3px; width: 5px; pointer-events: auto; cursor: ew-resize; }
+.tlmenu { position: fixed; z-index: 100; margin: 0; }
+.tlmenu button:disabled { opacity: .4; }
 .timeline .kd.all { background: #b89a4a; }
 .timeline .kd.sel { background: #fff; outline: 1px solid var(--accent); }
 .timeline .kd.e-in, .timeline .kd.e-out, .timeline .kd.e-inout { border-radius: 50%; }

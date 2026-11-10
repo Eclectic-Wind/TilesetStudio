@@ -114,6 +114,12 @@ test("mirror pose swaps sides and flips Y, Z and move X", () => {
 	near(R.keyAt(c, "r", 0).rot, [10, -20, -30]); near(R.keyAt(c, "r", 0).pos, [-1, 2, 3]);
 	near(R.keyAt(c, "l", 0).rot, [40, -50, -60]); near(R.keyAt(c, "l", 0).pos, [-4, 5, 6]);
 });
+test("mirror helpers: other side's bone, flipped values (for a pose clipboard)", () => {
+	const a = { bones: [{ id: "l", name: "arm.L" }, { id: "r", name: "arm.R" }, { id: "s", name: "spine" }] };
+	assert.strictEqual(R.mirrorBone(a, a.bones[0]).id, "r"); assert.strictEqual(R.mirrorBone(a, a.bones[2]).id, "s");
+	const m = R.mirrorValues([10, 20, 30], [1, 2, 3]);
+	near(m.rot, [10, -20, -30]); near(m.pos, [-1, 2, 3]);
+});
 test("an old project's one Albedo sheet goes to the active clip only", () => {
 	const a = { bones: [], clips: [{ id: "c1", tracks: {} }, { id: "c2", tracks: {} }], clip: "c2", albedo: "data:x" };
 	R.bumpIds(a);
@@ -369,6 +375,101 @@ test("an object animation with no armature comes in as a rigid bone and clip", (
 	end.verts.forEach((p) => assert(Math.abs(p[0] - 32) < 0.01, `turned edge-on to X: ${p}`)); // the hinge's X (2 units) for every corner
 	const rig = TS.Transfer.rigFor(back.rig, [o.id]);
 	assert(rig.rigid[o.id], "rigid comes along with the model");
+});
+
+console.log("IK");
+// Upper arm (b1) 0,0,0 -> 0,0,10 and forearm (b2) 10 -> 20, connected, bent forward (+X) 60 degrees at the elbow.
+const ikArm = (connected = true) => ({ bones: [{ id: "b1", name: "up", parent: null, head: [0, 0, 0], tail: [0, 0, 10] }, { id: "b2", name: "fore", parent: "b1", connected, head: [0, 0, 10], tail: [0, 0, 20] }], bind: {}, clips: [], clip: null, frame: 0 });
+const bent = () => { const c = clipOf(4); R.setKey(c, "b2", 0, [0, 60, 0], [0, 0, 0]); return c; };
+const tip2 = (a, c) => R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 20]);
+const bake = (c, res) => res.forEach((r) => R.setKey(c, r.id, 0, r.rot, r.pos));
+const dist3 = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+test("a two-bone arm reaches a reachable target", () => {
+	const a = ikArm(), c = bent(), t = [6, 3, 9];
+	const res = R.solveIK(a, c, 0, "b2", t, 2);
+	assert.strictEqual(res.map((r) => r.id).join(), "b1,b2");
+	bake(c, res);
+	assert(dist3(tip2(a, c), t) < 0.05, "tip " + tip2(a, c));
+});
+test("an unreachable target straightens the chain toward it", () => {
+	const a = ikArm(), c = bent(), t = [0, 0, 60];
+	bake(c, R.solveIK(a, c, 0, "b2", t, 2));
+	near(tip2(a, c), [0, 0, 20], 0.1, "stretched straight at the target");
+	const t2 = [30, 0, 0];
+	bake(c, R.solveIK(a, c, 0, "b2", t2, 2));
+	near(tip2(a, c), [20, 0, 0], 0.1, "reaching sideways");
+});
+test("the elbow keeps its bend direction", () => {
+	const a = ikArm(), c = bent();
+	const side = () => { const m = R.matrices(a, c, 0), e = R.apply(m.get("b2"), [0, 0, 10]), t = tip2(a, c); return Math.sign(t[0] * e[2] - t[2] * e[0]); };
+	const before = side();
+	assert(before !== 0);
+	bake(c, R.solveIK(a, c, 0, "b2", [8, 0, 8], 2));
+	assert.strictEqual(side(), before, "elbow on the same side of the shoulder-to-tip line");
+	assert(dist3(tip2(a, c), [8, 0, 8]) < 0.05);
+});
+test("the chain stops at an unconnected parent", () => {
+	const a = ikArm(false), c = bent();
+	const res = R.solveIK(a, c, 0, "b2", [6, 3, 9], 2);
+	assert.strictEqual(res.map((r) => r.id).join(), "b2");
+	bake(c, res);
+	near(R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 10]), [0, 0, 10], 1e-6, "head stays");
+	assert(dist3(tip2(a, c), [6, 3, 9]) < 10.5, "tip moved as close as one bone can");
+});
+test("chainLen 1 turns only the bone itself", () => {
+	const a = ikArm(), c = bent();
+	assert.strictEqual(R.solveIK(a, c, 0, "b2", [6, 3, 9], 1).length, 1);
+});
+test("a plane-restricted solve leaves the depth coordinate alone", () => {
+	const a = ikArm(), c = bent(), t = [6, 5, 9];
+	const res = R.solveIK(a, c, 0, "b2", t, 2, 1); // Y is the depth axis
+	bake(c, res);
+	const tp = tip2(a, c), el = R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 10]);
+	assert(Math.abs(tp[1]) < 1e-6 && Math.abs(el[1]) < 1e-6, "stays at Y=0: " + tp);
+	assert(Math.abs(tp[0] - 6) < 0.05 && Math.abs(tp[2] - 9) < 0.05, "reaches X/Z: " + tp);
+});
+
+console.log("Inserting and removing frames");
+const keyed = () => { const c = clipOf(6); [0, 2, 3, 5].forEach((f) => R.setKey(c, "b1", f, [f, 0, 0], [0, 0, 0])); return c; };
+const framesOf = (c) => c.tracks.b1.map((k) => k.f).join(",");
+test("insertFrames shifts keys at and after the playhead and grows the clip", () => {
+	const c = keyed();
+	assert.strictEqual(R.insertFrames(c, 2, 1), 1);
+	assert.strictEqual(c.frames, 7);
+	assert.strictEqual(framesOf(c), "0,3,4,6");
+});
+test("insertFrames stops at 64 frames", () => {
+	const c = keyed();
+	c.frames = 64;
+	assert.strictEqual(R.insertFrames(c, 0, 1), 0);
+	assert.strictEqual(framesOf(c), "0,2,3,5");
+	c.frames = 63;
+	assert.strictEqual(R.insertFrames(c, 0, 5), 1);
+	assert.strictEqual(c.frames, 64);
+});
+test("removeFrames drops the keys on the frame and closes the gap", () => {
+	const c = keyed();
+	assert.strictEqual(R.removeFrames(c, 2, 1), 1);
+	assert.strictEqual(c.frames, 5);
+	assert.strictEqual(framesOf(c), "0,2,4");
+});
+test("removeFrames keeps one frame and removes an emptied track", () => {
+	const c = clipOf(1, {});
+	assert.strictEqual(R.removeFrames(c, 0, 1), 0);
+	const d = clipOf(2); R.setKey(d, "b1", 1, [0, 0, 0], [0, 0, 0]);
+	R.removeFrames(d, 1, 1);
+	assert.strictEqual(d.frames, 1);
+	assert(!d.tracks.b1, "the empty track is gone");
+});
+test("insert then remove at the same frame restores the keys", () => {
+	const c = keyed();
+	R.insertFrames(c, 3, 2); R.removeFrames(c, 3, 2);
+	assert.strictEqual(c.frames, 6);
+	assert.strictEqual(framesOf(c), "0,2,3,5");
+});
+test("allKeys names every key inside the clip", () => {
+	const c = keyed(); R.setKey(c, "b2", 1, [0, 0, 0], [0, 0, 0]);
+	assert.strictEqual(R.allKeys(c).length, 5);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

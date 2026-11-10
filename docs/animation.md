@@ -46,6 +46,13 @@ Studio moves the shape, but the colours of each frame are painted by you. Either
    gets one (named after it, visible in the Bones list, with the model bound to it), so you never have to rig simple movement by hand.
    The model's resting position stays put; the move lives in the key. Pick another frame and move it again. Scaling is not animated
    (bones move and turn models), so S still changes the model itself.
+   **Picking and turning:** a click on a bone only selects it. A drag starts once the pointer moves a few pixels, so selecting never keys.
+   Turning by the tip or by a connected bone's body turns by the angle you swing from where you grabbed, so the bone doesn't jump to the
+   pointer. Hold Ctrl while turning to snap to 15 degree steps (Ctrl+Shift: 5 degrees), or while moving to snap to whole pixels; the
+   status line shows the turn angle. Short bones have a wider grab area.
+   **Keys:** **I** keys the selected bones, **Shift+I** keys the whole pose (every bone that has keys in the clip, or all bones) and
+   **Alt+I** removes the key. With no keys picked in the dopesheet, **Ctrl+C** copies this frame's pose (the selected bones, or all) and
+   **Ctrl+V** pastes it as keys on the current frame; **Ctrl+Shift+V** pastes it mirrored onto the other side's bones.
    **Gizmos** (the Gizmos checkbox under Bones): the selected bone shows a coloured ring per axis (X red, Y green, Z blue; drag to turn
    about it) and an arrow per axis (drag to slide the bone along it), only for the axes the current view can work with. Dragging a
    bone's body slides it across the view plane (in the tileset view that is X and height Z; the depth axis Y stays put), so to move a
@@ -54,13 +61,23 @@ Studio moves the shape, but the colours of each frame are painted by you. Either
    every bone, add the selected bone's turn, and draw a dashed line from a parent's tip to a child that is not connected.
    If a model was edited, moved or resized outside animation mode so that it no longer sits on its bones, the panel says so (nothing can
    bend a model that is far from every bone): use *Edit rest pose* to move the bones back to it. Duplicating a model keeps its bone.
+   **IK.** Each bone has an `IK chain` number in its panel (0 = off; 2 for an arm or leg). With the **IK** checkbox (next to Gizmos and
+   Names) ticked, dragging that bone's tip, or pressing **G** on it, moves the tip to the pointer and turns the bones up the chain to
+   reach it. The chain stops at a bone that is not connected to its parent, and the bend keeps its direction (a knee doesn't flip). It
+   works in the view's plane; **X** / **Y** / **Z** picks another plane. The result is ordinary rotation keys on every bone in the chain
+   on this frame, so export is unchanged. Names label such bones `IK n`.
 4. **Clips.** Any number of clips, each with its own frame count (1–64), fps, Loop setting and Albedo sheet. ▶ (or Space) plays it in the
    view the way the game will (loop, once or ping-pong); posing a bone stops playback first. Lowering the frame count keeps the keys past
    the end (the timeline says so) and raising it brings them back.
 5. **The dopesheet** (under the view) has a ruler, a row of every keyed frame, and one row per bone.
-   - Drag the ruler to scrub. Click a row to go to that frame and select its bone; click a bone's name to select it (Shift adds).
+   - `+ Frame` / `− Frame` insert or remove a frame at the playhead, moving later keys along (a clip holds up to 64 frames).
+   - **Zoom:** Ctrl+wheel over the timeline, or the `−` / `+` buttons. The zoom is remembered.
+   - Drag the ruler or the playhead line to scrub. Click a row to go to that frame and select its bone; click a bone's name to select it (Shift adds).
    - Click a key to pick it (Shift adds; a key in the All bones row picks every key on that frame), or drag across a row to box-select.
-   - Drag picked keys to move them, Alt-drag to copy. Delete or X removes them, Ctrl+C / Ctrl+V paste at the playhead, Esc drops the picks. Up / Down jump between keys.
+   - Drag picked keys to move them, Alt-drag to copy. Delete or X removes them, Ctrl+A picks every key, Esc drops the picks. Up / Down jump between keys. Double-click a key to go to its
+     frame and select its bone. Right-click a key for **Ease**, **Copy**, **Paste at playhead** and **Delete**.
+   - **Ctrl+C** copies the picked keys (with no keys picked, it copies this frame's pose, see step 3), and **Ctrl+V** pastes whichever
+     was copied last at the playhead.
    - **Ease** sets how the picked keys (or the selected bones' keys on this frame) leave for the next key: Linear, Ease in, Ease out, Ease in-out or Hold (keeps the pose until the next key). Eased keys show round, Hold square.
    - **Onion** shows the models on the previous (red) and next (green) frames as wires while stopped.
    - **Close loop** keys the first frame's pose on the last frame. **Mirror pose** flips this frame's pose across X onto the other side's bones (`arm.L` and `arm.R`, `Leg_l` and `Leg_r`, `LeftArm` and `RightArm`); a bone with no other side flips itself.

@@ -184,6 +184,29 @@
 		}
 		return out;
 	};
+	// Open n blank frames at `at`: keys on or after it move n later and the clip grows (64 at most; keys pushed off the end are dropped). -> n done.
+	R.insertFrames = (clip, at, n) => {
+		n = Math.max(0, Math.min(n | 0, 64 - clip.frames));
+		if (!n) return 0;
+		for (const id of Object.keys(clip.tracks)) for (const k of clip.tracks[id]) if (k.f >= at) k.f += n;
+		clip.frames += n;
+		for (const id of Object.keys(clip.tracks)) { clip.tracks[id] = clip.tracks[id].filter((k) => k.f < clip.frames); if (!clip.tracks[id].length) delete clip.tracks[id]; }
+		return n;
+	};
+	// Take n frames out at `at`: their keys go, later keys move n earlier, and the clip keeps at least one frame. -> n done.
+	R.removeFrames = (clip, at, n) => {
+		n = Math.max(0, Math.min(n | 0, clip.frames - 1, clip.frames - at));
+		if (!n) return 0;
+		for (const id of Object.keys(clip.tracks)) {
+			clip.tracks[id] = clip.tracks[id].filter((k) => k.f < at || k.f >= at + n);
+			for (const k of clip.tracks[id]) if (k.f >= at) k.f -= n;
+			if (!clip.tracks[id].length) delete clip.tracks[id];
+		}
+		clip.frames -= n;
+		return n;
+	};
+	// Every key in the clip, named for picking.
+	R.allKeys = (clip) => { const out = []; for (const id of Object.keys(clip.tracks)) for (const k of clip.tracks[id]) if (k.f < clip.frames) out.push({ id, f: k.f }); return out; };
 	// The last frame takes the first frame's pose, so a loop has no jump at the seam.
 	R.closeLoop = (clip, ids) => {
 		for (const id of ids) { const p = R.localPose(clip, id, 0); R.setKey(clip, id, clip.frames - 1, p.rot, p.pos); }
@@ -198,13 +221,15 @@
 	};
 	// Flip a pose across the X axis onto the other side's bones on this frame (a bone with no other side flips itself). Turns about X
 	// stay; turns about Y and Z and a move along X change sign.
+	R.mirrorBone = (anim, b) => { const name = R.mirrorName(b.name); return anim.bones.find((x) => x.name === name) || b; };
+	R.mirrorValues = (rot, pos) => ({ rot: [rot[0], -rot[1], -rot[2]], pos: [-pos[0], pos[1], pos[2]] });
 	R.mirrorPose = (anim, clip, frame, ids) => {
 		const out = [];
 		for (const id of ids) {
-			const b = R.bone(anim, id), name = b && R.mirrorName(b.name), other = (name && anim.bones.find((x) => x.name === name)) || b;
+			const b = R.bone(anim, id);
 			if (!b) continue;
-			const p = R.localPose(clip, id, frame);
-			out.push([other.id, [p.rot[0], -p.rot[1], -p.rot[2]], [-p.pos[0], p.pos[1], p.pos[2]]]);
+			const p = R.localPose(clip, id, frame), m = R.mirrorValues(p.rot, p.pos);
+			out.push([R.mirrorBone(anim, b).id, m.rot, m.pos]);
 		}
 		for (const [id, rot, pos] of out) R.setKey(clip, id, frame, rot, pos);
 	};
@@ -254,6 +279,53 @@
 		if (parent) local = m4.mul(m4.invert(parent), local);
 		const h = apply(local, bone.head);
 		return { rot: R.nearEuler(rotPart(local), R.localPose(clip, bone.id, frame).rot), pos: [h[0] - bone.head[0], h[1] - bone.head[1], h[2] - bone.head[2]] };
+	};
+
+	// Inverse kinematics by cyclic coordinate descent, as a posing aid: it returns new local poses (bake them with R.setKey) for the chain
+	// of `boneId` and up to chainLen-1 ancestors, so that the tip of `boneId` reaches the world point `target` (or gets as near as the
+	// chain can stretch). The chain stops at a bone that isn't connected to its parent: that bone turns, but is not moved. Turns keep
+	// each joint's current bend side, so knees and elbows don't flip. plane (0/1/2) limits every turn to that world axis (flat 2D posing).
+	// -> [{id, rot, pos}] from the root of the chain down to the tip bone.
+	R.solveIK = (anim, clip, frame, boneId, target, chainLen, plane) => {
+		const tipBone = R.bone(anim, boneId);
+		if (!tipBone) return [];
+		const chain = [];
+		for (let b = tipBone; b && chain.length < Math.max(1, chainLen | 0); b = b.parent && R.bone(anim, b.parent)) {
+			chain.push(b);
+			if (!(b.connected && b.parent)) break;
+		}
+		const over = {};
+		for (const b of chain) { const p = R.localPose(clip, b.id, frame); over[b.id] = { rot: p.rot.slice(), pos: p.pos.slice() }; }
+		const axisOf = plane === 0 || plane === 1 || plane === 2 ? [0, 1, 2].map((i) => (i === plane ? 1 : 0)) : null;
+		for (let it = 0; it < 30; it++) {
+			for (const b of chain) {
+				const mats = R.matrices(anim, clip, frame, over), mb = mats.get(b.id);
+				const j = apply(mb, b.head), tip = apply(mats.get(tipBone.id), tipBone.tail);
+				let v1 = v3.sub(tip, j), v2 = v3.sub(target, j), u, ang;
+				if (axisOf) {
+					v1[plane] = 0; v2[plane] = 0;
+					if (Math.hypot(...v1) < 1e-9 || Math.hypot(...v2) < 1e-9) continue;
+					const [p, q] = [(plane + 1) % 3, (plane + 2) % 3];
+					ang = Math.atan2(v1[p] * v2[q] - v1[q] * v2[p], v1[p] * v2[p] + v1[q] * v2[q]);
+					u = axisOf;
+				} else {
+					const l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
+					if (l1 < 1e-9 || l2 < 1e-9) continue;
+					const cr = [v1[1] * v2[2] - v1[2] * v2[1], v1[2] * v2[0] - v1[0] * v2[2], v1[0] * v2[1] - v1[1] * v2[0]], cl = Math.hypot(...cr);
+					ang = Math.atan2(cl, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]);
+					if (cl < 1e-9) { if (ang < 1) continue; u = Math.abs(v1[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]; u = v3.norm([v1[1] * u[2] - v1[2] * u[1], v1[2] * u[0] - v1[0] * u[2], v1[0] * u[1] - v1[1] * u[0]]); }
+					else u = cr.map((x) => x / cl);
+				}
+				if (Math.abs(ang) < 1e-7) continue;
+				const c = Math.cos(ang), s = Math.sin(ang), t = 1 - c, [ux, uy, uz] = u;
+				const Rw = [[t * ux * ux + c, t * ux * uy - s * uz, t * ux * uz + s * uy], [t * ux * uy + s * uz, t * uy * uy + c, t * uy * uz - s * ux], [t * ux * uz - s * uy, t * uy * uz + s * ux, t * uz * uz + c]];
+				const pm = b.parent && mats.get(b.parent), Rp = pm ? rotPart(pm) : [[1, 0, 0], [0, 1, 0], [0, 0, 1]], pose = over[b.id];
+				pose.rot = R.nearEuler(mm3(tr3(Rp), mm3(Rw, mm3(Rp, R.eulerToMat(pose.rot)))), pose.rot);
+			}
+			const tip = apply(R.matrices(anim, clip, frame, over).get(tipBone.id), tipBone.tail);
+			if (Math.hypot(tip[0] - target[0], tip[1] - target[1], tip[2] - target[2]) < 0.005) break;
+		}
+		return chain.reverse().map((b) => ({ id: b.id, rot: over[b.id].rot, pos: over[b.id].pos }));
 	};
 
 	// The models as they stand at a frame: copies (same ids) with the bound ones' vertices moved; the rest are shared as they are.
