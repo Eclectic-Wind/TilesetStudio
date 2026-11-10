@@ -169,6 +169,24 @@
 		return clips.length || warnings.length ? { clips, warnings } : null;
 	};
 
+	// The top-level `lights` (docs/export-schema.md): the project's lights, x/y in floor-plan px like footprints. `piece` is the piece
+	// under the light's floor point (area: its centre), read from maps.pieces (upper half, else lower), null off every piece.
+	Bundle.lights = (lights, maps) => {
+		const r2 = (v, d) => Math.round((Number(v) || 0) * 100) / 100 || d || 0;
+		const pieceAt = (x, y) => {
+			const fx = Math.floor(x), fy = Math.floor(y);
+			if (fx < 0 || fy < 0 || fx >= maps.w || fy >= maps.rows) return null;
+			const o = (maps.w * maps.h + fy * maps.w + fx) * 4, b = maps.pieces, up = b[o] | (b[o + 1] << 8), lo = b[o + 2] | (b[o + 3] << 8);
+			return up || lo || null;
+		};
+		return lights.map((l, i) => ({
+			id: String(l.id || "light" + (i + 1)), name: String(l.name || ""), type: l.type === "area" ? "area" : "point",
+			x: r2(l.x), y: r2(l.y), z: r2(l.z), radius: r2(l.radius, 1), color: /^#[0-9a-f]{6}$/i.test(l.color) ? l.color.toLowerCase() : "#ffd878",
+			intensity: r2(l.intensity), ...(l.type === "area" ? { w: r2(l.w), h: r2(l.h) } : {}),
+			priority: Math.round(Number(l.priority) || 0), shadows: l.shadows !== false, piece: pieceAt(Number(l.x), Number(l.y)),
+		}));
+	};
+
 	// -> the bundle object (JSON.stringify it to write the file).
 	// p: {name, bundleId, atlas (PNG data URL of the art), art: {w, h}, objects, settings, result (processed, with pieceMap), now (ISO 8601)}
 	Bundle.build = (p) => {
@@ -184,6 +202,7 @@
 			maps: { w: maps.w, h: maps.h, rows: maps.rows, materials: maps.materials, highlights: maps.highlights, data: base64(maps.data), pieces: base64(maps.pieces) },
 			footprints: P.footprints(p.objects, art, result, settings),
 			...(anim ? { anim } : {}),
+			...(p.lights && p.lights.length ? { lights: Bundle.lights(p.lights, maps) } : {}),
 		};
 	};
 })();

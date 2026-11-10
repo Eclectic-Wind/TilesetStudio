@@ -99,7 +99,7 @@ for (const c of (anim && anim.clips) || []) {
 const name = TS.Bundle.exportName(project.name, project.exportName);
 const bundle = TS.Bundle.build({
 	name, bundleId: project.bundleId || crypto.randomUUID(), atlas: project.tileset, art, objects, settings, result, now: new Date().toISOString(),
-	anim, albedoOf: (clip) => sheets.get(clip.id) || null, encodePNG: (rgba, w, h) => encodePNG(rgba, w, h).toString("base64"),
+	anim, lights: project.lights || [], albedoOf: (clip) => sheets.get(clip.id) || null, encodePNG: (rgba, w, h) => encodePNG(rgba, w, h).toString("base64"),
 });
 const text = JSON.stringify(bundle);
 fs.writeFileSync(outPath, text);
