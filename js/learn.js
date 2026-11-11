@@ -692,6 +692,63 @@
 		},
 	});
 
+	// N2b ------------------------------------------------------------------------------------------------------------
+	L.push({
+		section: "anim", title: "IK limbs and pins", dur: 27,
+		caps: [
+			{ t: 0, say: "IK: drag a foot and the whole leg bends to follow.", sub: "Drag the ball at the shin's tip (the ankle). The thigh and shin both turn, and both get a key on this frame. IK limbs is ticked under Bones." },
+			{ t: 6.5, say: "It works on any limb, with no setup.", sub: "A bone whose head sits on its parent's tip is a joint, as in rigs from Blender. The bone's IK chain says how many bones bend: Auto is 2, an arm or a leg." },
+			{ t: 12, say: "Pin the feet, then pose the body.", sub: "Select a foot and press P (or 📌 Pin). Move or turn the hips: the legs bend and the feet stay planted, angle and all." },
+			{ t: 20, say: "Pins hold on every frame you pose.", sub: "Go to the next frame and pose again: the feet are still where you pinned them. P again unpins. Pins only help you pose: the game gets the keys." },
+		],
+		extra: `<ol class="todo">
+			<li style="--d:0s"><span>1</span><div><b>Plant a foot: select it, press P.</b><br><small>A red pin marks the spot. Pin the other foot too for a crouch or a step.</small></div></li>
+			<li style="--d:.12s"><span>2</span><div><b>Select the hips, press G (or R) and pose.</b><br><small>The pinned legs bend to keep the feet put. Every bent bone is keyed.</small></div></li>
+			<li style="--d:.24s"><span>3</span><div><b>Next frame, same again. Unpin with P.</b><br><small>Unpin all (under Bones) clears every pin in the clip; the poses stay keyed.</small></div></li>
+		</ol>`,
+		make() {
+			const GROUND = 300, L1 = 72, L2 = 72, PIN = "#ff5b5b", BONE = "#5ad1ff", SEL = "#ffcf4a";
+			// Two-bone IK, knee bending forward (+x): the knee for a hip and ankle.
+			const knee = (h, f) => {
+				const dx = f[0] - h[0], dy = f[1] - h[1], d = clamp(Math.hypot(dx, dy), 1, L1 + L2 - 0.5), base = Math.atan2(dy, dx);
+				const a = Math.acos(clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1));
+				const k1 = [h[0] + Math.cos(base - a) * L1, h[1] + Math.sin(base - a) * L1], k2 = [h[0] + Math.cos(base + a) * L1, h[1] + Math.sin(base + a) * L1];
+				return k1[0] > k2[0] ? k1 : k2;
+			};
+			const reach = (h, f) => { const dx = f[0] - h[0], dy = f[1] - h[1], d = Math.hypot(dx, dy), m = L1 + L2 - 0.5; return d <= m ? f : [h[0] + (dx / d) * m, h[1] + (dy / d) * m]; };
+			const bone = (g, a, b, col, w = 7) => { g.save(); g.strokeStyle = col; g.lineWidth = w; g.lineCap = "round"; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); g.restore(); };
+			const ball = (g, p, col, r = 6) => { g.save(); g.fillStyle = "#14161d"; g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.arc(p[0], p[1], r, 0, 7); g.fill(); g.stroke(); g.restore(); };
+			const pinAt = (g, p, a) => { if (a <= 0) return; g.save(); g.globalAlpha = a; g.strokeStyle = PIN; g.lineWidth = 2.5; g.beginPath(); g.moveTo(p[0], p[1] - 4); g.lineTo(p[0], p[1] - 22); g.stroke(); g.fillStyle = PIN; g.beginPath(); g.arc(p[0], p[1] - 25, 6, 0, 7); g.fill(); g.restore(); };
+			const pointer = (g, p) => { g.save(); g.fillStyle = "#fff"; g.strokeStyle = "#14161d"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(p[0] + 4, p[1] + 17); g.lineTo(p[0] + 8, p[1] + 11); g.lineTo(p[0] + 15, p[1] + 12); g.closePath(); g.fill(); g.stroke(); g.restore(); };
+			const leg = (g, h, f, col, foot) => { const ff = reach(h, f), k = knee(h, ff); bone(g, h, k, col); bone(g, k, ff, col); bone(g, ff, [ff[0] + 24, ff[1] + 2], foot || col, 5); ball(g, k, col); ball(g, ff, col); return ff; };
+			return (g, t) => {
+				bg(g);
+				g.fillStyle = "#23252e"; g.fillRect(60, GROUND + 4, W - 120, 4);
+				const pinned = t >= 12, posing = t >= 13.5;
+				// hips: still while dragging the foot; with pins they drop into a crouch, lean forward and come back up (twice, the second time on frame 5)
+				const bob = posing ? Math.sin(((t - 13.5) / 6.5) * Math.PI * 2) : 0, sway = posing ? Math.sin(((t - 13.5) / 6.5) * Math.PI * 2 + 0.6) : 0;
+				const hip = [W / 2 - 40 + 22 * Math.max(0, sway), GROUND - 132 + 34 * Math.max(0, bob)];
+				// the front foot: dragged up and forward with the pointer before the pins, then planted
+				const drag = t < 12 ? Math.sin(seg(t, 1.2, 11) * Math.PI * 2) * 0.5 + 0.5 : 0, lift = t < 12 ? sege(t, 1, 2.2) * (1 - sege(t, 10.2, 11.6)) : 0;
+				const front = [W / 2 + 20 + 50 * lift * drag, GROUND - 4 - 62 * lift * (0.4 + 0.6 * drag)], back = [W / 2 - 92, GROUND - 4];
+				// body: spine and head over the hips, then the legs (front one selected while it's dragged)
+				const chest = [hip[0] + 10 + 14 * Math.max(0, sway), hip[1] - 96];
+				bone(g, hip, chest, BONE); g.save(); g.strokeStyle = BONE; g.lineWidth = 2.5; g.beginPath(); g.arc(chest[0] + 4, chest[1] - 24, 17, 0, 7); g.stroke(); g.restore();
+				leg(g, hip, back, BONE);
+				const fa = leg(g, hip, front, t < 12 ? SEL : BONE);
+				ball(g, hip, posing ? SEL : BONE, 7);
+				if (t < 11.6 && t > 0.6) pointer(g, [fa[0] + 3, fa[1] + 3]);
+				if (t >= 6.5 && t < 12) { text(g, "IK chain: Auto (2)", fa[0] + 40, fa[1] - 34, C.ok, 13, "left", seg(t, 6.5, 7.3)); arrow(g, [fa[0] + 38, fa[1] - 28], [fa[0] + 10, fa[1] - 8], C.ok, seg(t, 6.5, 7.3), 2); }
+				pinAt(g, [front[0], GROUND - 4], pinned ? sege(t, 12, 12.6) : 0); pinAt(g, back, pinned ? sege(t, 12.4, 13) : 0);
+				pill(g, W / 2, 30, t < 6.5 ? "drag the ankle: thigh and shin bend" : t < 12 ? "imported rigs work as they are" : t < 20 ? "📌 feet pinned · posing the hips" : "frame 5: the feet are still pinned", t < 12 ? C.amber : C.ok, 1, 14);
+				// the timeline: frame 1 posed, then frame 5
+				const fr = t < 20 ? 0 : 4;
+				frameRow(g, 142, 338, 54, 8, fr, t > 22 ? [0, 4] : [0]);
+				pill(g, 90, 351, "Clip 1", C.amber, 1, 12);
+			};
+		},
+	});
+
 	// N3 -------------------------------------------------------------------------------------------------------------
 	L.push({
 		section: "anim", title: "Fix the timing", dur: 24,

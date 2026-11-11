@@ -31,6 +31,7 @@
 			this.usePrisms = true;   // shadow test: prisms decide where to look, the floor spans decide the shadow
 			this.showPrisms = false; // V: draw the prism boxes
 			this.ambient = 0.18;
+			this._toL = [0, 0, 0]; // scratch vector for the per-pixel shadow test
 			this.result = null;
 			this.settings = null;
 			this.image = null;
@@ -56,21 +57,30 @@
 
 		// The lights that shine: the project's, else the preview light.
 		activeLights() { return this.lights.length ? this.lights : this.light.on ? [this.light] : []; }
-		// The light the GPU renderer uses (it takes one point light): the selected, else the first.
+		// The selected light, else the first, else the preview light.
 		firstLight() { return this.lights.find((l) => l.id === this.sel) || this.lights[0] || this.light; }
+		// Redraw on the next frame, once however many times it is asked for before then (pointer drags, sliders).
+		requestRender() {
+			if (this._raf) return;
+			this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
+		}
 
 		// Per-render light list for the per-pixel code: colour x intensity, sample points (an area light: an n x n grid over its
 		// rectangle, n shrinking as area lights multiply so the per-pixel cost stays bounded) and each sample's shadow table.
 		_prepLights() {
 			const act = this.activeLights(), areas = act.filter((l) => l.type === "area").length, n = areas ? TS.clamp(Math.floor(Math.sqrt(16 / areas)), 1, 3) : 1;
 			const useTab = this.mode === "lit" && this.shadows && this.usePrisms;
+			// Light's-eye tables are cached by floor point for the current prisms: only a light that moved builds a new one.
+			const prisms = useTab ? this.prisms() : null, old = this._tabs && this._tabs.prisms === prisms ? this._tabs.map : new Map(), map = new Map();
+			const tab = (q) => { const k = q.x + "," + q.y; let t = old.get(k) || map.get(k); if (!t) t = TS.Prism.table(prisms, q); map.set(k, t); return t; };
+			this._tabs = { prisms, map };
 			this._L = act.map((l) => {
 				const hex = /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#ffffff", k = l.intensity == null ? 1 : Math.max(0, l.intensity);
 				const col = [1, 3, 5].map((j) => parseInt(hex.substr(j, 2), 16) / 255 * k), pts = [];
 				if (l.type === "area" && n > 1) for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) pts.push({ x: l.x + ((a + 0.5) / n - 0.5) * l.w, y: l.y + ((b + 0.5) / n - 0.5) * l.h });
 				else pts.push({ x: l.x, y: l.y });
 				const sh = this.shadows && l.shadows !== false;
-				for (const q of pts) q.tab = sh && useTab ? TS.Prism.table(this.prisms(), q) : null;
+				for (const q of pts) q.tab = sh && useTab ? tab(q) : null;
 				return { z: l.z, radius: l.radius, col, pts, sh, w: 1 / pts.length };
 			});
 		}
@@ -170,7 +180,7 @@
 			const activeGPU=this.mode==='lit' && this.rendererMode!=='current';
 			const status=document.getElementById('lit_renderer_status');
 			if(status)status.textContent='';
-			if(r && activeGPU){try{if(TS.AnimUI?.on)throw Error('Animation uses Current renderer');this.gpu=this.gpu||new TS.LitGPU();this.gpuOff=this.gpu.render(this);if(status)status.textContent='GPU lighting · reference shadows';}catch(e){if(status)status.textContent='Current fallback: '+e.message;}}
+			if(r && activeGPU){try{if(TS.AnimUI?.on)throw Error('Animation uses Current renderer');this.gpu=this.gpu||new TS.LitGPU();this.gpuOff=this.gpu.render(this);if(status)status.textContent=`GPU lighting · ${this.gpu.lights} light sample${this.gpu.lights===1?'':'s'} · reference shadows`;}catch(e){if(status)status.textContent='Current fallback: '+e.message;}}
 			const comparing=!!this.gpuOff && this.rendererMode==='compare';this.comparePane.hidden=!comparing;this.primaryPane.parentElement.classList.toggle('lit-comparing',comparing);
 			if(this.gpuOff && this.rendererMode==='gpu'){this.off=this.gpuOff;this.draw();return;}
 			if (r) {
@@ -492,7 +502,7 @@
 				const inv = 1 / dist, lx = tx * inv, ly = ty * inv, lz = tz * inv, att = (1 - dist / L.radius) ** 2;
 				let shade = Math.max(0, nx * lx + ny * ly + nz * lz) * att * L.w;
 				if (shade <= 0) continue;
-				if (L.sh && this._shadowed(r, p, [tx, ty, tz], q.tab)) continue;
+				if (L.sh) { const t = this._toL; t[0] = tx; t[1] = ty; t[2] = tz; if (this._shadowed(r, p, t, q.tab)) continue; }
 				const hx = lx + v[0], hy = ly + v[1], hz = lz + v[2], hl = Math.hypot(hx, hy, hz), ndh = hl > 1e-12 ? nx * (hx / hl) + ny * (hy / hl) + nz * (hz / hl) : 0;
 				const sp = Math.pow(Math.max(0, ndh), shin) * norm * shade;
 				dr += shade * L.col[0]; dg += shade * L.col[1]; db += shade * L.col[2]; sr += sp * L.col[0]; sg += sp * L.col[1]; sb += sp * L.col[2];

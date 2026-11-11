@@ -4,6 +4,31 @@
 (() => {
 	const NEWS = [
 		{
+			id: "2026-11-12",
+			date: "12 Nov 2026",
+			title: "Pins, IK that just works, faster GPU lighting",
+			sections: [
+				["Animation", [
+					"<b>Pins</b>: select a foot and press <b>P</b> to plant it. Move or turn the hips and the leg bends so the foot stays put, on every frame you pose. <b>P</b> again unpins. Steps below.",
+					"<b>IK limbs works out of the box</b>: drag the ball at a shin's or forearm's tip and the whole leg or arm bends. No IK chain to set (it's <b>Auto</b>).",
+					"Rigs from Blender work as they are: a bone whose head sits on its parent's tip counts as a joint, with no need to tick Connected.",
+					"New lesson: <b>Learn ▸ Animation ▸ IK limbs and pins</b>.",
+				]],
+				["Lit view", [
+					"The <b>GPU</b> renderer now lights every light in the scene (area lights too) and matches Current.",
+					"Much quicker while editing lights: each light's shadows are kept, so moving one light or changing a colour redraws fast. With GPU selected, the lighting follows a light live as you drag it in the 3D view.",
+				]],
+			],
+			stepsTitle: "Plant a foot with pins",
+			ik: [
+				"Animate panel, under Bones: keep <b>IK limbs</b> ticked.",
+				"Select the <b>foot</b> (or hand) and press <b>P</b>. A red pin marks the spot. Pin the other foot too if both stay down.",
+				"Select the <b>hips</b> and press <b>G</b> (move) or <b>R</b> (turn). The legs bend, the feet stay, and every bent bone is keyed.",
+				"Go to the next frame and pose the hips again: the feet are still pinned. <b>P</b> on a pinned bone unpins it; <b>Unpin all</b> clears the clip.",
+				"Pins only help you pose: they save as ordinary keys, so exports don't change.",
+			],
+		},
+		{
 			id: "2026-11-10",
 			date: "10 Nov 2026",
 			title: "Lights, and a better animation workflow",
@@ -37,7 +62,7 @@
 	$("wn_body").innerHTML = NEWS.map((n, i) => `<section${i ? ' class="old"' : ""}>
 		<h3>${n.title} <span class="dim">${n.date}</span></h3>
 		${n.sections.map(([h, items]) => `<h4>${h}</h4>${list(items)}`).join("")}
-		${n.ik ? `<h4>How to use IK</h4><ol>${n.ik.map((t) => `<li>${t}</li>`).join("")}</ol>` : ""}
+		${n.ik ? `<h4>${n.stepsTitle || "How to use IK"}</h4><ol>${n.ik.map((t) => `<li>${t}</li>`).join("")}</ol>` : ""}
 	</section>`).join("");
 
 	const modal = $("whatsnew");

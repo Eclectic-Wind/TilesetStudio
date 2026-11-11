@@ -283,7 +283,7 @@
 
 	// Inverse kinematics by cyclic coordinate descent, as a posing aid: it returns new local poses (bake them with R.setKey) for the chain
 	// of `boneId` and up to chainLen-1 ancestors, so that the tip of `boneId` reaches the world point `target` (or gets as near as the
-	// chain can stretch). The chain stops at a bone that isn't connected to its parent: that bone turns, but is not moved. Turns keep
+	// chain can stretch). The chain stops at a bone that isn't jointed to its parent (R.joined): that bone turns, but is not moved. Turns keep
 	// each joint's current bend side, so knees and elbows don't flip. plane (0/1/2) limits every turn to that world axis (flat 2D posing).
 	// -> [{id, rot, pos}] from the root of the chain down to the tip bone.
 	R.solveIK = (anim, clip, frame, boneId, target, chainLen, plane) => {
@@ -292,15 +292,19 @@
 		const chain = [];
 		for (let b = tipBone; b && chain.length < Math.max(1, chainLen | 0); b = b.parent && R.bone(anim, b.parent)) {
 			chain.push(b);
-			if (!(b.connected && b.parent)) break;
+			if (!R.joined(anim, b)) break;
 		}
 		const over = {};
 		for (const b of chain) { const p = R.localPose(clip, b.id, frame); over[b.id] = { rot: p.rot.slice(), pos: p.pos.slice() }; }
 		const axisOf = plane === 0 || plane === 1 || plane === 2 ? [0, 1, 2].map((i) => (i === plane ? 1 : 0)) : null;
+		// Only the tip bone's line up to the root is posed in the loop (a rig's other bones don't move the chain).
+		const line = new Set(), bones = R.ordered(anim), byId = new Map(bones.map((b) => [b.id, b]));
+		for (let b = tipBone; b && !line.has(b.id); b = b.parent && byId.get(b.parent)) line.add(b.id);
+		const ord = { bones: bones.filter((b) => line.has(b.id)) }, mats = () => R.matrices(ord, clip, frame, over);
 		for (let it = 0; it < 30; it++) {
 			for (const b of chain) {
-				const mats = R.matrices(anim, clip, frame, over), mb = mats.get(b.id);
-				const j = apply(mb, b.head), tip = apply(mats.get(tipBone.id), tipBone.tail);
+				const all = mats(), mb = all.get(b.id);
+				const j = apply(mb, b.head), tip = apply(all.get(tipBone.id), tipBone.tail);
 				let v1 = v3.sub(tip, j), v2 = v3.sub(target, j), u, ang;
 				if (axisOf) {
 					v1[plane] = 0; v2[plane] = 0;
@@ -319,13 +323,84 @@
 				if (Math.abs(ang) < 1e-7) continue;
 				const c = Math.cos(ang), s = Math.sin(ang), t = 1 - c, [ux, uy, uz] = u;
 				const Rw = [[t * ux * ux + c, t * ux * uy - s * uz, t * ux * uz + s * uy], [t * ux * uy + s * uz, t * uy * uy + c, t * uy * uz - s * ux], [t * ux * uz - s * uy, t * uy * uz + s * ux, t * uz * uz + c]];
-				const pm = b.parent && mats.get(b.parent), Rp = pm ? rotPart(pm) : [[1, 0, 0], [0, 1, 0], [0, 0, 1]], pose = over[b.id];
+				const pm = b.parent && all.get(b.parent), Rp = pm ? rotPart(pm) : [[1, 0, 0], [0, 1, 0], [0, 0, 1]], pose = over[b.id];
 				pose.rot = R.nearEuler(mm3(tr3(Rp), mm3(Rw, mm3(Rp, R.eulerToMat(pose.rot)))), pose.rot);
 			}
-			const tip = apply(R.matrices(anim, clip, frame, over).get(tipBone.id), tipBone.tail);
+			const tip = apply(mats().get(tipBone.id), tipBone.tail);
 			if (Math.hypot(tip[0] - target[0], tip[1] - target[1], tip[2] - target[2]) < 0.005) break;
 		}
 		return chain.reverse().map((b) => ({ id: b.id, rot: over[b.id].rot, pos: over[b.id].pos }));
+	};
+
+	// A joint, for IK and pins: the bone is Connected, or its head sits on its parent's tip (imported rigs come in like that, without
+	// the Connected flag).
+	R.joined = (anim, b) => {
+		const p = b && b.parent && R.bone(anim, b.parent);
+		if (!p) return false;
+		return !!b.connected || Math.hypot(b.head[0] - p.tail[0], b.head[1] - p.tail[1], b.head[2] - p.tail[2]) < 0.01;
+	};
+	const blen = (b) => Math.hypot(b.tail[0] - b.head[0], b.tail[1] - b.head[1], b.tail[2] - b.head[2]);
+	// The IK chain a bone's tip drag poses: its own "IK chain" setting, else Auto: the bone and its parent (an arm or a leg) when it is
+	// jointed to its parent, else the bone alone.
+	R.ikLen = (anim, b) => (b.ik > 0 ? b.ik : R.joined(anim, b) ? 2 : 1);
+
+	// Pins: clip.pins = {boneId: {mode, at: [x, y, z], rots: {boneId: world 3x3}}}, a posing aid that keeps part of the body in place
+	// (a foot planted on the ground, a hand on a table) while the rest is posed. After every pose edit the pinned limb is re-solved
+	// by IK on that frame and keyed, so the pin holds on whichever frame you are posing. Not exported: only the keys it writes are.
+	//   "tip"   the bone's tip stays at `at`, its IK chain bends to reach it (pin a shin: the ankle stays); bones hanging off its tip
+	//           (a foot) keep their angle.
+	//   "whole" a hand or foot: the end of a jointed limb (thigh > shin > foot) that is the last bone or short next to its parent (a
+	//           foot with toes, a hand with fingers). It stays where it is, angle and all, and the limb above bends to keep its head there.
+	const I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+	R.pinMode = (anim, b) => {
+		const p = R.bone(anim, b.parent);
+		if (b.ik > 0 || !R.joined(anim, b) || !R.joined(anim, p)) return "tip";
+		const end = !anim.bones.some((x) => x.parent === b.id && R.joined(anim, x));
+		return end || blen(b) < 0.5 * blen(p) ? "whole" : "tip";
+	};
+	R.makePin = (anim, clip, frame, b) => {
+		const mats = R.matrices(anim, clip, frame), mode = R.pinMode(anim, b), rots = {};
+		const held = mode === "whole" ? [b] : anim.bones.filter((x) => x.parent === b.id && R.joined(anim, x));
+		for (const h of held) rots[h.id] = rotPart(mats.get(h.id));
+		return { mode, at: apply(mats.get(b.id), mode === "whole" ? b.head : b.tail), rots };
+	};
+	// Re-solve every pin (except the bones in `skip`) on this frame and key the bones it moves. plane: the view's depth axis; the
+	// limb bends flat in the view first, and in 3D only when that can't reach. -> the pinned bone ids that were applied.
+	R.applyPins = (anim, clip, frame, skip, plane) => {
+		const pins = clip && clip.pins, done = [];
+		if (!pins) return done;
+		for (const id of Object.keys(pins)) {
+			const b = R.bone(anim, id), pin = pins[id];
+			if (!b) { delete pins[id]; continue; }
+			if (skip && skip.has(id)) continue;
+			const from = pin.mode === "whole" ? R.bone(anim, b.parent) : b;
+			if (!from) continue;
+			const len = R.ikLen(anim, from), miss = (res) => {
+				const over = {};
+				for (const r of res) over[r.id] = r;
+				const t = apply(R.matrices(anim, clip, frame, over).get(from.id), from.tail);
+				return Math.hypot(t[0] - pin.at[0], t[1] - pin.at[1], t[2] - pin.at[2]);
+			};
+			let res = R.solveIK(anim, clip, frame, from.id, pin.at, len, plane);
+			if (plane !== undefined && miss(res) > 0.5) res = R.solveIK(anim, clip, frame, from.id, pin.at, len);
+			for (const r of res) R.setKey(clip, r.id, frame, r.rot, r.pos);
+			const mats = R.matrices(anim, clip, frame);
+			for (const hid of Object.keys(pin.rots || {})) {
+				const h = R.bone(anim, hid);
+				if (!h) continue;
+				const pm = h.parent && mats.get(h.parent), Rp = pm ? rotPart(pm) : I3, cur = R.localPose(clip, hid, frame);
+				R.setKey(clip, hid, frame, R.nearEuler(mm3(tr3(Rp), pin.rots[hid]), cur.rot), cur.pos);
+			}
+			done.push(id);
+		}
+		return done;
+	};
+	// How far each pinned point is from where its bone is now (0: held), for the overlay.
+	R.pinGap = (anim, clip, frame, id) => {
+		const b = R.bone(anim, id), pin = clip && clip.pins && clip.pins[id];
+		if (!b || !pin) return 0;
+		const p = apply(R.matrices(anim, clip, frame).get(b.id), pin.mode === "whole" ? b.head : b.tail);
+		return Math.hypot(p[0] - pin.at[0], p[1] - pin.at[1], p[2] - pin.at[2]);
 	};
 
 	// The models as they stand at a frame: copies (same ids) with the bound ones' vertices moved; the rest are shared as they are.

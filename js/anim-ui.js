@@ -43,6 +43,32 @@
 		return out;
 	}
 	// The selected bones that have no selected ancestor (they carry the rest along when posed).
+	// --- Pins (see Rig.applyPins): P or the Pin button pins the selected bones where they are on this frame, or unpins them. ---
+	const viewPlane = () => (S().viewLock ? S().viewLock.k : 1);
+	// Re-solve the pins on the frame on show (skip: bones being posed directly). -> true when any pin moved something.
+	function holdPins(skip) {
+		const a = A(), c = clip();
+		return !!(c && c.pins && Rig.applyPins(a, c, a.frame, skip, viewPlane()).length);
+	}
+	function togglePins() {
+		const a = A(), c = clip(), ids = selIds();
+		if (!ids.length) { api().toast("Select a bone first (a shin or a foot to plant a foot), then press P.", "bad"); return; }
+		if (restMode) { api().status("Pins work while posing: leave the rest pose first (Tab)."); return; }
+		if (playing) togglePlay();
+		const off = ids.every((id) => c.pins && c.pins[id]);
+		edit(() => {
+			if (off) { for (const id of ids) delete c.pins[id]; if (!Object.keys(c.pins).length) delete c.pins; }
+			else { c.pins = c.pins || {}; for (const id of ids) c.pins[id] = Rig.makePin(a, c, a.frame, Rig.bone(a, id)); }
+		});
+		const names = ids.map((id) => Rig.bone(a, id).name).join(", ");
+		api().status(off ? `Unpinned ${names}.` : `Pinned ${names}: ${ids.length > 1 ? "they stay" : "it stays"} put while you pose the rest (move the hips with G, turn the body...), on any frame. P again unpins.`);
+	}
+	function pinRow(a, c, bone) {
+		const ids = Object.keys((c && c.pins) || {}).filter((id) => Rig.bone(a, id)), pinned = bone && ids.includes(bone.id);
+		const what = (id) => { const b = Rig.bone(a, id), p = c.pins[id], n = Rig.ikLen(a, b); return p.mode === "whole" ? `${b.name} stays as it is; the limb above it bends` : `${b.name}'s tip stays; ${n} bone${n > 1 ? "s" : ""} bend`; };
+		return `<div class="arow"><button id="an_pin" class="${pinned ? "on" : ""}" title="Pin (P): keep the selected bone where it is while you pose the rest of the body, on this frame and any other. Pin a foot (or the shin, whose tip is the ankle) to plant it on the ground, then move or turn the hips: the leg bends so the foot stays. The bent bones are keyed as you pose."${bone && !restMode ? "" : " disabled"}>📌 ${pinned ? "Unpin" : "Pin"} (P)</button>${ids.length ? `<button id="an_unpinall" title="Remove every pin in this clip (the poses they made stay keyed)">Unpin all</button>` : ""}</div>
+			${ids.length ? `<ul class="pinlist">${ids.map((id) => `<li title="${esc(what(id))}">📌 ${esc(Rig.bone(a, id).name)} <span class="dim">${c.pins[id].mode === "whole" ? "whole bone" : "tip"}</span> <button class="link" data-unpin="${id}" title="Unpin">✕</button></li>`).join("")}</ul>` : ""}`;
+	}
 	function rootsOf(a, ids) {
 		const set = new Set(ids);
 		return ids.filter((id) => { for (let p = Rig.bone(a, id).parent, n = 0; p && n < 1000; p = (Rig.bone(a, p) || {}).parent, n++) if (set.has(p)) return false; return true; });
@@ -411,16 +437,17 @@
 			<div class="arow"><button id="an_models" title="The models this flipbook animates: select them in the view, then press this. The pieces they belong to are swapped for the frames while the clip plays; the frames are the Albedo painted in Aseprite. When bones move the models, height, normals, the floor shadow (exact floor spans, oblique projection) and collision follow them frame by frame.">Use selected models</button><button id="an_modelsclear"${(c.models || []).length ? "" : " disabled"}>Clear</button></div>
 			<p class="dim">${clipModels(c).length ? `Flipbook of ${clipModels(c).join(", ")}.` : "No models chosen: the game gets no frames from this clip."} Export ▾ shows what goes into the game.</p>`;
 		h = section("clip", "Clip", h);
-		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label><label class="chk" title="Inverse kinematics: dragging the tip of a bone that has an IK chain (see the bone's IK chain field) poses the whole chain, and keys every bone in it. Off: tips turn only their own bone."><input id="an_ik" type="checkbox"${ikOn ? " checked" : ""}> IK</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
+		let rig = `<div class="arow"><label class="chk" title="Coloured turn rings and move arrows on the selected bone: drag a ring to turn about that axis (red X, green Y, blue Z), an arrow to slide the bone along it. Only the axes the current view can work with show."><input id="an_gz" type="checkbox"${showGizmos ? " checked" : ""}> Gizmos</label><label class="chk" title="Bone names in the view, with the selected bone's turn, and dashed lines from a parent's tip to a child that isn't connected."><input id="an_names" type="checkbox"${showNames ? " checked" : ""}> Names</label><label class="chk" title="IK limbs (inverse kinematics): drag the ball at a hand or foot (the tip of a forearm or shin) and the whole arm or leg bends to follow, keying every bone in it. Works on any bone connected to its parent; the bone's IK chain field sets how many bones bend. Off: dragging a tip only turns that one bone."><input id="an_ik" type="checkbox"${ikOn ? " checked" : ""}> IK limbs</label></div><ul id="an_bones" class="bonelist">${a.bones.length ? Rig.ordered(a).map((b) => { const nk = (c.tracks[b.id] || []).length; return `<li data-id="${b.id}" class="${isSel(b.id) ? "on" : ""}" style="padding-left:${6 + depth(b) * 12}px" title="Click to select, Shift / Ctrl-click to add">${esc(b.name)}<span class="dim">${bound(b.id) ? ` · ${bound(b.id)} model${bound(b.id) > 1 ? "s" : ""}` : ""}</span>${nk ? `<span class="keyflag" title="${nk} key${nk > 1 ? "s" : ""} in this clip"> ◆${nk}</span>` : ""}</li>`; }).join("") : '<li class="dim empty">No bones yet. Add one below, or just move a model with G / R on a frame: it gets a bone of its own.</li>'}</ul>
 			${(() => { const away = S().objects.filter((o) => a.bind[o.id] && Rig.awayFromBones(a, o)).map((o) => esc(o.name)); return away.length ? `<p class="warnline" title="The bones keep the pose they were rigged in. Use Edit rest pose to move the bones back to the model, or Bind selected models to a bone beside it.">⚠ ${away.join(", ")} ${away.length > 1 ? "sit" : "sits"} away from ${away.length > 1 ? "their" : "its"} bones (edited after rigging?), so nothing bends. Edit rest pose to realign the bones.</p>` : ""; })()}
 			<div class="arow"><button id="an_boneadd" title="A bone at the 3D cursor, 24 px tall. With a bone selected, the new one starts at its tip and is its child.">＋ Bone</button>
 			<button id="an_bonemodel" title="One bone per selected model, from the bottom of the model to its top, bound to it">Bone per model</button>
-			<button id="an_rest" class="${restMode ? "on" : ""}" title="Edit the rest pose (Tab): drag a bone's head, tip or body to where it belongs. Models show at rest meanwhile.">${restMode ? "Done (Tab)" : "Edit rest pose"}</button><button id="an_bonedel" class="danger" title="Delete the selected bone(s); their children move up"${bone ? "" : " disabled"}>Delete</button></div>`;
+			<button id="an_rest" class="${restMode ? "on" : ""}" title="Edit the rest pose (Tab): drag a bone's head, tip or body to where it belongs. Models show at rest meanwhile.">${restMode ? "Done (Tab)" : "Edit rest pose"}</button><button id="an_bonedel" class="danger" title="Delete the selected bone(s); their children move up"${bone ? "" : " disabled"}>Delete</button></div>
+			${pinRow(a, c, bone)}`;
 		if (bone) {
 			rig += `<div class="boneprops"><div class="arow"><label>Name <input id="an_bname" type="text" value="${esc(bone.name)}"></label></div>
 				<div class="arow"><label>Parent <select id="an_bparent"><option value="">(none)</option>${Rig.ordered(a).filter((b) => b.id !== bone.id && !Rig.wouldLoop(a, bone, b.id)).map((b) => `<option value="${b.id}"${b.id === bone.parent ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label></div>
 				<label class="chk" title="Keep this bone's head glued to its parent's tip: moving the parent's tip drags it along, and its head can't be pulled away."><input id="an_conn" type="checkbox"${bone.connected && bone.parent ? " checked" : ""}${bone.parent ? "" : " disabled"}> Connected to the parent's tip</label>
-				<div class="arow"><label title="Drag this bone's tip to pose the whole chain: 2 for an arm or leg, 3 adds the body above it. 0 = off. The pose is keyed as ordinary turns of each bone.">IK chain <input id="an_bik" type="number" min="0" max="8" step="1" value="${bone.ik || 0}"></label></div>
+				<div class="arow"><label title="How many bones bend when you drag this bone's tip with IK limbs on. Auto: this bone and its parent (an arm or leg) when it is connected to its parent, else just this bone. 3 adds the body above it.">IK chain <select id="an_bik">${[[0, `Auto (${Rig.ikLen(a, Object.assign({}, bone, { ik: 0 }))})`], [1, "1 (this bone only)"], [2, "2 (arm or leg)"], [3, "3"], [4, "4"]].map(([v, t]) => `<option value="${v}"${(bone.ik || 0) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
 				${vecRow("Head", "an_h", bone.head)}${vecRow("Tip", "an_t", bone.tail)}
 				<div class="arow"><button id="an_bind" title="Make the selected models follow this bone">Bind selected models</button><button id="an_unbind" title="Let the selected models stand still">Unbind</button></div>
 				<div class="arow"><button id="an_skin" class="${deformSel() ? "on" : ""}" title="Deform (the default): a bound model bends with every bone, vertex by vertex, weighted by distance. Nothing to set up beyond binding it.">Deform</button><button id="an_unskin" class="${deformSel() ? "" : "on"}" title="Rigid: the model moves as one solid piece with its bound bone.">Rigid</button>
@@ -597,7 +624,10 @@
 		q("an_rest").onclick = () => toggleRest();
 		q("an_gz").onchange = () => { showGizmos = q("an_gz").checked; savePref("tsGizmos", showGizmos); draw(); };
 		q("an_names").onchange = () => { showNames = q("an_names").checked; savePref("tsNames", showNames); draw(); };
-		q("an_ik").onchange = () => { ikOn = q("an_ik").checked; savePref("tsIK", ikOn); };
+		q("an_ik").onchange = () => { ikOn = q("an_ik").checked; savePref("tsIK", ikOn); api().status(ikOn ? "IK limbs on: drag the ball at a hand or foot and the arm or leg bends to follow." : "IK limbs off: dragging a tip turns only that bone."); };
+		q("an_pin").onclick = () => togglePins();
+		if (q("an_unpinall")) q("an_unpinall").onclick = () => edit(() => { delete c.pins; });
+		for (const el of $("an_body").querySelectorAll("[data-unpin]")) el.onclick = () => edit(() => { delete c.pins[el.dataset.unpin]; if (!Object.keys(c.pins).length) delete c.pins; });
 		q("an_bonedel").onclick = () => bone && edit(() => deleteBones(selIds()));
 		if (bone) {
 			q("an_bname").onchange = () => edit(() => { bone.name = q("an_bname").value.trim() || bone.name; });
@@ -621,6 +651,7 @@
 				const pose = Rig.localPose(c, bone.id, a.frame);
 				const rot = [0, 1, 2].map((i) => parseFloat(q("an_r" + i).value) || 0), pos = [0, 1, 2].map((i) => (q("an_p" + i) ? parseFloat(q("an_p" + i).value) || 0 : pose.pos[i]));
 				Rig.setKey(c, bone.id, a.frame, rot.map((v, i) => (isNaN(v) ? pose.rot[i] : v)), pos);
+				holdPins(new Set([bone.id]));
 				api().redrawSoon(); scheduleSheet(); timeline(); drawPreview();
 			};
 			const settle = () => { if (before) { api().pushUndo(before); before = null; api().markUnsaved(); render(); } };
@@ -1024,7 +1055,8 @@
 			const sel = isSel(b.id), pose = !restMode && sel && b.id === boneSel ? Rig.localPose(clip(), b.id, a.frame) : null;
 			const turn = pose && pose.rot.map((v, i) => (Math.abs(v) > 0.05 ? "XYZ"[i] + " " + Math.round(v) + "°" : "")).filter(Boolean).join(" ");
 			const tx = add("text", { x: (h[0] + t[0]) / 2 + 9, y: (h[1] + t[1]) / 2 + 4, fill: sel ? "#ffcf4a" : "#cfe9f7", "font-size": 11, "pointer-events": "none", stroke: "#141418", "stroke-width": 3, "paint-order": "stroke" });
-			tx.textContent = b.name + (b.ik > 0 ? "  IK " + b.ik : "") + (turn ? "  " + turn : "");
+			const pins = clip() && clip().pins;
+			tx.textContent = (pins && pins[b.id] && !restMode ? "📌 " : "") + b.name + (b.ik > 0 ? "  IK " + b.ik : "") + (turn ? "  " + turn : "");
 		}
 	}
 	// Onion skin: the models on the frames before (red) and after (green) as thin wires, while stopped. The clip wraps round unless it plays once.
@@ -1084,6 +1116,15 @@
 			add("circle", { cx: t[0], cy: t[1], r: 11, fill: "transparent", "data-bone": b.id, "data-part": "tip", class: "bonetip" }).style.cursor = "grab";
 			const tip = add("circle", { cx: t[0], cy: t[1], r: 7, fill: sel ? col : "#14141899", stroke: col, "stroke-width": 1.5, class: "bonetip", "data-bone": b.id });
 			tip.dataset.part = "tip"; tip.style.cursor = "grab";
+		}
+		// Pins: a pin head at each pinned point; a dashed line to the bone when it can't reach (the limb is too short to get there).
+		const pins = !restMode && clip() && clip().pins;
+		if (pins) for (const id of Object.keys(pins)) {
+			const b = Rig.bone(a, id), s = b && r.toScreen(pins[id].at);
+			if (!s) continue;
+			if (Rig.pinGap(a, clip(), a.frame, id) > 1) { const now = r.toScreen(Rig.apply(mats.get(id), pins[id].mode === "whole" ? b.head : b.tail)); if (now) add("line", { x1: s[0], y1: s[1], x2: now[0], y2: now[1], stroke: "#ff5b5b", "stroke-width": 1.5, "stroke-dasharray": "4 3", "pointer-events": "none" }); }
+			add("line", { x1: s[0], y1: s[1], x2: s[0], y2: s[1] - 14, stroke: "#ff5b5b", "stroke-width": 2, "pointer-events": "none" });
+			add("circle", { cx: s[0], cy: s[1] - 16, r: 4.5, fill: "#ff5b5b", stroke: "#141418", "stroke-width": 1.5, "pointer-events": "none" });
 		}
 		// Which mode the view is in, always in sight.
 		const badge = add("text", { x: "50%", y: 20, "text-anchor": "middle", fill: restMode ? "#ffb15a" : paintMode ? "#ff8fa3" : "#5ad1ff", "font-size": 12, "font-weight": 700, "pointer-events": "none", stroke: "#141418", "stroke-width": 3, "paint-order": "stroke" });
@@ -1153,7 +1194,15 @@
 	const DRAG_PX = 3;
 	// Ctrl / Shift as last seen: the modal G / R have no real event to read them from.
 	let heldCtrl = false, heldShift = false;
+	// Every pose step of a drag is followed by the pins: the pinned limbs bend back so their pinned points stay put. A pinned bone
+	// that is itself being dragged is left alone, and is pinned again where it ends up (dragEnd).
 	function dragMove(e) {
+		dragPose(e);
+		if (drag && drag.moved && !restMode && clip() && clip().pins) {
+			if (holdPins(new Set([drag.id, ...(drag.ids || [])]))) { api().redrawSoon(); scheduleSheet(); drawPreview(); }
+		}
+	}
+	function dragPose(e) {
 		const b = Rig.bone(A(), drag.id);
 		if (!b) return;
 		// A click only selects: a mouse drag does nothing (writes no key, dirties nothing) until the pointer is DRAG_PX from where it went down.
@@ -1174,7 +1223,7 @@
 			return [rr.o[0] + rr.d[0] * t, rr.o[1] + rr.d[1] * t, rr.o[2] + rr.d[2] * t];
 		};
 		// IK: the tip of a bone with an IK chain (or G on it) follows the pointer and the chain bends to reach it; every chain bone is keyed.
-		if (ikOn && b.ik > 0 && !drag.stretch && !drag.rel && (drag.part === "tip" || (drag.modal && drag.move))) {
+		if (ikOn && Rig.ikLen(a, b) > 1 && !drag.stretch && !drag.rel && (drag.part === "tip" || (drag.modal && drag.move))) {
 			const k = drag.axis !== null ? drag.axis : lk, ray2 = ray;
 			if (Math.abs(ray2.d[k]) < 0.02) return;
 			const tt = (T[k] - ray2.o[k]) / ray2.d[k], P = [ray2.o[0] + ray2.d[0] * tt, ray2.o[1] + ray2.d[1] * tt, ray2.o[2] + ray2.d[2] * tt];
@@ -1187,7 +1236,7 @@
 				drag.ikOff = [T[0] - P0[0], T[1] - P0[1], T[2] - P0[2]]; drag.ikPlane = k;
 				if (!fresh) return;
 			}
-			const res = Rig.solveIK(a, c, a.frame, b.id, [P[0] + drag.ikOff[0], P[1] + drag.ikOff[1], P[2] + drag.ikOff[2]], b.ik, k);
+			const res = Rig.solveIK(a, c, a.frame, b.id, [P[0] + drag.ikOff[0], P[1] + drag.ikOff[1], P[2] + drag.ikOff[2]], Rig.ikLen(a, b), k);
 			for (const r of res) Rig.setKey(c, r.id, a.frame, r.rot, r.pos);
 			drag.moved = true;
 			api().status("IK: posing " + res.length + " bone" + (res.length > 1 ? "s" : "") + " (X / Y / Z picks the plane).");
@@ -1428,6 +1477,7 @@
 		if (k === "arrowup" || k === "arrowdown") { jumpKey(k === "arrowup" ? 1 : -1); stop(); return; }
 		if (k === "tab") { toggleRest(); stop(); return; }
 		if (k === "i" && !e.shiftKey) { keyPose(false); stop(); return; }
+		if (k === "p" && !e.shiftKey && !restMode && boneSel && !S().selected.size) { togglePins(); stop(); return; }
 		if (k === "i" && e.shiftKey) { keyWholePose(); stop(); return; }
 		const boneOnly = boneSel && !S().selected.size;
 		if (boneOnly && !e.shiftKey && k === "a") { const all = A().bones.map((b) => b.id); multi.clear(); all.filter((id) => id !== boneSel).forEach((id) => multi.add(id)); api().redrawSoon(); render(); stop(); return; }
@@ -1445,6 +1495,8 @@
 	function dragEnd() {
 		window.removeEventListener("pointermove", dragMove);
 		window.removeEventListener("pointerup", dragEnd);
+		const pc = clip(), pa = A();
+		if (drag && drag.moved && !restMode && pc && pc.pins) for (const id of new Set([drag.id, ...(drag.ids || [])])) if (pc.pins[id]) pc.pins[id] = Rig.makePin(pa, pc, pa.frame, Rig.bone(pa, id));
 		if (drag && drag.moved) { api().pushUndo(drag.before); api().markUnsaved(); }
 		drag = null;
 		render();

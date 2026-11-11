@@ -101,7 +101,7 @@
 	function lightTouch() { if (!lightBefore) lightBefore = snapshot(); clearTimeout(lightTimer); lightTimer = setTimeout(lightCommit, 700); }
 	function lightCommit() { clearTimeout(lightTimer); if (lightBefore) { const b = lightBefore; lightBefore = null; pushUndo(b); } }
 	// Edit the selected light from its Properties fields (undoable: one step per run of edits); then redraw the view and the Lit markers.
-	function lightEdit(fn) { const l = selLight(); if (!l) return; lightTouch(); fn(l); dirty = true; output.render(); }
+	function lightEdit(fn) { const l = selLight(); if (!l) return; lightTouch(); fn(l); dirty = true; output.requestRender(); }
 	// Select a light (or none): models are deselected with it, and the Properties panel shows it.
 	function setLightSel(id) {
 		lightCommit();
@@ -1693,7 +1693,7 @@
 		const num = modal.numeric !== "" && !isNaN(parseFloat(modal.numeric)) ? parseFloat(modal.numeric) : null;
 		const m = modal, step = stepFor(ev);
 		let info = "";
-		if (m.light) { info = lightModalInfo(m, num, step); output.draw(); }
+		if (m.light) { info = lightModalInfo(m, num, step); if (output.rendererMode === "gpu") output.requestRender(); else output.draw(); } // GPU: the lighting follows the drag live
 		else if (m.type === "grab" && m.axis && m.local) {
 			// Along a local axis: the distance snaps (each model along its own axis in object mode).
 			let shown = 0;
@@ -3327,11 +3327,11 @@
 		$("help").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || e.key === "F1") { toggleHelp(); e.preventDefault(); } }); // no shortcuts reach the models behind it
 		for (const b of document.querySelectorAll("#outmodes button[data-mode]")) b.onclick = () => setOutMode(b.dataset.mode);
 		initModeTabs();
-			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.render(); };
+			$("lightz").oninput = () => { output.light.z = parseFloat($("lightz").value); $("lightz_v").textContent = output.light.z; output.requestRender(); };
 		syncLights();
 		$("lit_renderer").onchange = () => { output.rendererMode=["current","gpu","compare"].includes($("lit_renderer").value)?$("lit_renderer").value:"current"; output.render(); };
 		$("render_scale").onchange = () => { const scale=Number($("render_scale").value); output.renderScale=[1,.75,.5,.25].includes(scale)?scale:1; $("render_scale").value=String(output.renderScale); output.render(); };
-		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.render(); };
+		$("lightr").oninput = () => { output.light.radius = parseFloat($("lightr").value); output.requestRender(); };
 		$("shadows").onchange = () => { output.shadows = $("shadows").checked; output.render(); };
 		for (const [id, key, parse, lo, hi] of SETTING_IDS)
 			$(id).onchange = () => {
@@ -3348,7 +3348,7 @@
 		// Output view: drag = move the light; middle/right drag or Space-drag = pan; wheel = zoom; Shift+wheel = light height.
 		const outPos = (e) => { const r = out.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 		// Only the quick preview light (no project lights yet) is dragged here: project lights are edited in the 3D view.
-		const moveLight = (e) => { if (!S.result || S.lights.length) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); output.light.x = q[0]; output.light.y = q[1]; output.render(); };
+		const moveLight = (e) => { if (!S.result || S.lights.length) return; const p = output.toArt(...outPos(e)), q = output.proj().toWorld(p[0], p[1], 0); output.light.x = q[0]; output.light.y = q[1]; output.requestRender(); };
 		let outPan = null;
 		out.addEventListener("pointerdown", (e) => {
 			try { out.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }

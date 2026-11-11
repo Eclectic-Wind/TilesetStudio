@@ -408,13 +408,19 @@ test("the elbow keeps its bend direction", () => {
 	assert.strictEqual(side(), before, "elbow on the same side of the shoulder-to-tip line");
 	assert(dist3(tip2(a, c), [8, 0, 8]) < 0.05);
 });
-test("the chain stops at an unconnected parent", () => {
+test("the chain stops at a parent it isn't jointed to", () => {
+	// Not Connected and its head 2 px off the parent's tip: no joint.
 	const a = ikArm(false), c = bent();
+	a.bones[1].head = [0, 0, 12]; a.bones[1].tail = [0, 0, 22];
 	const res = R.solveIK(a, c, 0, "b2", [6, 3, 9], 2);
 	assert.strictEqual(res.map((r) => r.id).join(), "b2");
 	bake(c, res);
-	near(R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 10]), [0, 0, 10], 1e-6, "head stays");
-	assert(dist3(tip2(a, c), [6, 3, 9]) < 10.5, "tip moved as close as one bone can");
+	near(R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 12]), [0, 0, 12], 1e-6, "head stays");
+});
+test("a head on the parent's tip is a joint even when not Connected (imported rigs)", () => {
+	const a = ikArm(false), c = bent();
+	assert(R.joined(a, a.bones[1]) && !R.joined(a, a.bones[0]));
+	assert.strictEqual(R.solveIK(a, c, 0, "b2", [6, 3, 9], 2).map((r) => r.id).join(), "b1,b2");
 });
 test("chainLen 1 turns only the bone itself", () => {
 	const a = ikArm(), c = bent();
@@ -427,6 +433,50 @@ test("a plane-restricted solve leaves the depth coordinate alone", () => {
 	const tp = tip2(a, c), el = R.apply(R.matrices(a, c, 0).get("b2"), [0, 0, 10]);
 	assert(Math.abs(tp[1]) < 1e-6 && Math.abs(el[1]) < 1e-6, "stays at Y=0: " + tp);
 	assert(Math.abs(tp[0] - 6) < 0.05 && Math.abs(tp[2] - 9) < 0.05, "reaches X/Z: " + tp);
+});
+
+console.log("Pins");
+// Hips (b0, root), thigh (b1, child of the hips, not connected), shin (b2) and foot (b3) connected below it, knee a little bent.
+const leg = (foot = true) => ({ bones: [
+	{ id: "b0", name: "hips", parent: null, head: [0, 0, 20], tail: [0, 0, 30] },
+	{ id: "b1", name: "thigh", parent: "b0", head: [0, 0, 20], tail: [0, 0, 10] },
+	{ id: "b2", name: "shin", parent: "b1", connected: true, head: [0, 0, 10], tail: [0, 0, 0] },
+	...(foot ? [{ id: "b3", name: "foot", parent: "b2", connected: true, head: [0, 0, 0], tail: [5, 0, 0] }] : []),
+], bind: {}, clips: [], clip: null, frame: 0 });
+const legClip = () => { const c = clipOf(4); R.setKey(c, "b2", 0, [0, -20, 0], [0, 0, 0]); R.setKey(c, "b2", 2, [0, -20, 0], [0, 0, 0]); return c; };
+const at = (a, c, f, id, p) => R.apply(R.matrices(a, c, f).get(id), p);
+test("auto IK chain: two bones for a connected bone, one otherwise", () => {
+	const a = leg();
+	assert.strictEqual(R.ikLen(a, a.bones[2]), 2);
+	assert.strictEqual(R.ikLen(a, a.bones[1]), 1);
+	assert.strictEqual(R.ikLen(a, Object.assign({}, a.bones[1], { ik: 3 })), 3);
+});
+test("a pinned foot stays planted, angle and all, when the hips drop", () => {
+	const a = leg(), c = legClip();
+	assert.strictEqual(R.pinMode(a, a.bones[3]), "whole");
+	c.pins = { b3: R.makePin(a, c, 0, a.bones[3]) };
+	const head = at(a, c, 0, "b3", [0, 0, 0]), toe = at(a, c, 0, "b3", [5, 0, 0]);
+	R.setKey(c, "b0", 0, [0, 0, 0], [1, 0, -3]); // hips down and forward
+	assert(dist3(at(a, c, 0, "b3", [0, 0, 0]), head) > 2, "without the pin the foot moved");
+	assert.strictEqual(R.applyPins(a, c, 0, null, 1).join(), "b3");
+	near(at(a, c, 0, "b3", [0, 0, 0]), head, 0.05, "ankle held");
+	near(at(a, c, 0, "b3", [5, 0, 0]), toe, 0.05, "toe held (foot keeps its angle)");
+	assert(R.pinGap(a, c, 0, "b3") < 0.05);
+});
+test("a pinned shin keeps the ankle on another frame too", () => {
+	const a = leg(false), c = legClip();
+	assert.strictEqual(R.pinMode(a, a.bones[2]), "tip");
+	c.pins = { b2: R.makePin(a, c, 0, a.bones[2]) };
+	const ankle = at(a, c, 0, "b2", [0, 0, 0]);
+	R.setKey(c, "b0", 2, [0, 0, 0], [0, 0, -2]);
+	R.applyPins(a, c, 2, null, 1);
+	near(at(a, c, 2, "b2", [0, 0, 0]), ankle, 0.05, "ankle held on frame 3");
+});
+test("skipped pins are left alone", () => {
+	const a = leg(), c = legClip();
+	c.pins = { b3: R.makePin(a, c, 0, a.bones[3]) };
+	R.setKey(c, "b0", 0, [0, 0, 0], [0, 0, -3]);
+	assert.strictEqual(R.applyPins(a, c, 0, new Set(["b3"]), 1).length, 0);
 });
 
 console.log("Inserting and removing frames");

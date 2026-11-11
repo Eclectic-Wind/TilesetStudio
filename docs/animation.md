@@ -61,11 +61,17 @@ Studio moves the shape, but the colours of each frame are painted by you. Either
    every bone, add the selected bone's turn, and draw a dashed line from a parent's tip to a child that is not connected.
    If a model was edited, moved or resized outside animation mode so that it no longer sits on its bones, the panel says so (nothing can
    bend a model that is far from every bone): use *Edit rest pose* to move the bones back to it. Duplicating a model keeps its bone.
-   **IK.** Each bone has an `IK chain` number in its panel (0 = off; 2 for an arm or leg). With the **IK** checkbox (next to Gizmos and
-   Names) ticked, dragging that bone's tip, or pressing **G** on it, moves the tip to the pointer and turns the bones up the chain to
-   reach it. The chain stops at a bone that is not connected to its parent, and the bend keeps its direction (a knee doesn't flip). It
-   works in the view's plane; **X** / **Y** / **Z** picks another plane. The result is ordinary rotation keys on every bone in the chain
-   on this frame, so export is unchanged. Names label such bones `IK n`.
+   **IK limbs.** A bone is *jointed* to its parent when it is Connected or its head sits on the parent's tip (rigs imported from
+   Blender come in like that). With **IK limbs** ticked (next to Gizmos and Names, on by default), dragging a jointed bone's tip, or
+   pressing **G** on it, moves the tip to the pointer and turns the bones up the chain to reach it. The bone's `IK chain` menu sets the
+   chain: Auto (2 for a jointed bone, an arm or leg; 1 otherwise), 1 to 4. The chain stops at a bone that isn't jointed, and the bend
+   keeps its direction (a knee doesn't flip). It works in the view's plane; **X** / **Y** / **Z** picks another plane. The result is
+   ordinary rotation keys on every bone in the chain on this frame, so export is unchanged. Names label bones with a set chain `IK n`.
+   **Pins.** **P** (or 📌 Pin under Bones) pins the selected bones where they are on this frame; P again unpins, Unpin all clears the
+   clip's pins. After every pose edit (drag, G / R, the Pose fields) each pin is re-solved by IK on the frame on show and the bones it
+   bends are keyed, so a planted foot stays put while you move the hips, on any frame. A hand or foot (the short end bone of a jointed
+   limb) is held whole, position and angle; any other bone holds its tip, and a hand or foot hanging off it keeps its angle. Dragging a
+   pinned bone moves its pin. Pins are saved in the clip (`clip.pins`) and never exported.
 4. **Clips.** Any number of clips, each with its own frame count (1–64), fps, Loop setting and Albedo sheet. ▶ (or Space) plays it in the
    view the way the game will (loop, once or ping-pong); posing a bone stops playback first. Lowering the frame count keeps the keys past
    the end (the timeline says so) and raising it brings them back.

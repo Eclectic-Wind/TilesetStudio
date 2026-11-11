@@ -1,8 +1,15 @@
 # What's new
 
-For anyone coming back to Tileset Studio. This covers the two most recent updates: **Lights** and **Animation workflow (with IK)**. Nothing here changes your saved projects or exports unless noted, and old projects open as before.
+For anyone coming back to Tileset Studio. This covers the most recent updates: **Pins and IK that just works**, **Lights** and the **Animation workflow**. Nothing here changes your saved projects or exports unless noted, and old projects open as before.
 
 ## Update log
+
+### 12 Nov 2026: Pins, IK that works out of the box, faster GPU lighting
+- **Pins:** select a foot (or hand) and press **P** to plant it. Then move or turn the hips and the body: the leg bends so the foot stays put, on this frame and every frame you pose next. **P** again unpins. See Tutorial 3.
+- **IK works without setup:** dragging the ball at a shin's or forearm's tip now bends the whole leg or arm by default (**IK chain: Auto**). Rigs imported from Blender work as they are, because a bone whose head sits on its parent's tip counts as a joint (no need to tick Connected).
+- The **IK** checkbox is now called **IK limbs** and says what it does. The IK chain field is a menu: Auto, 1 (this bone only), 2, 3, 4.
+- New lesson in **Learn ▸ Animation: IK limbs and pins**.
+- **Lit view, GPU renderer:** lights every light in the scene, not just one (area lights included), and stays in step with the Current renderer. Each light's shadows are cached, so dragging one light or changing a colour is quick, and with GPU selected the lighting follows a light live while you drag it in the 3D view.
 
 ### 10 Nov 2026: Lights are real objects now
 - **Point and area lights** you place and edit in the 3D viewport, the same way you edit models.
@@ -62,35 +69,44 @@ Posing feels different now:
 - Turning by the tip turns by the angle you swing from where you grabbed, so it doesn't jump.
 - Hold **Ctrl** to snap turns to 15 degrees (**Ctrl+Shift**: 5 degrees), or to snap moves to whole pixels.
 
-## Tutorial 3: Using IK
+## Tutorial 3: IK limbs and pins
 
-IK (inverse kinematics) means you place the end of a limb and the bones above it work out how to bend. It is optional and saves as ordinary rotation keys, so **exports don't change**.
+IK (inverse kinematics) means you place the end of a limb and the bones above it work out how to bend. **Pins** keep part of the body in place (a foot on the ground, a hand on a table) while you pose the rest. Both are posing aids: they save as ordinary rotation keys, so **exports don't change**. There's an animated version in **Learn ▸ Animation ▸ IK limbs and pins**.
 
-**Set up once per limb**
-1. In the Animate panel, under Bones, tick **IK** (next to Gizmos and Names).
-2. Select the **end bone** of the limb. That is the forearm or the shin, the one whose tip is the hand or foot.
-3. In its panel, set **IK chain** to **2** for an arm or leg. **3** also takes in the body above it. **0** turns IK off for that bone.
-4. The bone's label in the view now reads `IK 2`.
+**What counts as a joint**
+A bone is jointed to its parent when its head sits on the parent's tip. Rigs imported from Blender are already like this, so there is nothing to set up. (Ticking **Connected** also makes a joint, and additionally stops the bone from sliding off its parent.) IK and pins bend through joints and stop at the first bone that isn't jointed, such as a thigh that starts beside the spine rather than at its tip.
 
-Your bones need to be **connected** (each bone starts where its parent ends). The chain stops at a bone that isn't connected to its parent.
+**Drag a limb (IK limbs)**
+1. Under **Bones**, keep **IK limbs** ticked (it is on by default).
+2. Go to the frame you want to pose.
+3. **Drag the ball at the shin's tip** (the ankle) or the forearm's tip (the wrist). The thigh and shin (or upper arm and forearm) bend to reach it. Or select the shin and press **G**.
+4. Every bone that bent gets a key on this frame.
 
-**Pose with it**
-1. Go to the frame you want to pose.
-2. **Drag the tip** of the end bone (the hand or foot) to where you want it. The chain bends to reach it. Or select the bone and press **G**.
-3. Every bone in the chain gets a rotation key on this frame. Do the next frame the same way.
-4. Press **Space** to check the motion.
+The **IK chain** menu in a bone's panel sets how many bones bend when you drag its tip: **Auto** (2 for a jointed bone: an arm or a leg; 1 otherwise), **1** (this bone only), **3** (also the body above it), and so on. Untick **IK limbs** and dragging a tip turns only that one bone.
+
+**Plant a foot (pins)**
+1. Select the **foot** and press **P** (or **📌 Pin** under Bones). A red pin marks the spot, and the bone's name in the view gets a 📌.
+2. Pin the other foot too if both should stay down.
+3. Select the **hips** (the root bone) and move them with **G** or turn them with **R**. The legs bend so the feet stay exactly where they were, angle and all. Every bone the pins bend is keyed.
+4. Go to the next frame and pose the hips again: the feet are still pinned there.
+5. Select a pinned bone and press **P** again to unpin it. **Unpin all** under Bones removes every pin in the clip, and the poses they made stay keyed.
+
+What a pin holds:
+- **A hand or foot** (the short bone at the end of an arm or leg) stays whole: its position *and* its angle. The two bones above it bend.
+- **Any other bone** (a shin, a forearm, a tail tip) holds its **tip**. Its IK chain bends to keep it there, and a hand or foot hanging off it keeps its angle.
+- If the limb can't reach (the hips went too far), it stretches toward the pin and a dashed red line shows the gap.
+- Dragging a pinned bone itself moves the pin to where you leave it.
 
 **Good to know**
 - The bend **keeps its direction**, so a knee won't flip backwards halfway through a drag.
-- IK works in the **view's plane**. Press **X / Y / Z** while dragging to pick a different plane.
-- With **IK unticked**, dragging a tip turns only that one bone (the old behaviour).
-- If the target is out of reach, the limb stretches out straight toward it as far as it goes.
-- IK is a posing aid. Fine-tune any single bone afterwards by turning it with its gizmo ring. That just changes its key.
+- IK and pins work in the **view's plane** first. Press **X / Y / Z** while dragging to pick a different plane.
+- Pins are saved with the clip, so they are still there when you reopen the project. They are never exported.
+- Fine-tune any single bone afterwards by turning it with its gizmo ring. That just changes its key.
 
-**Quick example: a foot step**
-1. Bones: `thigh`, `shin`, with the shin connected to the thigh. Set the shin's **IK chain** to 2.
-2. Frame 1: drag the foot forward and down. Press **Shift+I**.
-3. Frame 4: drag the foot back and up. Press **Shift+I**.
-4. **Close loop**, press **Space**, and the leg steps.
+**Quick example: a crouch with planted feet**
+1. Frame 1: select `foot.L`, press **P**. Select `foot.R`, press **P**.
+2. Frame 4: select the hips, press **G**, move them down and a little forward, click. Both knees bend and the feet stay put.
+3. Frame 8: **Close loop** (or pose the hips back up).
+4. Press **Space**: the character crouches without its feet sliding.
 
 For the full reference, see `docs/animation.md`. The in-app **Learn** window (top bar, or **L**) has animated lessons for the Animation and Aseprite link sections too.
