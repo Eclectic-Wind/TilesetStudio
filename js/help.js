@@ -44,6 +44,8 @@
 		"View": [
 			["Alt-drag, middle-drag", "Look round (eases back on release)"],
 			["5, 3D button", "Stay in 3D and model there: drag orbits, Ctrl-drag box-selects, Shift/Space-drag pans; again to go back"],
+			["3D: wheel, pinch", "Zoom toward the pointer (Ctrl+middle-drag zooms smoothly); a trackpad two-finger slide pans"],
+			["3D: Numpad 4 / 6 / 8 / 2, + / −", "Turn round, tilt, zoom (Shift: small steps); Home frames every model"],
 			["Axis key balls", "Look down an axis (or Numpad 1 / 3 / 7; Ctrl: the opposite side). Click the ringed ball to flip. Moves and turns then stay on that plane, until the padlock button clears it"],
 			["Space-drag, Shift+middle", "Pan"],
 			["Arrows", "Pan a tile"],

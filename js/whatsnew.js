@@ -4,6 +4,20 @@
 (() => {
 	const NEWS = [
 		{
+			id: "2026-11-12-2",
+			date: "12 Nov 2026",
+			title: "A freer 3D camera",
+			sections: [
+				["3D view (press 5)", [
+					"<b>Pan goes anywhere</b>: Shift-drag, Space-drag or Shift+middle-drag now moves the view up and down too, not only across the floor. The scene follows the pointer.",
+					"<b>The wheel zooms toward the pointer</b>, so you can dive straight in on a detail. You can pull much further back over a big map, and go much closer in.",
+					"<b>Trackpads</b>: pinch zooms, a two-finger slide pans. On a touch screen two fingers pan and pinch.",
+					"<b>Ctrl+middle-drag</b> (or the zoom tool) zooms smoothly. The orbit now tilts all the way to looking straight down or up.",
+					"<b>Keys</b>: Numpad 4 / 6 turn round, 8 / 2 tilt (Shift: small steps), Numpad + / − zoom, <b>Home</b> frames every model, <b>F</b> or <b>.</b> frames the selection.",
+				]],
+			],
+		},
+		{
 			id: "2026-11-12",
 			date: "12 Nov 2026",
 			title: "Pins, IK that just works, faster GPU lighting",

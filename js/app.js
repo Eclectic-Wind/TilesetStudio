@@ -2091,7 +2091,7 @@
 		if (want === !!S.stay3d) return;
 		if (modal) cancelModal();
 		S.stay3d = want;
-		if (!want) { viewMove = null; S.viewLock = null; renderer.free.ortho = false; renderer.free.orthoMix = 0; renderer.free.up = null; syncViewButtons(); }
+		if (!want) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom, ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); viewMove = null; S.viewLock = null; renderer.free.ortho = false; renderer.free.orthoMix = 0; renderer.free.up = null; syncViewButtons(); }
 		document.querySelectorAll('[data-act="stay3d"]').forEach((b) => b.classList.toggle("on", S.stay3d));
 		hover = null;
 		if (S.stay3d) {
@@ -2173,12 +2173,50 @@
 		return Math.abs(cr) < 1e-6 ? 1 : cr > 0 ? 1 : -1;
 	}
 
-	// Pan the 3D view: move the orbit centre across the floor, the way the drag goes.
+	// Pan the 3D view: the orbit centre slides in the screen's plane (up, down and sideways, not only over the floor), so the
+	// scene follows the pointer. The world step for each screen px is solved from the view itself, which keeps it right in
+	// perspective, orthographic, the preset views and mid-glide.
 	function panFree(dx, dy) {
-		const f = renderer.free, z = renderer.cam.zoom;
-		const right = [Math.cos(f.yaw), -Math.sin(f.yaw)], fwd = [-Math.sin(f.yaw), -Math.cos(f.yaw)], k = 1 / Math.max(0.3, Math.abs(Math.sin(f.pitch)));
-		f.target = [f.target[0] - (right[0] * dx - fwd[0] * dy * k) / z, f.target[1] - (right[1] * dx - fwd[1] * dy * k) / z, f.target[2]];
+		const f = renderer.free, sy = Math.sin(f.yaw), cy = Math.cos(f.yaw), sp = Math.sin(f.pitch), cp = Math.cos(f.pitch);
+		const R = [cy, -sy, 0], U = [-sy * sp, -cy * sp, cp];
+		const a = renderer.toScreen(f.target), b = renderer.toScreen(v3.add(f.target, R)), c = renderer.toScreen(v3.add(f.target, U));
+		if (!a || !b || !c) return;
+		const m00 = b[0] - a[0], m10 = b[1] - a[1], m01 = c[0] - a[0], m11 = c[1] - a[1], det = m00 * m11 - m01 * m10;
+		if (Math.abs(det) < 1e-9) return;
+		const r = (dx * m11 - dy * m01) / det, u = (m00 * dy - m10 * dx) / det;
+		f.target = v3.sub(f.target, v3.add(v3.scale(R, r), v3.scale(U, u)));
 		viewMoved = true;
+	}
+	// 3D zoom range: wider than the tileset steps, to pull right back over a big map or right in on a small detail.
+	const ZOOM3 = [0.03, 96];
+	// Zoom the 3D view about a screen point: the spot under the pointer stays put (on the plane through the orbit centre).
+	function zoomFree(px, py, zoom) {
+		const f = renderer.free, n = v3.norm(v3.sub(renderer.freeEye(), f.target));
+		const hit = () => { const r = renderer.ray(px, py), dn = v3.dot(r.d, n); return Math.abs(dn) < 1e-6 ? null : v3.add(r.o, v3.scale(r.d, v3.dot(v3.sub(f.target, r.o), n) / dn)); };
+		const before = hit();
+		renderer.cam.zoom = TS.clamp(zoom, ZOOM3[0], ZOOM3[1]);
+		const after = hit();
+		if (before && after) f.target = v3.add(f.target, v3.sub(before, after));
+		zoomLabel(); viewMoved = true;
+	}
+	// Turn the 3D view round its centre (drag, numpad 4 / 6 / 8 / 2). The tilt goes all the way to straight down or up.
+	function orbitFree(dyaw, dpitch) {
+		const f = renderer.free, edge = Math.PI / 2 - 0.001;
+		if (S.viewLock) leavePreset("orbit");
+		if (f.up) { f.up = null; f.pitch = TS.clamp(f.pitch, -edge, edge); }
+		f.yaw += dyaw;
+		f.pitch = TS.clamp(f.pitch + dpitch, -edge, edge);
+		viewMoved = true;
+	}
+	// Home in the 3D view: centre on every model and pull back to see them all.
+	function frameAll3d() {
+		const pts = [];
+		for (const o of visibleObjs()) for (const p of o.verts) pts.push(p);
+		if (!pts.length) { renderer.free.target = renderer.proj.toWorld(renderer.art.w / 2, renderer.art.h / 2, 0); dirty = true; return; }
+		const b = pointBounds(pts), r = $("view").getBoundingClientRect();
+		renderer.free.target = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+		renderer.cam.zoom = TS.clamp((Math.min(r.width, r.height) / Math.max(16, v3.dist(b.min, b.max))) * 0.8, ZOOM3[0], ZOOM3[1]);
+		zoomLabel(); dirty = true;
 	}
 
 	// --- pencil: trace a simple outline, then create an ordinary editable mesh ---
@@ -2450,7 +2488,7 @@
 			const b = pointBounds(pts);
 			renderer.free.target = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
 			const r = $("view").getBoundingClientRect(), size = Math.max(16, v3.dist(b.min, b.max));
-			renderer.cam.zoom = TS.clamp((Math.min(r.width, r.height) / size) * 0.6, ZOOMS[0], ZOOMS[ZOOMS.length - 1]);
+			renderer.cam.zoom = TS.clamp((Math.min(r.width, r.height) / size) * 0.6, ZOOM3[0], ZOOM3[1]);
 			zoomLabel();
 			dirty = true;
 			return;
@@ -2546,6 +2584,8 @@
 			if (knife) { if (button === 0) knifeClick(mouse[0], mouse[1], e); else if (button === 2) knifeApply(); return; }
 			if (S.loopCut) { if (button === 0) { loopCutHover(mouse[0], mouse[1]); loopCutApply(e.pointerType !== "mouse"); } else { S.loopCut = false; loopHover = null; hint(); dirty = true; } return; }
 			if ((button === 1 && e.shiftKey) || (button === 0 && spaceDown) || (button === 0 && S.tool === "pan")) { press = { kind: "pan", last: mouse.slice() }; return; }
+			// 3D view: Ctrl+middle-drag (or the zoom tool) zooms in and out about where the drag started.
+			if (renderer.free.blend > 0 && ((button === 1 && (e.ctrlKey || e.metaKey)) || (button === 0 && S.tool === "zoom"))) { press = { kind: "dolly", start: mouse.slice(), zoom: renderer.cam.zoom }; return; }
 			// Move-reference tool: a drag slides the active reference across the floor (X, Y); its height is never touched.
 			if (S.tool === "ref" && button === 0 && !spaceDown) {
 				const r = activeRef();
@@ -2590,17 +2630,21 @@
 			if (pinch && pointers.size >= 2) {
 				const [p, q] = [...pointers.values()];
 				const d = Math.hypot(p[0] - q[0], p[1] - q[1]), mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+				if (renderer.free.blend > 0) {
+					// 3D: two fingers pan the view and pinch zooms about their middle.
+					panFree(mid[0] - pinch.mid[0], mid[1] - pinch.mid[1]);
+					pinch.mid = mid;
+					zoomFree(mid[0], mid[1], (pinch.zoom * d) / Math.max(pinch.d, 1));
+					return;
+				}
 				renderer.cam.x -= (mid[0] - pinch.mid[0]) / renderer.cam.zoom; renderer.cam.y -= (mid[1] - pinch.mid[1]) / renderer.cam.zoom;
 				pinch.mid = mid;
 				zoomAt(mid[0], mid[1], (pinch.zoom * d) / Math.max(pinch.d, 1));
 				return;
 			}
 			if (press && press.kind === "look") {
-				if (S.viewLock) leavePreset("orbit");
-				if (renderer.free.up) { renderer.free.up = null; renderer.free.pitch = TS.clamp(renderer.free.pitch, -1.5, 1.5); }
-				renderer.free.yaw -= (mouse[0] - press.last[0]) * 0.008;
-				renderer.free.pitch = TS.clamp(renderer.free.pitch + (mouse[1] - press.last[1]) * 0.008, -1.5, 1.5);
-				press.last = mouse.slice(); viewMoved = true;
+				orbitFree(-(mouse[0] - press.last[0]) * 0.008, (mouse[1] - press.last[1]) * 0.008);
+				press.last = mouse.slice();
 			} else if (press && press.kind === "pan") {
 				if (renderer.free.blend > 0) panFree(mouse[0] - press.last[0], mouse[1] - press.last[1]);
 				else { renderer.cam.x -= (mouse[0] - press.last[0]) / renderer.cam.zoom; renderer.cam.y -= (mouse[1] - press.last[1]) / renderer.cam.zoom; }
@@ -2611,6 +2655,8 @@
 				if (renderer.free.blend > 0) { const a = renderer.floorPoint(mouse[0], mouse[1], 0); if (a && press.floor) { const c0 = renderer.proj.toCanvas([0, 0, 0]), c1 = renderer.proj.toCanvas([a[0] - press.floor[0], a[1] - press.floor[1], 0]); ddx = c1[0] - c0[0]; ddy = c1[1] - c0[1]; } }
 				else { ddx = (mouse[0] - press.start[0]) / renderer.cam.zoom; ddy = (mouse[1] - press.start[1]) / renderer.cam.zoom; }
 				if (r && !isNaN(ddx)) { const sn = S.snap; r.dx = sn > 0 ? Math.round((press.dx0 + ddx) / sn) * sn : Math.round((press.dx0 + ddx) * 100) / 100; r.dy = sn > 0 ? Math.round((press.dy0 + ddy) / sn) * sn : Math.round((press.dy0 + ddy) * 100) / 100; refSyncXY(r); dirty = true; }
+			} else if (press && press.kind === "dolly") {
+				zoomFree(press.start[0], press.start[1], press.zoom * Math.pow(1.01, press.start[1] - mouse[1]));
 			} else if (press && press.kind === "zoom") {
 				zoomAt(press.start[0], press.start[1], press.zoom * Math.pow(1.01, press.start[1] - mouse[1]));
 			} else if (press && press.kind === "select") {
@@ -2691,7 +2737,14 @@
 			}
 			if (renderer.free.blend > 0) {
 				// 3D view: the wheel moves the eye in and out (the zoom sets its distance).
-				if (S.stay3d) { renderer.cam.zoom = TS.clamp(renderer.cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ZOOMS[0], ZOOMS[ZOOMS.length - 1]); zoomLabel(); viewMoved = true; }
+				// It zooms toward the pointer. Trackpads: pinch (Ctrl+wheel) zooms smoothly; a two-finger slide or Shift+wheel pans.
+				if (!S.stay3d) return;
+				const [px, py] = localPoint(e), unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+				const ddx = e.deltaX * unit, ddy = e.deltaY * unit;
+				if (e.ctrlKey) zoomFree(px, py, renderer.cam.zoom * Math.pow(1.01, -ddy));
+				else if (e.shiftKey) panFree(-ddy, 0);
+				else if (Math.abs(ddx) > Math.abs(ddy)) panFree(-ddx, -ddy);
+				else zoomFree(px, py, renderer.cam.zoom * Math.pow(1.0015, -TS.clamp(ddy, -250, 250)));
 				return;
 			}
 			const [px, py] = localPoint(e);
@@ -2763,6 +2816,13 @@
 		const npView = { Numpad1: ["front", "back"], Numpad3: ["right", "left"], Numpad7: ["top", "bottom"] }[e.code];
 		if (npView && !modal && !e.altKey) { setView(npView[ctrl ? 1 : 0]); e.preventDefault(); return; }
 		if (e.code === "Numpad5" && !modal && !ctrl) { toggleOrtho(); e.preventDefault(); return; }
+		// 3D view keys, as in Blender: numpad 4 / 6 turn round, 8 / 2 tilt, + / - zoom; Shift for small steps.
+		if (S.stay3d && !modal) {
+			const st = e.shiftKey ? Math.PI / 48 : Math.PI / 12;
+			const orb = { Numpad4: [st, 0], Numpad6: [-st, 0], Numpad8: [0, st], Numpad2: [0, -st] }[e.code];
+			if (orb) { orbitFree(...orb); e.preventDefault(); return; }
+			if (e.code === "NumpadAdd" || e.code === "NumpadSubtract") { zoomFree(...viewCentre(), renderer.cam.zoom * (e.code === "NumpadAdd" ? 1.2 : 1 / 1.2)); e.preventDefault(); return; }
+		}
 		if (S.tool === "stamp" && exchange.draft) {
 			if (k === "escape" || k === "q") { setTool("select"); e.preventDefault(); return; }
 			if (k === "enter") { if (!e.repeat) exchange.place(); e.preventDefault(); return; }
@@ -2860,7 +2920,7 @@
 			case "e": e.preventDefault(); beginModal("extrude", false, e.altKey ? { manifold: true } : null); break;
 			case "i": beginModal("inset"); break;
 			case "x": case "delete": deleteSelection(); break;
-			case "home": fitView(); break;
+			case "home": if (S.stay3d) frameAll3d(); else fitView(); break;
 			case "f": if (S.edit) fillSelection(); else frameSelection(); break;
 			case ".": frameSelection(); break;
 			case "+": case "=": zoomStep(...viewCentre(), 1); break;

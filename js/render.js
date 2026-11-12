@@ -166,7 +166,9 @@
 			const { w, h } = this.size();
 			// Orthographic (preset views): no perspective, one screen px per art px at the zoom, like Blender's numpad views.
 			const z = this.cam.zoom;
-			const proj = ortho ? new Float32Array([(2 * z) / w, 0, 0, 0, 0, (2 * z) / h, 0, 0, 0, 0, -2 / 19999, 0, 0, 0, -20001 / 19999, 1]) : m4.perspective(FREE_FOV, w / h, 4, 20000);
+			// The clip range follows the eye distance, so a far pull-back keeps the whole map and a close look keeps nearby faces.
+			const dist = h / (2 * z * Math.tan(FREE_FOV / 2)), near = Math.max(0.5, dist * 0.02), far = dist * 4 + 20000;
+			const proj = ortho ? new Float32Array([(2 * z) / w, 0, 0, 0, 0, (2 * z) / h, 0, 0, 0, 0, -2 / 19999, 0, 0, 0, -20001 / 19999, 1]) : m4.perspective(FREE_FOV, w / h, near, far);
 			// Y runs south, so these axes are mirror-handed for an ordinary camera: flip screen x so east stays on the right,
 			// as in the tileset view.
 			const flip = new Float32Array([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);

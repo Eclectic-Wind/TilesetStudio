@@ -4,6 +4,13 @@ For anyone coming back to Tileset Studio. This covers the most recent updates: *
 
 ## Update log
 
+### 12 Nov 2026: A freer 3D camera
+- **Pan goes anywhere:** in the 3D view (press **5**), Shift-drag, Space-drag or Shift+middle-drag moves the view up and down as well as sideways, and the scene follows the pointer. Before, panning only slid across the floor.
+- **The wheel zooms toward the pointer**, so you can dive in on a detail. The zoom range is much wider: pull far back over a big map or get close to a small prop.
+- **Trackpads and touch:** pinch zooms and a two-finger slide pans.
+- **Ctrl+middle-drag** (or the zoom tool) zooms smoothly. The orbit now tilts all the way to looking straight down or up.
+- **Keys:** Numpad 4 / 6 turn round, 8 / 2 tilt (hold Shift for small steps), Numpad + / − zoom, **Home** frames every model, **F** or **.** frames the selection.
+
 ### 12 Nov 2026: Pins, IK that works out of the box, faster GPU lighting
 - **Pins:** select a foot (or hand) and press **P** to plant it. Then move or turn the hips and the body: the leg bends so the foot stays put, on this frame and every frame you pose next. **P** again unpins. See Tutorial 3.
 - **IK works without setup:** dragging the ball at a shin's or forearm's tip now bends the whole leg or arm by default (**IK chain: Auto**). Rigs imported from Blender work as they are, because a bone whose head sits on its parent's tip counts as a joint (no need to tick Connected).
