@@ -131,6 +131,25 @@
 		bar.append(b);
 	}
 
+	// One-click toggles at both ends of the model view's bar: hide or show the sidebar (left) and the preview (right).
+	function sideButton(icon, label) {
+		const b = document.createElement("button");
+		b.className = "workspace-side"; b.innerHTML = TS.icon(icon);
+		b.title = label; b.setAttribute("aria-label", label);
+		return b;
+	}
+	const leftToggle = sideButton("panelleft", "Show / hide the left panel");
+	leftToggle.onclick = () => {
+		const hide = !state.hidden.includes("sidebar");
+		state.hidden = without(state.hidden, "sidebar");
+		if (hide) state.hidden.push("sidebar");
+		apply();
+	};
+	$("viewbar").prepend(leftToggle);
+	const rightToggle = sideButton("panelright", "Show / hide the right panel (the preview)");
+	rightToggle.onclick = () => { state.mode = state.mode === "split" ? "model" : "split"; apply(); };
+	$("viewbar").append(rightToggle);
+
 	function apply() {
 		for (const [id, [, nodes]] of Object.entries(PANELS)) {
 			const hide = state.hidden.includes(id);
@@ -138,13 +157,17 @@
 			checks[id].checked = !hide;
 		}
 		side.style.flexBasis = Math.min(state.width, main.clientWidth * 0.5) + "px";
-		view.style.flex = state.ratio + " 1 0px";
-		out.style.flex = (1 - state.ratio) + " 1 0px";
+		// The split ratio only applies side by side: alone, a viewport takes all the room (a grow under 1 would leave a gap).
+		const split = state.mode === "split";
+		view.style.flex = (split ? state.ratio : 1) + " 1 0px";
+		out.style.flex = (split ? 1 - state.ratio : 1) + " 1 0px";
 		view.classList.toggle("workspace-hidden", state.mode === "preview");
 		out.classList.toggle("workspace-hidden", state.mode === "model");
 		sideBar.classList.toggle("workspace-hidden", state.hidden.includes("sidebar"));
 		center.classList.toggle("workspace-hidden", state.mode !== "split");
 		for (const [m, b] of Object.entries(modes)) b.setAttribute("aria-pressed", String(m === state.mode));
+		leftToggle.setAttribute("aria-pressed", String(!state.hidden.includes("sidebar")));
+		rightToggle.setAttribute("aria-pressed", String(state.mode !== "model"));
 		sideBar.setAttribute("aria-valuenow", Math.round(state.width));
 		center.setAttribute("aria-valuenow", Math.round(state.ratio * 100));
 		save(); redraw();

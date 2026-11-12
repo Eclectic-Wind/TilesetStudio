@@ -4,7 +4,8 @@ For anyone coming back to Tileset Studio. This covers the most recent updates: *
 
 ## Update log
 
-### 12 Nov 2026: A freer 3D camera
+### 12 Nov 2026: A freer 3D camera, one-click panel toggles
+- **Close the side panels with one click:** the button at the far left of the model view's top bar hides the left panel (models, properties); the one at the far right hides the right panel (the preview). Click again to reopen. The icon's filled strip shows the panel is open. With a panel closed, the model view fills all the freed room (Window ▸ Modeling only used to leave a gap).
 - **Pan goes anywhere:** in the 3D view (press **5**), Shift-drag, Space-drag or Shift+middle-drag moves the view up and down as well as sideways, and the scene follows the pointer. Before, panning only slid across the floor.
 - **The wheel zooms toward the pointer**, so you can dive in on a detail. The zoom range is much wider: pull far back over a big map or get close to a small prop.
 - **Trackpads and touch:** pinch zooms and a two-finger slide pans.

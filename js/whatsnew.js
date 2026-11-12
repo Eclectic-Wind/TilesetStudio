@@ -6,7 +6,7 @@
 		{
 			id: "2026-11-12-2",
 			date: "12 Nov 2026",
-			title: "A freer 3D camera",
+			title: "A freer 3D camera, one-click panel toggles",
 			sections: [
 				["3D view (press 5)", [
 					"<b>Pan goes anywhere</b>: Shift-drag, Space-drag or Shift+middle-drag now moves the view up and down too, not only across the floor. The scene follows the pointer.",
@@ -14,6 +14,10 @@
 					"<b>Trackpads</b>: pinch zooms, a two-finger slide pans. On a touch screen two fingers pan and pinch.",
 					"<b>Ctrl+middle-drag</b> (or the zoom tool) zooms smoothly. The orbit now tilts all the way to looking straight down or up.",
 					"<b>Keys</b>: Numpad 4 / 6 turn round, 8 / 2 tilt (Shift: small steps), Numpad + / − zoom, <b>Home</b> frames every model, <b>F</b> or <b>.</b> frames the selection.",
+				]],
+				["More room to work", [
+					"Two new buttons at the ends of the model view's top bar close and reopen the side panels: the one on the <b>far left</b> hides the left panel (models, properties), the one on the <b>far right</b> hides the right panel (the preview). Click again to bring it back. The filled strip in the icon shows the panel is open.",
+					"With a panel closed, the model view now fills all the room it frees (Window ▸ Modeling only used to leave a gap).",
 				]],
 			],
 		},

@@ -42,6 +42,8 @@
 		frame: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><circle cx="12" cy="12" r="2" fill="currentColor"/>',
 		fit: "M4 4h16v16H4zM9 9L4 4M15 9l5-5M9 15l-5 5M15 15l5 5",
 		max: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+		panelleft: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="M4.5 5.5h3v13h-3z" class="panelfill" fill="currentColor" stroke="none"/>',
+		panelright: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M16.5 5.5h3v13h-3z" class="panelfill" fill="currentColor" stroke="none"/>',
 	};
 
 	TS.icon = (name) => {
