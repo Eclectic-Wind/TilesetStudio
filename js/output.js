@@ -481,7 +481,7 @@
 			const q = this.proj().toWorld(x, y, h);
 			let r = 0, g = 0, b = 0;
 			for (const l of this._L) for (const s of l.pts) {
-				const dx = s.x - q[0], dy = s.y - q[1], dz = l.z - h, dist = Math.hypot(dx, dy, dz), att = Math.max(0, 1 - dist / l.radius), t = att * att * (dz / dist) * l.w;
+				const dx = s.x - q[0], dy = s.y - q[1], dz = l.z - h, dist = Math.hypot(dx, dy, dz), att = Math.max(0, 1 - dist / l.radius), t = att * att * Math.max(0, dz / dist) * l.w;
 				r += t * l.col[0]; g += t * l.col[1]; b += t * l.col[2];
 			}
 			d[o] = (0.4 + 2 * r) * 34; d[o + 1] = (0.4 + 2 * g) * 34; d[o + 2] = (0.4 + 2 * b) * 40; d[o + 3] = 255;

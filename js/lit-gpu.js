@@ -18,7 +18,7 @@
  void main(){ivec2 dst=ivec2(gl_FragCoord.x,outSize.y-gl_FragCoord.y);ivec2 q=min(ivec2(size)-1,ivec2(floor((vec2(dst)+.5)*size/outSize)));
  vec4 a=texelFetch(art,q,0),g=texelFetch(geom,q,0),m=texelFetch(material,q,0);
  if(m.w<=cut){vec3 p=wm*vec3(vec2(q)+.5,0.)+wo,s=vec3(0);
-  for(int i=0;i<MAXS;i++){if(i>=count)break;vec3 t=lpos[i].xyz-p;float d=length(t),att=max(0.,1.-d/lpos[i].w);s+=att*att*(t.z/max(d,1e-8))*lcol[i];}
+  for(int i=0;i<MAXS;i++){if(i>=count)break;vec3 t=lpos[i].xyz-p;float d=length(t),att=max(0.,1.-d/lpos[i].w);s+=att*att*max(0.,t.z/max(d,1e-8))*lcol[i];}
   color=vec4((.4+2.*s)*vec3(34.,34.,40.)/255.,1.);return;}
  bool has=m.z>.5;float h=has?g.w:0.;vec3 n=has?g.xyz:vec3(0,0,1);vec3 p=wm*vec3(float(q.x)+.5,float(q.y)+.5,h)+wo;
  float rough=has?m.x:1.,metal=has?m.y:0.;float shin=max(2.,2./max(.02,pow(rough,4.))-2.),norm=(shin+8.)/(8.*3.141592653589793)*.25;

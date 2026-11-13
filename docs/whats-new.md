@@ -4,6 +4,11 @@ For anyone coming back to Tileset Studio. This covers the most recent updates: *
 
 ## Update log
 
+### 13 Nov 2026: Lights can go below the floor
+- A light's **Z** (its height) can now be negative, to put it below the floor (Z=0). Type it in the light's Properties, or move it with **G** then **Z**. Before, it stopped at 0.
+- The quick preview light's **height** slider in the Lit view goes below 0 too.
+- A light below the floor lights the undersides of models, and the empty floor no longer goes darker next to it. The floor itself casts no shadow.
+
 ### 12 Nov 2026: A freer 3D camera, one-click panel toggles
 - **Close the side panels with one click:** the button at the far left of the model view's top bar hides the left panel (models, properties); the one at the far right hides the right panel (the preview). Click again to reopen. The icon's filled strip shows the panel is open. With a panel closed, the model view fills all the freed room (Window ▸ Modeling only used to leave a gap).
 - **Pan goes anywhere:** in the 3D view (press **5**), Shift-drag, Space-drag or Shift+middle-drag moves the view up and down as well as sideways, and the scene follows the pointer. Before, panning only slid across the floor.

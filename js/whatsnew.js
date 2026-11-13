@@ -4,6 +4,18 @@
 (() => {
 	const NEWS = [
 		{
+			id: "2026-11-13",
+			date: "13 Nov 2026",
+			title: "Lights can go below the floor",
+			sections: [
+				["Lights", [
+					"A light's <b>Z</b> (its height) can now be <b>negative</b>, to put it below the floor Z=0. Type it in the light's Properties, or move it with <b>G</b> then <b>Z</b>. Before, it stopped at 0.",
+					"The quick preview light's <b>height</b> slider (Lit view, while the project has no lights) goes below 0 too.",
+					"A light below the floor lights the undersides of models, and the empty floor no longer goes darker next to it.",
+				]],
+			],
+		},
+		{
 			id: "2026-11-12-2",
 			date: "12 Nov 2026",
 			title: "A freer 3D camera, one-click panel toggles",

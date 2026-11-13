@@ -94,7 +94,7 @@
 		const num = (v, d, lo, hi) => { v = parseFloat(v); return isNaN(v) ? d : TS.clamp(v, lo, hi); };
 		const type = l && l.type === "area" ? "area" : "point", id = l && typeof l.id === "string" && l.id ? l.id : "light" + (i + 1);
 		const m = /(\d+)$/.exec(id); if (m) lightSeq = Math.max(lightSeq, +m[1]);
-		return { id, name: String((l && l.name) || ""), type, x: num(l.x, 0, -1e5, 1e5), y: num(l.y, 0, -1e5, 1e5), z: num(l.z, 36, 0, 1e4), radius: num(l.radius, 220, 1, 1e5),
+		return { id, name: String((l && l.name) || ""), type, x: num(l.x, 0, -1e5, 1e5), y: num(l.y, 0, -1e5, 1e5), z: num(l.z, 36, -1e4, 1e4), radius: num(l.radius, 220, 1, 1e5),
 			color: /^#[0-9a-f]{6}$/i.test(l.color) ? l.color.toLowerCase() : "#ffd878", intensity: num(l.intensity, 1, 0, 100), w: num(l.w, 32, 1, 1e4), h: num(l.h, 32, 1, 1e4),
 			priority: Math.round(num(l.priority, 0, -1e6, 1e6)), shadows: !l || l.shadows !== false };
 	}
@@ -192,7 +192,7 @@
 				const moving = m.axis ? ["xyz".indexOf(m.axis)] : S.viewLock ? [0, 1, 2].filter((k) => k !== S.viewLock.k) : [0, 1];
 				d = d.map((v, k) => (moving.includes(k) ? TS.snap(ref[k] + v, step) - ref[k] : 0));
 			}
-			l.x = b.x + d[0]; l.y = b.y + d[1]; l.z = Math.max(0, b.z + d[2]);
+			l.x = b.x + d[0]; l.y = b.y + d[1]; l.z = b.z + d[2];
 			return `Move ${l.name || "light"} to ${[l.x, l.y, l.z].map((v) => +v.toFixed(2)).join(", ")}${m.axis ? " along " + AXIS[m.axis] : " (across and in depth on the ground; Z for height)"}`;
 		}
 		const p = renderer.toScreen([b.x, b.y, b.z]) || m.start;
@@ -3165,7 +3165,7 @@
 			<label>Colour <input id="lp_color" type="color" value="${l.color}"></label>
 			${n("lp_int", "Intensity", l.intensity, 'min="0" max="100"')}
 			<div class="xyz heads"><span class="ax-x">X across</span><span class="ax-y">Y depth</span><span class="ax-z">Height Z</span></div>
-			<div class="xyz"><input id="lp_x" class="ax-x" type="number" step="any" value="${round(l.x)}" title="Floor-plan X (px)"><input id="lp_y" class="ax-y" type="number" step="any" value="${round(l.y)}" title="Floor-plan Y (px)"><input id="lp_z" class="ax-z" type="number" step="any" min="0" value="${round(l.z)}" title="Height above the floor (px)"></div>
+			<div class="xyz"><input id="lp_x" class="ax-x" type="number" step="any" value="${round(l.x)}" title="Floor-plan X (px)"><input id="lp_y" class="ax-y" type="number" step="any" value="${round(l.y)}" title="Floor-plan Y (px)"><input id="lp_z" class="ax-z" type="number" step="any" value="${round(l.z)}" title="Height above the floor (px); negative puts the light below the floor"></div>
 			${n("lp_r", "Reach (radius, px)", l.radius, 'min="1"')}
 			<div id="lp_area" ${l.type === "area" ? "" : "hidden"}>${n("lp_w", "Width (X, px)", l.w, 'min="1"')}${n("lp_h", "Depth (Y, px)", l.h, 'min="1"')}</div>
 			${n("lp_prio", "Priority", l.priority, 'step="1"')}
@@ -3173,7 +3173,7 @@
 			<p class="dim">G moves it (X / Y / Z lock an axis; Z = height), S ${l.type === "area" ? "resizes it" : "sets its reach"}, X deletes, Esc deselects. Higher priority wins when the game cannot show every lamp.</p>
 		</fieldset>`;
 		const num = (id, key, lo, hi, int) => { const el = $(id); el.oninput = () => { const v = parseFloat(el.value); if (!isNaN(v)) lightEdit((x) => { x[key] = TS.clamp(int ? Math.round(v) : v, lo, hi); }); }; el.onchange = () => { el.value = round(l[key]); lightCommit(); }; el.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") el.blur(); }; };
-		num("lp_int", "intensity", 0, 100); num("lp_x", "x", -1e5, 1e5); num("lp_y", "y", -1e5, 1e5); num("lp_z", "z", 0, 1e4); num("lp_r", "radius", 1, 1e5);
+		num("lp_int", "intensity", 0, 100); num("lp_x", "x", -1e5, 1e5); num("lp_y", "y", -1e5, 1e5); num("lp_z", "z", -1e4, 1e4); num("lp_r", "radius", 1, 1e5);
 		num("lp_w", "w", 1, 1e4); num("lp_h", "h", 1, 1e4); num("lp_prio", "priority", -1e6, 1e6, true);
 		$("lp_name").oninput = () => lightEdit((x) => { x.name = $("lp_name").value; });
 		$("lp_name").onchange = lightCommit; $("lp_name").onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") e.target.blur(); };
@@ -3530,7 +3530,7 @@
 			e.preventDefault();
 			if (e.shiftKey) {
 				const d = e.deltaY || e.deltaX; // Shift turns some wheels sideways
-				if (!S.lights.length) { output.light.z = TS.clamp(output.light.z + (d < 0 ? 4 : -4), 0, 255); $("lightz").value = output.light.z; $("lightz_v").textContent = output.light.z; output.render(); }
+				if (!S.lights.length) { output.light.z = TS.clamp(output.light.z + (d < 0 ? 4 : -4), -160, 255); $("lightz").value = output.light.z; $("lightz_v").textContent = output.light.z; output.render(); }
 			} else output.zoomAt(...outPos(e), e.deltaY < 0 ? 1 : -1);
 		}, { passive: false });
 		const outCentre = () => [out.width / 2, out.height / 2];
