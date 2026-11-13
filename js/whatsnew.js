@@ -4,6 +4,16 @@
 (() => {
 	const NEWS = [
 		{
+			id: "2026-11-13-3",
+			date: "13 Nov 2026",
+			title: "Onion ghosts stay behind your model",
+			sections: [
+				["Animation", [
+					"The <b>Onion</b> ghosts no longer cover the model you are posing: they show only where the frames before and after reach past it, so the current pose stays clear to see and grab.",
+				]],
+			],
+		},
+		{
 			id: "2026-11-13-2",
 			date: "13 Nov 2026",
 			title: "Onion skin: solid ghosts, more frames",

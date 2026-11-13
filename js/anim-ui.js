@@ -1139,7 +1139,22 @@
 			ctx.globalAlpha = 0.5 * (1 - (0.65 * (g.d - 1)) / Math.max(1, g.n));
 			ctx.drawImage(onionBuf, 0, 0);
 		}
+		// The ghosts sit behind the animated models: the models' outline on this frame is cut out of them, so the pose being worked
+		// on always reads clearly and the ghosts show only where they reach past it.
 		ctx.globalAlpha = 1;
+		ctx.globalCompositeOperation = "destination-out";
+		ctx.fillStyle = ctx.strokeStyle = "#000"; ctx.lineJoin = "round"; ctx.lineWidth = 1.5 * dpr;
+		for (const o of Rig.posedObjects(objs, a, c, a.frame)) {
+			const sp = o.verts.map((p) => { const q = m4.apply(vp, p); return q[3] > 0 ? [((q[0] / q[3]) * 0.5 + 0.5) * sw, (0.5 - (q[1] / q[3]) * 0.5) * sh] : null; });
+			for (const face of o.faces) { // one face at a time: front and back faces wind opposite ways and would cancel in one path
+				if (!face.v.every((i) => sp[i])) continue;
+				ctx.beginPath();
+				face.v.forEach((i, k) => (k ? ctx.lineTo(sp[i][0], sp[i][1]) : ctx.moveTo(sp[i][0], sp[i][1])));
+				ctx.closePath();
+				ctx.fill(); ctx.stroke();
+			}
+		}
+		ctx.globalCompositeOperation = "source-over";
 	}
 	function draw() {
 		const svg = $("bone_overlay");

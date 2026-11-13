@@ -4,6 +4,9 @@ For anyone coming back to Tileset Studio. This covers the most recent updates: *
 
 ## Update log
 
+### 13 Nov 2026: Onion ghosts stay behind your model
+- The **Onion** ghosts no longer cover the model you are posing: they show only where the frames before and after reach past it, so the current pose stays clear to see and grab.
+
 ### 13 Nov 2026: Onion skin: solid ghosts, more frames
 - **Onion** (under the timeline) now shows the frames around the playhead as see-through **solid ghosts**, shaded so you can read their shape: red for frames before, green for frames after. Before, they were thin wires that were easy to miss.
 - The numbers either side of **Onion** set **how many frames back and forward** to show (0 to 8 each). Ghosts further from the playhead are fainter. Changing a number turns the onion skin on.
