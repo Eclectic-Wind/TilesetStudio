@@ -14,7 +14,8 @@
 	let paintMode = false, stroke = null, brushAt = null;
 	// The dopesheet: keys picked ("boneId|frame"), the last copied keys, and whether the view shows the neighbouring frames as ghosts.
 	const keySel = new Set();
-	let keyClip = null, showOnion = TS.store.get("tsOnion") === "1", showBones = TS.store.get("tsBones") !== "0", tlCollapsed = TS.store.get("tsTlRows") === "0";
+	let keyClip = null, showOnion = TS.store.get("tsOnion") === "1", onionBack = onionCount("tsOnionBack"), onionFwd = onionCount("tsOnionFwd"), showBones = TS.store.get("tsBones") !== "0", tlCollapsed = TS.store.get("tsTlRows") === "0";
+	function onionCount(k) { const v = parseInt(TS.store.get(k), 10); return Number.isFinite(v) ? TS.clamp(v, 0, 8) : 1; }
 	const keyName = (id, f) => id + "|" + f;
 	const picked = () => [...keySel].map((s) => { const i = s.lastIndexOf("|"); return { id: s.slice(0, i), f: +s.slice(i + 1) }; });
 	const brush = { mode: "mix", weight: 1, strength: 0.5, radius: 36, through: false };
@@ -730,7 +731,7 @@
 		el.innerHTML = `<div class="tlbar"><div class="tlmode" role="group" aria-label="Animate mode"><button id="tl_pose" class="${restMode ? "" : "on"}" aria-pressed="${!restMode}" title="Pose: bones move and keys on this frame (Tab switches)">Pose</button><button id="tl_rest" class="${restMode ? "on" : ""}" aria-pressed="${restMode}" title="Rest pose: reshape the bones themselves; models show at rest and keys don't apply (Tab switches)">Rest</button></div><div class="tlctl"><button id="tl_prev" title="Previous frame (, or Left)">◀</button><button id="tl_play" class="${playing ? "on" : ""}" title="Play / stop (Space)">${playing ? "■" : "▶"}</button><button id="tl_next" title="Next frame (. or Right)">▶▶</button><span class="tlpos" title="Current frame / frames in the clip">${a.frame + 1} / ${c.frames}</span></div>` +
 			`<label class="tlease" title="How the picked keys (or the selected bones' keys on this frame) leave for the next key. Hold keeps the pose until then."><span class="dim">Ease</span> <select id="tl_ease"${eases.length ? "" : " disabled"}>${ease ? "" : '<option value="">–</option>'}${Rig.EASES.map(([v, t]) => `<option value="${v}"${v === ease ? " selected" : ""}>${t}</option>`).join("")}</select></label>` +
 			`<button id="tl_bones" class="${showBones ? "on" : ""}" aria-pressed="${showBones}" title="Show the bones over the view while posing (the rest pose always shows them)">Bones</button>` +
-			`<button id="tl_onion" class="${showOnion ? "on" : ""}" title="Onion skin: show the models on the previous frame (red) and next frame (green) while stopped">Onion</button>` +
+			`<span class="tlonion" role="group" aria-label="Onion skin"><input id="tl_onb" type="number" min="0" max="8" value="${onionBack}" title="Onion skin: how many frames back to show (red)" aria-label="Onion frames back"><button id="tl_onion" class="${showOnion ? "on" : ""}" aria-pressed="${showOnion}" title="Onion skin: see-through ghosts of the models on the frames before (red) and after (green), while stopped. The numbers set how many frames each way.">Onion</button><input id="tl_ona" type="number" min="0" max="8" value="${onionFwd}" title="Onion skin: how many frames forward to show (green)" aria-label="Onion frames forward"></span>` +
 			`<button id="tl_seam" title="Key the first frame's pose on the last frame, so the loop has no jump (selected bones, or all with keys)">Close loop</button>` +
 			`<button id="tl_mirror" title="Flip this frame's pose across X onto the other side's bones (arm.L and arm.R; selected bones, or all)">Mirror pose</button>` +
 			`<span class="tlzoom" role="group" aria-label="Frames and zoom"><button id="tl_fins" title="Insert a frame at the playhead: later keys move one frame on (up to 64 frames)">+ Frame</button><button id="tl_fdel" title="Remove the playhead's frame and its keys: later keys move one frame back">− Frame</button><button id="tl_zo" title="Narrower frames (Ctrl+wheel over the dopesheet)">−</button><button id="tl_zi" title="Wider frames (Ctrl+wheel over the dopesheet)">+</button></span>` +
@@ -743,7 +744,20 @@
 		$("tl_rest").onclick = () => { if (!restMode) toggleRest(true); };
 		$("tl_ease").onchange = () => setEase($("tl_ease").value);
 		$("tl_bones").onclick = () => { showBones = !showBones; TS.store.set("tsBones", showBones ? "1" : "0"); const b = $("tl_bones"); b.classList.toggle("on", showBones); b.setAttribute("aria-pressed", showBones); draw(); };
-		$("tl_onion").onclick = () => { showOnion = !showOnion; TS.store.set("tsOnion", showOnion ? "1" : "0"); $("tl_onion").classList.toggle("on", showOnion); draw(); };
+		$("tl_onion").onclick = () => { showOnion = !showOnion; TS.store.set("tsOnion", showOnion ? "1" : "0"); const b = $("tl_onion"); b.classList.toggle("on", showOnion); b.setAttribute("aria-pressed", showOnion); draw(); };
+		// The frame counts: changing one turns the onion skin on, since that is what the person wants to see.
+		const onionInput = (id, key, set) => {
+			const el = $(id);
+			el.oninput = () => {
+				const v = parseInt(el.value, 10);
+				if (!Number.isFinite(v)) return;
+				set(TS.clamp(v, 0, 8)); TS.store.set(key, String(TS.clamp(v, 0, 8)));
+				if (!showOnion) { showOnion = true; TS.store.set("tsOnion", "1"); const b = $("tl_onion"); b.classList.add("on"); b.setAttribute("aria-pressed", true); }
+				draw();
+			};
+		};
+		onionInput("tl_onb", "tsOnionBack", (v) => { onionBack = v; });
+		onionInput("tl_ona", "tsOnionFwd", (v) => { onionFwd = v; });
 		$("tl_seam").onclick = () => {
 			const ids = boneSel ? selIds() : Object.keys(c.tracks);
 			if (!ids.length || c.frames < 2) return api().toast("Key a pose first: the last frame takes the first frame's pose.", "bad");
@@ -1059,27 +1073,73 @@
 			tx.textContent = (pins && pins[b.id] && !restMode ? "📌 " : "") + b.name + (b.ik > 0 ? "  IK " + b.ik : "") + (turn ? "  " + turn : "");
 		}
 	}
-	// Onion skin: the models on the frames before (red) and after (green) as thin wires, while stopped. The clip wraps round unless it plays once.
-	const ONION_FACES = 4000;
+	// Onion skin: the models on the frames before (red) and after (green) as see-through solid ghosts, while stopped. Each ghost is
+	// drawn whole (far faces first, lit by a fixed light so its shape reads), then laid over the view at one opacity, so its own faces
+	// don't stack; ghosts further from the playhead fade more. The clip wraps round unless it plays once.
+	const ONION_WORK = 400000; // faces x ghosts drawn per redraw before the ghosts step aside (a note says so)
+	const ONION_LIGHT = TS.v3.norm([-0.35, -0.55, 0.75]);
+	let onionBuf = null;
+	function onionFrames(a, c) {
+		const once = c.loop === "once", seen = new Set([a.frame]), out = [];
+		for (const [dir, n] of [[-1, onionBack], [1, onionFwd]])
+			for (let d = 1; d <= n; d++) {
+				const f = a.frame + dir * d;
+				if (once && (f < 0 || f >= c.frames)) break;
+				const w = ((f % c.frames) + c.frames) % c.frames;
+				if (seen.has(w)) break; // a short looping clip has come round to the playhead or the other side
+				seen.add(w); out.push({ f: w, d, dir, n });
+			}
+		return out.sort((x, y) => y.d - x.d); // furthest first, so the nearest ghosts sit on top
+	}
 	function drawOnion(add, a, r) {
+		const cv = $("onion_overlay");
+		if (!cv) return;
+		const rect = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+		const W = Math.max(1, Math.round(rect.width * dpr)), H = Math.max(1, Math.round(rect.height * dpr));
+		if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+		const ctx = cv.getContext("2d");
+		ctx.clearRect(0, 0, W, H);
 		const c = clip();
-		if (!showOnion || playing || restMode || paintMode || !c || c.frames < 2 || !a.bones.length) return;
+		if (!on || !showOnion || playing || restMode || paintMode || !c || c.frames < 2 || !a.bones.length) return;
 		const objs = S().objects.filter((o) => !o.hidden && a.bind[o.id]);
-		if (objs.reduce((n, o) => n + o.faces.length, 0) > ONION_FACES) return;
-		const once = c.loop === "once";
-		for (const [df, col] of [[-1, "#ff6b6b"], [1, "#5bd16b"]]) {
-			const f = a.frame + df;
-			if (once && (f < 0 || f >= c.frames)) continue;
-			let d = "";
-			for (const o of Rig.posedObjects(objs, a, c, (f + c.frames) % c.frames)) {
-				const sp = o.verts.map((p) => r.toScreen(p));
+		const ghosts = onionFrames(a, c);
+		if (!objs.length || !ghosts.length) return;
+		if (objs.reduce((n, o) => n + o.faces.length, 0) * ghosts.length > ONION_WORK) {
+			const t = add("text", { x: "50%", y: 38, "text-anchor": "middle", fill: "#ffb15a", "font-size": 11, "pointer-events": "none", stroke: "#141418", "stroke-width": 3, "paint-order": "stroke" });
+			t.textContent = "Onion skin paused: too many faces for this many ghosts (show fewer frames)";
+			return;
+		}
+		if (!onionBuf || onionBuf.width !== W || onionBuf.height !== H) { onionBuf = document.createElement("canvas"); onionBuf.width = W; onionBuf.height = H; }
+		const bx = onionBuf.getContext("2d"), vp = r.viewProj(), m4 = TS.m4, v3 = TS.v3, Mesh = TS.Mesh;
+		const sw = rect.width * dpr, sh = rect.height * dpr, look = r.ray(rect.width / 2, rect.height / 2).d;
+		for (const g of ghosts) {
+			const tint = g.dir < 0 ? [255, 96, 96] : [80, 214, 104], faces = [];
+			for (const o of Rig.posedObjects(objs, a, c, g.f)) {
+				const sp = o.verts.map((p) => { const q = m4.apply(vp, p); return q[3] > 0 ? [((q[0] / q[3]) * 0.5 + 0.5) * sw, (0.5 - (q[1] / q[3]) * 0.5) * sh] : null; });
+				const dep = o.verts.map((p) => v3.dot(p, look));
 				for (const face of o.faces) {
-					const pts = face.v.map((i) => sp[i]);
-					if (pts.every(Boolean)) d += "M" + pts.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join("L") + "Z";
+					let z = 0, ok = true;
+					for (const i of face.v) { if (!sp[i]) { ok = false; break; } z += dep[i]; }
+					if (!ok) continue;
+					const lit = Math.abs(v3.dot(v3.norm(Mesh.faceNormal(o, face)), ONION_LIGHT)) || 0;
+					faces.push({ pts: face.v.map((i) => sp[i]), z: z / face.v.length, k: 0.55 + 0.45 * lit });
 				}
 			}
-			if (d) add("path", { d, fill: "none", stroke: col, "stroke-width": 1, "stroke-opacity": 0.5, "pointer-events": "none" });
+			faces.sort((x, y) => y.z - x.z); // far to near
+			bx.clearRect(0, 0, W, H);
+			bx.lineJoin = "round"; bx.lineWidth = 0.6 * dpr;
+			for (const f of faces) {
+				const col = `rgb(${tint.map((v) => Math.round(v * f.k)).join(",")})`;
+				bx.beginPath();
+				f.pts.forEach((p, i) => (i ? bx.lineTo(p[0], p[1]) : bx.moveTo(p[0], p[1])));
+				bx.closePath();
+				bx.fillStyle = col; bx.strokeStyle = col; // the hairline stroke closes the seams between faces
+				bx.fill(); bx.stroke();
+			}
+			ctx.globalAlpha = 0.5 * (1 - (0.65 * (g.d - 1)) / Math.max(1, g.n));
+			ctx.drawImage(onionBuf, 0, 0);
 		}
+		ctx.globalAlpha = 1;
 	}
 	function draw() {
 		const svg = $("bone_overlay");
@@ -1087,7 +1147,7 @@
 		svg.replaceChildren();
 		svg.classList.toggle("painting", on && paintMode);
 		svg.classList.toggle("atrest", on && restMode);
-		if (!on) return;
+		if (!on) { const cv = $("onion_overlay"); if (cv) cv.getContext("2d").clearRect(0, 0, cv.width, cv.height); return; }
 		const a = A(), r = api().renderer, mats = Rig.matrices(a, restMode ? null : clip(), a.frame);
 		const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
 		drawOnion(add, a, r);

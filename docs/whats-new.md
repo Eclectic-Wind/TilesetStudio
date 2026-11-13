@@ -4,6 +4,11 @@ For anyone coming back to Tileset Studio. This covers the most recent updates: *
 
 ## Update log
 
+### 13 Nov 2026: Onion skin: solid ghosts, more frames
+- **Onion** (under the timeline) now shows the frames around the playhead as see-through **solid ghosts**, shaded so you can read their shape: red for frames before, green for frames after. Before, they were thin wires that were easy to miss.
+- The numbers either side of **Onion** set **how many frames back and forward** to show (0 to 8 each). Ghosts further from the playhead are fainter. Changing a number turns the onion skin on.
+- Ghosts show while stopped, in Pose mode. If the models have too many faces for that many ghosts, a note at the top of the view says so instead of the ghosts quietly vanishing: show fewer frames.
+
 ### 13 Nov 2026: Lights can go below the floor
 - A light's **Z** (its height) can now be negative, to put it below the floor (Z=0). Type it in the light's Properties, or move it with **G** then **Z**. Before, it stopped at 0.
 - The quick preview light's **height** slider in the Lit view goes below 0 too.
@@ -74,7 +79,7 @@ Tip: for a lamp over a table, put the light a little above the table top, not at
    - **+ Frame / − Frame** inserts or removes a frame at the playhead and shifts later keys.
    - **Ctrl+A** picks every key. **Double-click** a key to jump to it. **Right-click** a key for Ease, Copy, Paste at playhead and Delete.
    - Drag the playhead line to scrub.
-6. Press **Space** to preview. Use **Onion** to see the previous (red) and next (green) frames.
+6. Press **Space** to preview. Use **Onion** to see ghosts of the frames before (red) and after (green); the numbers either side of it set how many frames each way.
 7. Turn **Bones** off to see the model without the bone overlay.
 
 Posing feels different now:

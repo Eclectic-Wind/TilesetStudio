@@ -4,6 +4,18 @@
 (() => {
 	const NEWS = [
 		{
+			id: "2026-11-13-2",
+			date: "13 Nov 2026",
+			title: "Onion skin: solid ghosts, more frames",
+			sections: [
+				["Animation", [
+					"<b>Onion</b> (under the timeline) now shows the frames around the playhead as see-through <b>solid ghosts</b>, shaded so you can read their shape: red for frames before, green for frames after. Before, they were thin wires that were easy to miss.",
+					"The numbers either side of <b>Onion</b> set <b>how many frames back and forward</b> to show (0 to 8 each). Ghosts further from the playhead are fainter. Changing a number turns the onion skin on.",
+					"Ghosts show while stopped, in Pose mode. Larger models no longer hide them silently: if there are too many faces for that many ghosts, a note at the top of the view says so; show fewer frames.",
+				]],
+			],
+		},
+		{
 			id: "2026-11-13",
 			date: "13 Nov 2026",
 			title: "Lights can go below the floor",

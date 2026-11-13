@@ -85,7 +85,8 @@ Studio moves the shape, but the colours of each frame are painted by you. Either
    - **Ctrl+C** copies the picked keys (with no keys picked, it copies this frame's pose, see step 3), and **Ctrl+V** pastes whichever
      was copied last at the playhead.
    - **Ease** sets how the picked keys (or the selected bones' keys on this frame) leave for the next key: Linear, Ease in, Ease out, Ease in-out or Hold (keeps the pose until the next key). Eased keys show round, Hold square.
-   - **Onion** shows the models on the previous (red) and next (green) frames as wires while stopped.
+   - **Onion** shows the models on the frames before (red) and after (green) as see-through solid ghosts while stopped. The numbers
+     either side of it set how many frames back and forward (0 to 8 each); further ghosts are fainter.
    - **Close loop** keys the first frame's pose on the last frame. **Mirror pose** flips this frame's pose across X onto the other side's bones (`arm.L` and `arm.R`, `Leg_l` and `Leg_r`, `LeftArm` and `RightArm`); a bone with no other side flips itself.
 
 The panel previews the current frame lit by the normal map (move the pointer over it to move the light), with your Albedo if linked, else the tileset's own art.
